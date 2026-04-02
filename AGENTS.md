@@ -58,3 +58,15 @@ agentkms/
 - Security-critical paths (auth, crypto dispatch, policy evaluation, audit) have adversarial test cases — not just happy paths.
 - No `t.Skip()` without a linked issue and expiry date.
 - Integration tests use a local `agentkms-dev` instance, not mocks of the crypto backend.
+
+## Validation Rule — Independent Review Required
+**Never validate your own work.** After completing any task, an independent Pi session running a different model must review the implementation before the backlog item is marked `[x]`. Self-review has the same blind spots as the code that produced the bug.
+
+Workflow:
+1. Complete implementation, run tests locally (`go test -race ./...`).
+2. Run `/coord review` — it prints a complete adversarial brief.
+3. Open a **new Pi session** (`/new` or fresh terminal) with no prior context.
+4. Paste the brief. Let the independent session review and report findings.
+5. Address all findings. Only then mark the backlog item `[x]`.
+
+This applies to: all security-critical items (all A-*, C-*, P-* items), all D-* items (the dev server is the thing all other streams depend on), and any change that touches auth, policy, audit, or backend.

@@ -27,7 +27,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
+	"crypto/sha256" // used by testHash; also registers SHA-256 with the crypto package
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -35,8 +35,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	_ "crypto/sha256" // register SHA-256 with the crypto package
 )
 
 // ── Test fixtures ─────────────────────────────────────────────────────────────

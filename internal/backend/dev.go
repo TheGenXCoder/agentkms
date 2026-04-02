@@ -17,8 +17,12 @@ import (
 	"sync"
 	"time"
 
-	// Ensure the SHA-256 hash function is linked into the binary.
-	// Required for crypto.SHA256.New() used by rsa.SignPKCS1v15.
+	// Defensive: ensures crypto.SHA256.Available() returns true and
+	// registers the SHA-256 hash with the crypto package's internal map.
+	// On Go 1.21+ crypto/rsa uses an internal FIPS SHA-256 and does not
+	// strictly require this import for sign/verify, but including it
+	// guarantees correct behaviour if any caller uses crypto.SHA256.New()
+	// or checks crypto.SHA256.Available() (e.g., for FIPS compliance checks).
 	_ "crypto/sha256"
 )
 
@@ -343,12 +347,19 @@ func (b *DevBackend) Decrypt(ctx context.Context, keyID string, ciphertext []byt
 		return nil, err
 	}
 
-	// Minimum size: 4 (version) + 12 (nonce) + 16 (GCM tag) = 32 bytes.
-	// Zero-byte plaintext produces a 16-byte tag, so 32 bytes is the minimum.
-	const minSize = 4 + 12 + 16
-	if len(ciphertext) < minSize {
+	// Early length check against the known AES-GCM ciphertext structure:
+	//   [4 bytes: key version] [12 bytes: GCM nonce] [≥16 bytes: sealed+tag]
+	// These constants mirror cipher.NewGCM(b).NonceSize() and .Overhead();
+	// a defensive assertion below verifies the GCM instance agrees.
+	const (
+		gcmVersionPrefixLen = 4
+		gcmStdNonceSize     = 12 // cipher.NewGCM always returns NonceSize() == 12
+		gcmStdOverhead      = 16 // cipher.NewGCM always returns Overhead() == 16
+		minCiphertextLen    = gcmVersionPrefixLen + gcmStdNonceSize + gcmStdOverhead
+	)
+	if len(ciphertext) < minCiphertextLen {
 		return nil, fmt.Errorf("%w: ciphertext too short (%d bytes, minimum %d)",
-			ErrInvalidInput, len(ciphertext), minSize)
+			ErrInvalidInput, len(ciphertext), minCiphertextLen)
 	}
 
 	entry, err := b.getEntry(keyID)
@@ -381,9 +392,18 @@ func (b *DevBackend) Decrypt(ctx context.Context, keyID string, ciphertext []byt
 		return nil, fmt.Errorf("backend: GCM init: %w", err)
 	}
 
-	// Extract nonce using the cipher's reported nonce size rather than a
-	// hardcoded offset.  Standard AES-GCM always returns 12, but deriving
-	// it from the cipher object keeps Encrypt and Decrypt consistent.
+	// Defensive assertion: our compile-time constants must match the actual
+	// cipher parameters.  If cipher.NewGCM ever changes defaults (e.g., via
+	// a Go version update), this will catch the inconsistency at runtime
+	// rather than silently producing wrong output.
+	if gcm.NonceSize() != gcmStdNonceSize || gcm.Overhead() != gcmStdOverhead {
+		return nil, fmt.Errorf(
+			"backend: unexpected GCM parameters: NonceSize=%d (want %d), Overhead=%d (want %d)",
+			gcm.NonceSize(), gcmStdNonceSize, gcm.Overhead(), gcmStdOverhead)
+	}
+
+	// Extract nonce using the cipher's reported nonce size — consistent with
+	// how Encrypt writes the ciphertext blob, and now verified above.
 	nonceEnd := 4 + gcm.NonceSize()
 	nonce := ciphertext[4:nonceEnd]
 	sealed := ciphertext[nonceEnd:]

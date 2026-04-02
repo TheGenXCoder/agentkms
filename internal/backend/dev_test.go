@@ -1004,6 +1004,219 @@ func TestDevBackend_Encrypt_CancelledContext(t *testing.T) {
 	}
 }
 
+func TestDevBackend_Decrypt_CancelledContext(t *testing.T) {
+	b := newBackendWithKey(t, "ctx/dec", AlgorithmAES256GCM)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// A syntactically valid-length ciphertext (all zeros, 32 bytes minimum).
+	_, err := b.Decrypt(ctx, "ctx/dec", make([]byte, 32))
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+}
+
+func TestDevBackend_ListKeys_CancelledContext(t *testing.T) {
+	b := newBackendWithKey(t, "ctx/list", AlgorithmES256)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := b.ListKeys(ctx, KeyScope{})
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+}
+
+func TestDevBackend_RotateKey_CancelledContext(t *testing.T) {
+	b := newBackendWithKey(t, "ctx/rotate", AlgorithmES256)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := b.RotateKey(ctx, "ctx/rotate")
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+}
+
+// ── 9. Additional adversarial tests ──────────────────────────────────────────
+
+// TestAdversarial_RotateKey_NoKeyMaterialInResult verifies that the KeyMeta
+// returned by RotateKey — which reflects a freshly generated key version —
+// contains no key material from either the old or the new key version.
+//
+// This is the "rotate and leak" attack surface: a buggy implementation could
+// accidentally embed new key material in the returned metadata.
+func TestAdversarial_RotateKey_NoKeyMaterialInResult(t *testing.T) {
+	b := newBackendWithKey(t, "adv/rotate-meta", AlgorithmES256)
+
+	// Rotate the key — this generates a fresh EC key (version 2).
+	meta, err := b.RotateKey(context.Background(), "adv/rotate-meta")
+	if err != nil {
+		t.Fatalf("RotateKey: %v", err)
+	}
+	if meta.Version != 2 {
+		t.Fatalf("expected version 2, got %d", meta.Version)
+	}
+
+	// Collect raw key material from both versions inside the backend.
+	var allKeyBytes [][]byte
+	b.mu.RLock()
+	entry := b.keys["adv/rotate-meta"]
+	b.mu.RUnlock()
+
+	entry.mu.RLock()
+	for _, ver := range entry.versions {
+		if ver.ecPrivKey != nil {
+			if der, err2 := x509.MarshalECPrivateKey(ver.ecPrivKey); err2 == nil {
+				allKeyBytes = append(allKeyBytes, der)
+			}
+			privD := ver.ecPrivKey.D.FillBytes(make([]byte, 32))
+			allKeyBytes = append(allKeyBytes, privD)
+		}
+		if ver.aesKey != nil {
+			k := make([]byte, len(ver.aesKey))
+			copy(k, ver.aesKey)
+			allKeyBytes = append(allKeyBytes, k)
+		}
+		if ver.edPrivKey != nil {
+			k := make([]byte, len(ver.edPrivKey))
+			copy(k, ver.edPrivKey)
+			allKeyBytes = append(allKeyBytes, k[:32]) // seed
+		}
+	}
+	entry.mu.RUnlock()
+
+	// JSON-encode the returned KeyMeta and check none of the key bytes appear.
+	encoded, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("json.Marshal(KeyMeta): %v", err)
+	}
+	for _, keyBytes := range allKeyBytes {
+		if bytes.Contains(encoded, keyBytes) {
+			t.Fatalf("ADVERSARIAL: JSON-encoded RotateKey KeyMeta contains key material")
+		}
+	}
+}
+
+// TestAdversarial_Decrypt_SpoofedVersion verifies that attacker-controlled
+// ciphertext bytes with manipulated version fields do not cause panics and
+// return a proper error instead.
+//
+// Attack scenario: an attacker intercepts ciphertext and modifies the 4-byte
+// version header to reference a version that does not exist.  The backend
+// must return ErrInvalidInput without panicking or producing garbage output.
+func TestAdversarial_Decrypt_SpoofedVersion(t *testing.T) {
+	b := newBackendWithKey(t, "adv/spoof", AlgorithmAES256GCM)
+
+	// Build a structurally valid ciphertext (≥32 bytes) but with a spoofed
+	// version header.  The content after the header is garbage — AES-GCM
+	// authentication will also fail, but the version check must come first.
+
+	// Minimum valid-length ciphertext = 4 (version) + 12 (nonce) + 16 (tag)
+	bogusBody := make([]byte, 32) // 4 + 12 + 16
+
+	versionCases := []struct {
+		name    string
+		version uint32
+	}{
+		{"version_zero", 0},
+		{"version_max_uint32", ^uint32(0)}, // 4294967295
+		{"version_9999", 9999},
+	}
+
+	for _, tc := range versionCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ciphertext := make([]byte, len(bogusBody))
+			copy(ciphertext, bogusBody)
+			// Write the spoofed version into bytes [0:4].
+			ciphertext[0] = byte(tc.version >> 24)
+			ciphertext[1] = byte(tc.version >> 16)
+			ciphertext[2] = byte(tc.version >> 8)
+			ciphertext[3] = byte(tc.version)
+
+			_, err := b.Decrypt(context.Background(), "adv/spoof", ciphertext)
+			if err == nil {
+				t.Fatalf("ADVERSARIAL: Decrypt with spoofed version %d returned nil error",
+					tc.version)
+			}
+			// Must be ErrInvalidInput — not a panic, not a silent success.
+			if !isErrInvalidInput(err) {
+				t.Fatalf("ADVERSARIAL: expected ErrInvalidInput for version %d, got: %v",
+					tc.version, err)
+			}
+			// Error message must not contain PEM headers or internal state.
+			msg := err.Error()
+			if strings.Contains(msg, "-----BEGIN") || strings.Contains(msg, "-----END") {
+				t.Fatalf("ADVERSARIAL: error message for spoofed version contains PEM header: %q", msg)
+			}
+		})
+	}
+}
+
+// TestAdversarial_Sign_EdDSA_NoPrivateKeyInJSONResult verifies that the
+// JSON-encoded SignResult for EdDSA does not contain the private key seed
+// or the full 64-byte private key bytes.  (ES256 and AES have this check;
+// EdDSA was missing it.)
+func TestAdversarial_Sign_EdDSA_NoPrivateKeyInJSONResult(t *testing.T) {
+	b := newBackendWithKey(t, "adv/eddsa-json", AlgorithmEdDSA)
+
+	b.mu.RLock()
+	entry := b.keys["adv/eddsa-json"]
+	b.mu.RUnlock()
+
+	entry.mu.RLock()
+	privKey := entry.versions[0].edPrivKey
+	privSeed := make([]byte, 32)
+	copy(privSeed, privKey[:32]) // Ed25519 seed = first 32 bytes
+	privAll := make([]byte, len(privKey))
+	copy(privAll, privKey)
+	entry.mu.RUnlock()
+
+	hash := testHash("adversarial EdDSA JSON test")
+	result, err := b.Sign(context.Background(), "adv/eddsa-json", hash, AlgorithmEdDSA)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("json.Marshal(SignResult): %v", err)
+	}
+	if bytes.Contains(encoded, privAll) {
+		t.Fatal("ADVERSARIAL: JSON-encoded EdDSA SignResult contains full private key bytes")
+	}
+	if bytes.Contains(encoded, privSeed) {
+		t.Fatal("ADVERSARIAL: JSON-encoded EdDSA SignResult contains private key seed")
+	}
+}
+
+// TestDevBackend_CreateKey_UnsupportedAlgorithm verifies that CreateKey
+// returns an error (wrapping ErrInvalidInput) for an unrecognised algorithm
+// and does not create a partial key entry in the backend.
+func TestDevBackend_CreateKey_UnsupportedAlgorithm(t *testing.T) {
+	b := NewDevBackend()
+
+	err := b.CreateKey("bad/alg", Algorithm("UNSUPPORTED_ALG"), "test-team")
+	if err == nil {
+		t.Fatal("expected error for unsupported algorithm, got nil")
+	}
+	if !isErrInvalidInput(err) {
+		t.Fatalf("expected ErrInvalidInput for unsupported algorithm, got: %v", err)
+	}
+
+	// The failed CreateKey must NOT have left a partial entry in the backend.
+	_, lookupErr := b.Sign(context.Background(), "bad/alg", testHash("x"), AlgorithmES256)
+	if lookupErr == nil {
+		t.Fatal("ADVERSARIAL: partial key entry exists after failed CreateKey")
+	}
+	if !isErrKeyNotFound(lookupErr) {
+		t.Fatalf("expected ErrKeyNotFound for partial key, got: %v", lookupErr)
+	}
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func isErrKeyNotFound(err error) bool {
@@ -1016,6 +1229,10 @@ func isErrAlgorithmMismatch(err error) bool {
 
 func isErrKeyTypeMismatch(err error) bool {
 	return containsSentinel(err, ErrKeyTypeMismatch)
+}
+
+func isErrInvalidInput(err error) bool {
+	return containsSentinel(err, ErrInvalidInput)
 }
 
 // containsSentinel unwraps err checking for target using errors.Is.

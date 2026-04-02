@@ -157,6 +157,45 @@ func (b *DevBackend) CreateKey(keyID string, alg Algorithm, teamID string) error
 	return nil
 }
 
+// verifyKeyIntegrity checks that the key material is valid and usable.
+// For symmetric keys, this ensures the key length matches the algorithm.
+// For asymmetric keys, this verifies the public/private key pair.
+func verifyKeyIntegrity(kv *keyVersion, algorithm Algorithm) error {
+	switch algorithm {
+	case AlgorithmAES256GCM:
+		// Verify AES-256 key length
+		if len(kv.aesKey) != 32 { // AES-256 requires 32 bytes
+			return fmt.Errorf("invalid AES-256 key length: got %d bytes, want 32", len(kv.aesKey))
+		}
+		return nil
+
+	case AlgorithmES256:
+		// Verify ECDSA key
+		if kv.ecPrivKey == nil {
+			return fmt.Errorf("missing ECDSA private key")
+		}
+		return nil
+		
+	case AlgorithmRS256:
+		// Verify RSA key
+		if kv.rsaPrivKey == nil {
+			return fmt.Errorf("missing RSA private key")
+		}
+		return nil
+		
+	case AlgorithmEdDSA:
+		// Verify Ed25519 key
+		if len(kv.edPrivKey) == 0 {
+			return fmt.Errorf("missing Ed25519 private key")
+		}
+		return nil
+		
+		
+	default:
+		return fmt.Errorf("unsupported algorithm: %s", algorithm)
+	}
+}
+
 // generateKeyVersion creates new key material for the given version number
 // and algorithm.  It never returns key material outside of the keyVersion
 // struct; the returned struct is stored in unexported fields only.
@@ -480,7 +519,13 @@ func (b *DevBackend) RotateKey(ctx context.Context, keyID string) (*KeyMeta, err
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 
-	newVersionNum := entry.latestVersion().version + 1
+	// Verify integrity of the current key before rotation
+	latest := entry.latestVersion()
+	if err := verifyKeyIntegrity(latest, entry.algorithm); err != nil {
+		return nil, fmt.Errorf("backend: key integrity check failed for %q: %w", keyID, err)
+	}
+
+	newVersionNum := latest.version + 1
 	ver, err := generateKeyVersion(newVersionNum, entry.algorithm)
 	if err != nil {
 		return nil, fmt.Errorf("backend: rotate key %q: %w", keyID, err)

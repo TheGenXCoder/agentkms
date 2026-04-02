@@ -23,6 +23,7 @@ const (
 	OperationListKeys       = "list_keys"
 	OperationRotateKey      = "rotate_key"
 	OperationBlockedRead    = "blocked_read"
+	OperationKeyCreate      = "key_create"
 )
 
 // ── Outcome constants ─────────────────────────────────────────────────────────
@@ -129,6 +130,11 @@ type AuditEvent struct {
 	// Environment identifies the deployment tier.
 	// Values: "production", "staging", "dev".
 	Environment string `json:"environment,omitempty"`
+
+	// ErrorDetail captures technical error information for troubleshooting.
+	// Present only when Outcome is OutcomeError.
+	// SECURITY: Must not contain key material, plaintext, or credentials.
+	ErrorDetail string `json:"error_detail,omitempty"`
 }
 
 // ── EventID generation ────────────────────────────────────────────────────────

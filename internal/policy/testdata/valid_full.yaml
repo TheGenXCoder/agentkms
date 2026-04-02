@@ -1,0 +1,63 @@
+version: "1"
+
+rules:
+  # Explicit deny: block production key access from agent sessions at all times.
+  - id: deny-agent-production-keys
+    description: Agent sessions may not access production signing keys directly.
+    match:
+      identity:
+        roles: ["agent"]
+      key_prefix: "production/"
+    effect: deny
+
+  # Allow platform-team developers to sign with payments keys during business hours.
+  - id: allow-platform-sign-payments
+    description: Platform team developers may sign with payments keys Mon–Fri 06–22 UTC.
+    match:
+      identity:
+        team_id: "platform-team"
+        roles: ["developer"]
+      operations: ["sign"]
+      key_prefix: "payments/"
+    effect: allow
+    time_window:
+      days: ["mon", "tue", "wed", "thu", "fri"]
+      start_utc: 6
+      end_utc: 22
+
+  # Allow CI service accounts to sign with ci/ keys, all hours.
+  - id: allow-ci-sign-ci-keys
+    description: CI service accounts may sign with ci/* keys at any time.
+    match:
+      identity:
+        caller_id_pattern: "ci-*"
+        roles: ["service"]
+      operations: ["sign"]
+      key_prefix: "ci/"
+    effect: allow
+
+  # Allow platform-team to list keys in the payments namespace.
+  - id: allow-platform-list-payments
+    description: Platform team may list keys in the payments namespace.
+    match:
+      identity:
+        team_id: "platform-team"
+      operations: ["list_keys"]
+      key_prefix: "payments/"
+    effect: allow
+
+  # Allow specific key IDs for an explicit allowlist use case.
+  - id: allow-ml-encrypt-specific-keys
+    description: ML team may encrypt/decrypt with specific approved keys.
+    match:
+      identity:
+        team_id: "ml-team"
+        roles: ["developer", "service"]
+      operations: ["encrypt", "decrypt"]
+      key_ids:
+        - "ml/model-weights-key"
+        - "ml/training-data-key"
+    effect: allow
+    rate_limit:
+      max_requests: 500
+      window: "1h"

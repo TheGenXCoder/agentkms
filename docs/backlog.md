@@ -59,10 +59,10 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| P-01 | P0 | T0 | [ ] | Define policy rule schema (team, scope, key, operation, rate, time) | YAML + Go structs |
-| P-02 | P0 | T0 | [ ] | Implement policy loader from local YAML (`internal/policy/loader.go`) | Used in T0/dev mode |
-| P-03 | P0 | T0 | [ ] | Implement policy evaluator (`internal/policy/engine.go`) | Returns allow/deny + reason for every (identity, operation, key-id) triple |
-| P-04 | P0 | T0 | [ ] | Enforce deny-by-default — no operation succeeds without explicit allow | Test: empty policy = all operations denied |
+| P-01 | P0 | T0 | [x] | Define policy rule schema (team, scope, key, operation, rate, time) | `internal/policy/rules.go` — Policy, Rule, Match, IdentityMatch, TimeWindow, RateLimit, Effect, Operation structs + Validate() |
+| P-02 | P0 | T0 | [x] | Implement policy loader from local YAML (`internal/policy/loader.go`) | LoadFromFile / LoadFromBytes / LoadFromReader; validates before returning; dep: gopkg.in/yaml.v3 |
+| P-03 | P0 | T0 | [x] | Implement policy evaluator (`internal/policy/engine.go`) | First-match semantics; Engine.Evaluate + EvaluateAt; thread-safe Reload; Decision{Allow, DenyReason, MatchedRuleID} |
+| P-04 | P0 | T0 | [x] | Enforce deny-by-default — no operation succeeds without explicit allow | TestDenyByDefault_EmptyPolicy: 360 assertions (9 identities × 8 ops × 5 key IDs), both nil and empty-slice rules, all PASS |
 | P-05 | P1 | T1 | [ ] | Implement policy loader from OpenBao/Vault policy engine | Replaces local YAML in T1+ |
 | P-06 | P1 | T1 | [ ] | Implement rate limiting in policy engine | Per-identity, per-operation, per-time-window |
 | P-07 | P2 | T2 | [ ] | Implement anomaly detection (rules-based) | Spike detection, unusual hours, repeated denials |

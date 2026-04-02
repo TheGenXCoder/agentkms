@@ -1,0 +1,17 @@
+version: "1"
+# This file intentionally contains a misspelled field ("matche" instead of
+# "match") to test that LoadFromFile rejects unknown YAML fields rather than
+# silently discarding them.
+#
+# Without strict YAML decoding (KnownFields=true), the "matche" key would be
+# ignored and the rule's Match would be its zero value — matching ALL
+# identities, operations, and keys — turning a narrow allow into a blanket
+# allow across the entire system.
+rules:
+  - id: misspelled-match-field
+    matche:
+      identity:
+        team_id: platform-team
+      operations: [sign]
+      key_prefix: platform/
+    effect: allow

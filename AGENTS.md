@@ -62,11 +62,53 @@ agentkms/
 ## Validation Rule — Independent Review Required
 **Never validate your own work.** After completing any task, an independent Pi session running a different model must review the implementation before the backlog item is marked `[x]`. Self-review has the same blind spots as the code that produced the bug.
 
+The review has **two components**. Both must pass.
+
+### Component 1 — Adversarial Security Review
+
 Workflow:
 1. Complete implementation, run tests locally (`go test -race ./...`).
-2. Run `/coord review` — it prints a complete adversarial brief.
+2. Run `/coord review` — it prints a complete adversarial + quality brief.
 3. Open a **new Pi session** (`/new` or fresh terminal) with no prior context.
 4. Paste the brief. Let the independent session review and report findings.
 5. Address all findings. Only then mark the backlog item `[x]`.
 
 This applies to: all security-critical items (all A-*, C-*, P-* items), all D-* items (the dev server is the thing all other streams depend on), and any change that touches auth, policy, audit, or backend.
+
+### Component 2 — Code Quality Gate
+
+Run before every commit. All checks must pass:
+
+```bash
+# 1. Tests + race detector (mandatory — no exceptions)
+go test -race -count=1 ./...
+
+# 2. Coverage threshold (minimum 80% per package with tests)
+go test -race -count=1 -coverprofile=cover.out ./...
+go tool cover -func=cover.out | awk 'END { if ($3+0 < 80.0) exit 1 }'
+
+# 3. Every exported function must have at least one test
+#    Run the quality script:
+bash scripts/quality_check.sh
+
+# 4. t.Skip audit — every skip must have a linked issue and expiry comment
+grep -rn 't\.Skip\|t\.Skipf' . --include='*.go' | grep -v '_test.go:.*TODO(#'
+# ^^^ must produce no output
+
+# 5. vet
+go vet ./...
+```
+
+**Coverage thresholds by package type:**
+- `internal/auth`, `internal/policy`, `internal/audit` — ≥ 85%
+- `internal/api`, `internal/backend` (non-integration) — ≥ 80%
+- `pkg/` packages — ≥ 80%
+- Integration-only code (build tag `integration`) — exempt from non-integration coverage
+
+**t.Skip rule:** Any `t.Skip` or `t.Skipf` must have a comment on the preceding line in the format:
+```go
+// TODO(#<issue-number>): skip until <YYYY-MM-DD> — <reason>
+t.Skipf("...")
+```
+
+**Exported function test rule:** Every exported function in `internal/` and `pkg/` must be called by at least one test. The quality script checks this automatically.

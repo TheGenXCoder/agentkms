@@ -1,0 +1,60 @@
+# AgentKMS — Pi Agent Context
+
+## What This Project Is
+AgentKMS is a hardened enterprise cryptographic proxy service. It sits between every agent, developer, and application that needs key material and the backend that holds it. Private keys **never** leave AgentKMS. Callers receive only signatures, ciphertext, or short-lived scoped credentials — never raw key material.
+
+This is a **security-critical production service**. There are no exceptions, no dev shortcuts, and no carve-outs. If a shortcut is tempting, that is exactly where an attacker will look.
+
+## Primary Language
+**Go** for the service binary, CLI tooling, and all cryptographic code. TypeScript only for the Pi extension client package (thin client, no crypto). If there is a compelling reason to deviate from Go, discuss it explicitly before writing code.
+
+## Absolute Constraints — Read Before Writing Any Code
+- **Zero key exposure**: No key material in logs, env vars, responses, memory dumps, stack traces, or tool call outputs. Ever.
+- **mTLS everywhere**: All service-to-service and client-to-service traffic uses mutual TLS. No plaintext, no self-signed-without-PKI.
+- **Short TTLs**: Session tokens max 15 minutes. LLM credentials max 60 minutes. Crypto keys versioned with rotation built-in.
+- **Audit everything**: Every crypto operation, every credential issuance, every auth event is logged with: caller identity, operation, key-id, payload hash (not payload), timestamp, outcome. No silent failures.
+- **Backend abstraction**: All crypto operations go through the `Backend` interface. Never call OpenBao, Vault, or AWS KMS SDK directly from API handlers.
+- **Pluggable audit**: All audit writes go through the `Auditor` interface. Never write to a specific sink directly from business logic.
+- **No supply chain surprises**: Minimise external Go dependencies. Every dependency needs a documented reason. Use `go mod verify` and pin hashes.
+
+## Compliance Requirements (all must be satisfiable, not all activated at once)
+- SOC 2 Type 2
+- PCI-DSS Level 1
+- ISO 27001
+- GDPR (data residency controls required)
+- CCPA
+- Colorado AI Act (AI transparency, audit trails for AI-driven decisions)
+- SLG / FedRAMP-Ready (FIPS 140-2 crypto paths must be available)
+
+## Architecture Docs
+- Full architecture: `docs/architecture.md` — read this before making structural decisions
+- Backlog: `docs/backlog.md`
+
+## Project Structure (target)
+```
+agentkms/
+├── cmd/server/          # Main service entrypoint
+├── cmd/dev/             # Local dev server (single binary, in-memory backend)
+├── cmd/enroll/          # Developer enrollment CLI
+├── internal/
+│   ├── api/             # HTTP handlers (REST + gRPC future)
+│   ├── auth/            # mTLS validation, token issuance/revocation
+│   ├── policy/          # Per-agent, per-team, per-scope policy engine
+│   ├── audit/           # Pluggable audit (ELK, Splunk, CloudWatch, Datadog)
+│   ├── backend/         # Crypto backend abstraction (OpenBao, Vault, AWS KMS, GCP KMS)
+│   └── credentials/     # LLM provider credential vending
+├── pkg/
+│   ├── identity/        # Identity model (enterprise/team/builder/agent)
+│   └── tlsutil/         # mTLS helpers, cert validation
+├── pi-package/          # TypeScript Pi extension + skill (thin client)
+│   ├── extensions/
+│   ├── skills/
+│   └── package.json
+└── docs/
+```
+
+## Testing Standards
+- Every exported function has a test.
+- Security-critical paths (auth, crypto dispatch, policy evaluation, audit) have adversarial test cases — not just happy paths.
+- No `t.Skip()` without a linked issue and expiry date.
+- Integration tests use a local `agentkms-dev` instance, not mocks of the crypto backend.

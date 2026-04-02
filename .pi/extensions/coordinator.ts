@@ -336,6 +336,7 @@ function renderReviewBrief(config: CoordConfig, stream: StreamDef): string {
 
   const isTS = stream.name === "pi-pkg";
   const qualityScript = `bash ${config.repoRoot}/scripts/quality_check.sh`;
+  // Note: project script delegates to global skill: ~/.pi/agent/skills/quality-gate
   const qualityNote = isTS
     ? "(TypeScript stream — manual checks: no crypto imports, runtimeKeys in-memory only, toJSON redacts keys)"
     : qualityScript;

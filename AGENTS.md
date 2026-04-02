@@ -80,24 +80,10 @@ This applies to: all security-critical items (all A-*, C-*, P-* items), all D-* 
 Run before every commit. All checks must pass:
 
 ```bash
-# 1. Tests + race detector (mandatory — no exceptions)
-go test -race -count=1 ./...
-
-# 2. Coverage threshold (minimum 80% per package with tests)
-go test -race -count=1 -coverprofile=cover.out ./...
-go tool cover -func=cover.out | awk 'END { if ($3+0 < 80.0) exit 1 }'
-
-# 3. Every exported function must have at least one test
-#    Run the quality script:
 bash scripts/quality_check.sh
-
-# 4. t.Skip audit — every skip must have a linked issue and expiry comment
-grep -rn 't\.Skip\|t\.Skipf' . --include='*.go' | grep -v '_test.go:.*TODO(#'
-# ^^^ must produce no output
-
-# 5. vet
-go vet ./...
 ```
+
+This project wraps the global quality gate skill (`~/.pi/agent/skills/quality-gate`). For configuration options, run `/skill:quality-gate`.
 
 **Coverage thresholds by package type:**
 - `internal/auth`, `internal/policy`, `internal/audit` — ≥ 85%

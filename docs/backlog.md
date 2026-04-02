@@ -23,14 +23,14 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| F-01 | P0 | T0 | [ ] | Initialise Go module (`go mod init`) with project structure per AGENTS.md | `cmd/`, `internal/`, `pkg/` layout |
-| F-02 | P0 | T0 | [ ] | Define `Backend` interface (`internal/backend/interface.go`) | Sign, Encrypt, Decrypt, ListKeys, RotateKey — this is the only way crypto ops are called |
-| F-03 | P0 | T0 | [ ] | Define `Auditor` interface (`internal/audit/interface.go`) | Log, Flush — never call a sink directly from business logic |
-| F-04 | P0 | T0 | [ ] | Define `AuditEvent` struct (all fields per §9.4) | payload_hash only, never payload |
-| F-05 | P0 | T0 | [ ] | Implement `dev` backend (`internal/backend/dev.go`) — in-memory, no external deps | Used for local dev and unit tests |
-| F-06 | P0 | T0 | [ ] | Implement file audit sink (`internal/audit/file.go`) — structured JSON, append-only | Used in local dev mode |
-| F-07 | P1 | T0 | [ ] | Implement `MultiAuditor` (`internal/audit/multi.go`) — fan-out to N sinks | All audit writes go through this |
-| F-08 | P0 | T0 | [ ] | Write adversarial tests for Backend interface contract | Test: key material never in return values, error paths don't leak |
+| F-01 | P0 | T0 | [x] | Initialise Go module (`go mod init`) with project structure per AGENTS.md | `cmd/`, `internal/`, `pkg/` layout |
+| F-02 | P0 | T0 | [x] | Define `Backend` interface (`internal/backend/interface.go`) | Sign, Encrypt, Decrypt, ListKeys, RotateKey — this is the only way crypto ops are called |
+| F-03 | P0 | T0 | [x] | Define `Auditor` interface (`internal/audit/interface.go`) | Log, Flush — never call a sink directly from business logic |
+| F-04 | P0 | T0 | [x] | Define `AuditEvent` struct (all fields per §9.4) | payload_hash only, never payload |
+| F-05 | P0 | T0 | [x] | Implement `dev` backend (`internal/backend/dev.go`) — in-memory, no external deps | Used for local dev and unit tests |
+| F-06 | P0 | T0 | [x] | Implement file audit sink (`internal/audit/file.go`) — structured JSON, append-only | Used in local dev mode |
+| F-07 | P1 | T0 | [x] | Implement `MultiAuditor` (`internal/audit/multi.go`) — fan-out to N sinks | All audit writes go through this |
+| F-08 | P0 | T0 | [x] | Write adversarial tests for Backend interface contract | Test: key material never in return values, error paths don't leak |
 
 ---
 

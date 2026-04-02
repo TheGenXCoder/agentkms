@@ -1074,6 +1074,8 @@ func TestOpenBao_ListKeys_EmptyEngine_ReturnsNil(t *testing.T) {
 	// Use a separate mount path that we control, ensuring it is empty.
 	emptyMount := "transit-empty-test"
 	if err := enableTransit(globalEnv.addr, globalEnv.token, emptyMount); err != nil {
+		// Vault Enterprise or a specially configured OSS instance is required.
+		// TODO(#1): skip until 2027-01-01 — replace with a dedicated integration environment.
 		t.Skipf("cannot enable separate transit mount: %v", err)
 	}
 	t.Cleanup(func() {

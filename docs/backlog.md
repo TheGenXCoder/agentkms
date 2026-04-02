@@ -74,13 +74,14 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| C-01 | P0 | T0 | [ ] | Implement `POST /sign/{key-id}` handler | Policy check → backend.Sign() → audit → return signature only |
-| C-02 | P0 | T0 | [ ] | Implement `POST /encrypt/{key-id}` handler | Policy check → backend.Encrypt() → audit → return ciphertext only |
-| C-03 | P0 | T0 | [ ] | Implement `POST /decrypt/{key-id}` handler | Policy check → backend.Decrypt() → audit → return plaintext only |
-| C-04 | P0 | T0 | [ ] | Implement `GET /keys` handler | Returns metadata only — id, algorithm, versions, dates. NEVER key material. |
-| C-05 | P1 | T1 | [ ] | Implement `POST /keys/{key-id}/rotate` handler | Delegates to backend.RotateKey(), audits, returns new version metadata |
-| C-06 | P0 | T0 | [ ] | Adversarial tests: verify no key material in any response, log, or error | Priority 0 — this is the core guarantee |
-| C-07 | P1 | T1 | [ ] | Implement request input validation (payload_hash format, algorithm enum, key-id format) | Reject invalid inputs before policy check |
+| C-01 | P0 | T0 | [x] | Implement `POST /sign/{key-id}` handler | Policy check → backend.Sign() → audit → return signature only |
+| C-02 | P0 | T0 | [x] | Implement `POST /encrypt/{key-id}` handler | Policy check → backend.Encrypt() → audit → return ciphertext only |
+| C-03 | P0 | T0 | [x] | Implement `POST /decrypt/{key-id}` handler | Policy check → backend.Decrypt() → audit → return plaintext only |
+| C-04 | P0 | T0 | [x] | Implement `GET /keys` handler | Returns metadata only — id, algorithm, versions, dates. NEVER key material. |
+| C-05 | P1 | T1 | [ ] | Implement `POST /keys/{key-id}/rotate` handler | Delegates to backend.RotateKey(), audits, returns new version metadata; stub (501+audited) in place |
+| C-06 | P0 | T0 | [x] | Adversarial tests: verify no key material in any response, log, or error | Done: 12 categories of adversarial tests including audit-failure fail-closed behaviour |
+| C-07 | P1 | T1 | [x] | Implement request input validation (payload_hash format, algorithm enum, key-id format) | Done: validation precedes policy check on all handlers; unknown JSON fields rejected |
+| C-08 | P2 | T1 | [ ] | Add `KeyVersion int` to `backend.DecryptResult` and record in decrypt audit events | Identified in adversarial review: decrypt audit events always carry key_version=0 |
 
 ---
 

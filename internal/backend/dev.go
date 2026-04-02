@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdsa"
@@ -15,6 +16,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	// Ensure the SHA-256 hash function is linked into the binary.
+	// Required for crypto.SHA256.New() used by rsa.SignPKCS1v15.
+	_ "crypto/sha256"
 )
 
 // DevBackend is a fully in-memory Backend implementation used for local
@@ -105,6 +110,13 @@ func (e *keyEntry) versionByNumber(n int) *keyVersion {
 //
 // CreateKey is not part of the Backend interface; it is a DevBackend-specific
 // operation used by the dev CLI and tests to seed the key store.
+//
+// PERFORMANCE NOTE: CreateKey holds the global write lock (b.mu) for the
+// entire duration of key material generation.  For RS256 (RSA-2048) this
+// takes ~100-400ms and blocks all concurrent Backend calls.  This is
+// acceptable in the dev backend — key creation is an infrequent setup
+// operation, not a hot path.  Production backends (OpenBao, AWS KMS) perform
+// key generation server-side and do not have this constraint.
 //
 // Supported algorithms:
 //   - AlgorithmES256       — ECDSA P-256
@@ -230,9 +242,13 @@ func (b *DevBackend) Sign(ctx context.Context, keyID string, payloadHash []byte,
 		}
 
 	case AlgorithmRS256:
-		// rsa.SignPKCS1v15 requires the hash to already be the correct size;
-		// payloadHash is 32 bytes (SHA-256), matching crypto.SHA256.
-		sig, err = rsa.SignPKCS1v15(rand.Reader, ver.rsaPrivKey, 0, payloadHash)
+		// rsa.SignPKCS1v15 with crypto.SHA256 prepends the correct ASN.1
+		// DigestInfo prefix (OID + hash) before signing, producing a
+		// standards-compliant RSASSA-PKCS1-v1_5 signature per RFC 8017 §8.2.
+		// payloadHash must be the 32-byte SHA-256 digest of the payload.
+		// Using hash=0 ("sign raw bytes") would produce a non-standard
+		// signature that external verifiers (JWT, TLS, OpenSSL) reject.
+		sig, err = rsa.SignPKCS1v15(rand.Reader, ver.rsaPrivKey, crypto.SHA256, payloadHash)
 		if err != nil {
 			return nil, fmt.Errorf("backend: RS256 sign: %w", err)
 		}
@@ -356,9 +372,6 @@ func (b *DevBackend) Decrypt(ctx context.Context, keyID string, ciphertext []byt
 			ErrInvalidInput, keyID, keyVersionNum, entry.latestVersion().version)
 	}
 
-	nonce := ciphertext[4:16]
-	sealed := ciphertext[16:]
-
 	block, err := aes.NewCipher(ver.aesKey)
 	if err != nil {
 		return nil, fmt.Errorf("backend: AES cipher init: %w", err)
@@ -367,6 +380,13 @@ func (b *DevBackend) Decrypt(ctx context.Context, keyID string, ciphertext []byt
 	if err != nil {
 		return nil, fmt.Errorf("backend: GCM init: %w", err)
 	}
+
+	// Extract nonce using the cipher's reported nonce size rather than a
+	// hardcoded offset.  Standard AES-GCM always returns 12, but deriving
+	// it from the cipher object keeps Encrypt and Decrypt consistent.
+	nonceEnd := 4 + gcm.NonceSize()
+	nonce := ciphertext[4:nonceEnd]
+	sealed := ciphertext[nonceEnd:]
 
 	plaintext, err := gcm.Open(nil, nonce, sealed, nil)
 	if err != nil {

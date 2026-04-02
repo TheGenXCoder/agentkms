@@ -51,6 +51,18 @@ type Auditor interface {
 	// If the sink is temporarily unavailable, implementations may queue
 	// events internally, but MUST return an error if the queue is full or
 	// the write deadline is exceeded.
+	//
+	// CONTEXT WARNING: implementations check ctx for cancellation before
+	// writing.  If the caller's request context may be cancelled (e.g., on
+	// client disconnect or timeout), callers MUST pass a detached context to
+	// Log to ensure audit events are not silently dropped.
+	//
+	// Correct pattern (Go 1.21+):
+	//   auditor.Log(context.WithoutCancel(reqCtx), event)
+	//
+	// Without this, a client disconnect before the audit write completes
+	// causes Log to return ctx.Err() and the event is lost — a compliance
+	// violation under SOC 2 CC7.2 and PCI-DSS Req 10.
 	Log(ctx context.Context, event AuditEvent) error
 
 	// Flush ensures all buffered events have been written durably to the

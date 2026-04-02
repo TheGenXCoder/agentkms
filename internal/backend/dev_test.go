@@ -22,6 +22,7 @@ package backend
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -29,10 +30,13 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"testing"
+
+	_ "crypto/sha256" // register SHA-256 with the crypto package
 )
 
 // ── Test fixtures ─────────────────────────────────────────────────────────────
@@ -117,6 +121,8 @@ func TestDevBackend_Sign_RS256_RoundTrip(t *testing.T) {
 	}
 
 	// Verify with the RSA public key.
+	// Must use crypto.SHA256 — the signature was produced with the DigestInfo
+	// prefix for SHA-256; verifying with hash=0 (raw bytes) would fail.
 	b.mu.RLock()
 	entry := b.keys["rsa/shared"]
 	b.mu.RUnlock()
@@ -125,7 +131,7 @@ func TestDevBackend_Sign_RS256_RoundTrip(t *testing.T) {
 	pubKey := &entry.versions[0].rsaPrivKey.PublicKey
 	entry.mu.RUnlock()
 
-	if err := rsa.VerifyPKCS1v15(pubKey, 0, hash, result.Signature); err != nil {
+	if err := rsa.VerifyPKCS1v15(pubKey, crypto.SHA256, hash, result.Signature); err != nil {
 		t.Fatalf("RSA signature verification failed: %v", err)
 	}
 }
@@ -1219,40 +1225,15 @@ func TestDevBackend_CreateKey_UnsupportedAlgorithm(t *testing.T) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-func isErrKeyNotFound(err error) bool {
-	return containsSentinel(err, ErrKeyNotFound)
-}
-
-func isErrAlgorithmMismatch(err error) bool {
-	return containsSentinel(err, ErrAlgorithmMismatch)
-}
-
-func isErrKeyTypeMismatch(err error) bool {
-	return containsSentinel(err, ErrKeyTypeMismatch)
-}
-
-func isErrInvalidInput(err error) bool {
-	return containsSentinel(err, ErrInvalidInput)
-}
-
-// containsSentinel unwraps err checking for target using errors.Is.
-// Using the errors package directly avoids an import cycle.
-func containsSentinel(err, target error) bool {
-	// Walk the error chain manually to avoid importing "errors" from a
-	// different package — we're already in package backend.
-	for err != nil {
-		if err == target {
-			return true
-		}
-		type unwrapper interface{ Unwrap() error }
-		u, ok := err.(unwrapper)
-		if !ok {
-			break
-		}
-		err = u.Unwrap()
-	}
-	return false
-}
+// isErrKeyNotFound, isErrAlgorithmMismatch, isErrKeyTypeMismatch, and
+// isErrInvalidInput use errors.Is to walk the full error chain, including
+// multi-error chains produced by errors.Join and fmt.Errorf with multiple
+// %w verbs (Go 1.20+).  The previous containsSentinel helper only handled
+// single-parent Unwrap() chains.
+func isErrKeyNotFound(err error) bool     { return errors.Is(err, ErrKeyNotFound) }
+func isErrAlgorithmMismatch(err error) bool { return errors.Is(err, ErrAlgorithmMismatch) }
+func isErrKeyTypeMismatch(err error) bool  { return errors.Is(err, ErrKeyTypeMismatch) }
+func isErrInvalidInput(err error) bool    { return errors.Is(err, ErrInvalidInput) }
 
 // generateTestPayload produces a random 32-byte hash for use in tests.
 func generateTestPayload(t *testing.T) []byte {

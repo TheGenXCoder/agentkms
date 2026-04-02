@@ -101,7 +101,18 @@ type AuditEvent struct {
 	Outcome string `json:"outcome"`
 
 	// DenyReason explains why an operation was denied.  Empty on success or
-	// non-denial errors.  Must not include key material or stack traces.
+	// non-denial errors.
+	//
+	// SECURITY CONSTRAINT: DenyReason MUST contain only human-readable policy
+	// explanation text.  It MUST NOT contain:
+	//   - Key material (private key bytes, AES key bytes, LLM API keys)
+	//   - Stack traces (use structured logging for debug context)
+	//   - Raw payloads or decrypted data
+	//   - PEM-encoded key blocks
+	//
+	// Safe examples: "policy: identity not permitted for key namespace",
+	//   "rate limit exceeded", "token expired".
+	// Unsafe: fmt.Sprintf("key %x denied", keyBytes) — never do this.
 	DenyReason string `json:"deny_reason,omitempty"`
 
 	// SourceIP is the caller's remote IP address (without port).

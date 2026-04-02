@@ -200,6 +200,193 @@ function renderGates(config: CoordConfig): string {
   return lines.join("\n");
 }
 
+// ── Review Brief ─────────────────────────────────────────────────────────────
+
+// Per-stream adversarial review guidance.
+// Keeps the brief specific to each stream's security surface.
+const STREAM_REVIEW_GUIDANCE: Record<string, { invariants: string[]; adversarialCases: string[] }> = {
+  auth: {
+    invariants: [
+      "Token material MUST NOT appear in any log line, error message, or response body",
+      "mTLS must validate the full cert chain against the CA — cert presence alone is insufficient",
+      "A revoked token must be rejected on the very next request after revocation",
+      "A token issued for identity A must be rejected when presented by identity B (no cross-identity replay)",
+      "TLS 1.3 minimum — TLS 1.2 and below must be rejected at the listener level",
+      "Client certificate is required on every connection — no-cert clients must fail the TLS handshake",
+    ],
+    adversarialCases: [
+      "Present an expired client certificate → TLS handshake must fail",
+      "Present a cert signed by an unknown/untrusted CA → handshake must fail",
+      "Present no client certificate → handshake must fail",
+      "Call /auth/session with a valid cert then call /sign with a revoked token → 401",
+      "Capture a session token and replay it after calling /auth/revoke → 401",
+      "Present a syntactically valid but HMAC-invalid token → 401, no timing leak",
+      "Fuzz the token format (empty, too short, non-base64, correct length wrong bytes) → 401 each time",
+      "Call /auth/refresh with an already-expired token → 401",
+      "Verify error responses contain no token bytes, no HMAC keys, no cert fields beyond caller ID",
+    ],
+  },
+  api: {
+    invariants: [
+      "No key material in ANY response body, header, error message, or log line",
+      "Every handler must check: session token valid, policy allows, THEN call backend",
+      "payload_hash must be exactly 32 bytes (SHA-256) — reject anything else before policy check",
+      "Key IDs must match the allowed format — reject malformed IDs before policy check",
+      "algorithm must be one of the defined enum values — reject unknown algorithms",
+      "Audit event must be written BEFORE the response is sent, regardless of outcome",
+    ],
+    adversarialCases: [
+      "Call /sign with a raw payload instead of a hash → 400, payload not echoed in error",
+      "Call /sign with a 31-byte hash (too short) → 400",
+      "Call /sign with an unknown algorithm string → 400",
+      "Call /sign with a key ID that does not exist → 404, no backend detail in error",
+      "Call /encrypt with nil/empty body → 400",
+      "Call /keys and verify: no private key bytes, no AES key bytes in any field",
+      "Send a request with no session token → 401 before any backend call",
+      "Send a request with a malformed session token → 401 before any backend call",
+      "Verify audit log contains the event for EVERY case above, including denials",
+    ],
+  },
+  policy: {
+    invariants: [
+      "Deny-by-default: an empty rule set must deny ALL operations for ALL identities",
+      "Allow rules must be explicit and specific — no wildcards unless intentionally designed",
+      "A rule granting team A access must not grant access to team B",
+      "Operation-type scoping: a signing key allow-rule must not permit encrypt/decrypt",
+      "Rate limit state must not persist across policy reloads in a way that resets limits",
+    ],
+    adversarialCases: [
+      "Load an empty policy → every Evaluate call must return Deny",
+      "Load a policy granting team-A sign on key-X → team-B request for key-X must be denied",
+      "Load a policy granting sign on key-X → encrypt request on key-X must be denied",
+      "Load a policy with a key prefix rule → request for key outside prefix must be denied",
+      "Attempt YAML injection in key ID field → must not execute or alter policy",
+      "Load a policy file with invalid YAML → loader must return error, not silently allow all",
+      "Load a policy with duplicate rule IDs → loader must reject or last-wins consistently",
+    ],
+  },
+  backend: {
+    invariants: [
+      "No Backend method may return, log, or expose private key material",
+      "Sign returns only signature bytes and key version — nothing else",
+      "Encrypt returns only ciphertext — plaintext must not be echoed",
+      "Decrypt returns only plaintext — key material must not be included",
+      "RotateKey and ListKeys return KeyMeta only — no key-material fields",
+      "All errors must be safe: no key bytes in error messages",
+    ],
+    adversarialCases: [
+      "Call Sign and inspect SignResult for any bytes that look like a private key",
+      "Call Encrypt and verify ciphertext does not contain the plaintext verbatim",
+      "Call Decrypt with a truncated ciphertext → ErrInvalidInput, no key bytes in error",
+      "Call Sign on an encryption key → ErrKeyTypeMismatch",
+      "Call Encrypt on a signing key → ErrKeyTypeMismatch",
+      "Call any method with a non-existent key ID → ErrKeyNotFound, no backend detail leaked",
+      "Rotate a key then decrypt old ciphertext → must succeed using retained old version",
+      "Call Sign with a 31-byte payloadHash → ErrInvalidInput",
+    ],
+  },
+  "local-dev": {
+    invariants: [
+      "The dev server must enforce the same mTLS + token lifecycle as production — no shortcuts",
+      "Dev certs must not be trusted by any non-local AgentKMS instance",
+      "In-memory backend must never write key material to disk",
+      "Policy must be loaded from file and enforced — no allow-all fallback",
+      "All audit events must be written to the file sink — no silent drops",
+    ],
+    adversarialCases: [
+      "Start server, connect without a client cert → TLS handshake failure",
+      "Start server with an empty policy file → all operations denied",
+      "Perform a sign operation and verify the audit log contains the event",
+      "Revoke a token then use it → 401",
+      "Verify the dev cert cannot be used against a different CA's server",
+      "Shut down server → Flush must have been called, no missing audit events",
+    ],
+  },
+  "pi-pkg": {
+    invariants: [
+      "Zero cryptographic logic in TypeScript — all crypto calls go to the AgentKMS service",
+      "LLM API keys must only exist in the in-memory runtimeKeys map — never written to disk",
+      "session_shutdown must revoke the server-side token before clearing local state",
+      "tool_call hook must block reads to .env, auth.json, .agentkms/, credentials paths",
+      "mTLS client cert path must be read from ~/.agentkms/ — never hardcoded",
+    ],
+    adversarialCases: [
+      "Inspect the runtimeKeys map: values must be strings (keys), not logged or persisted",
+      "Simulate session_shutdown with a network failure: token still expires naturally in 15min",
+      "Attempt to read .env via the read tool → tool_call hook must block it",
+      "Simulate a missing ~/.agentkms/client.crt → session_start must notify and abort cleanly",
+      "Simulate a 401 from AgentKMS on token refresh → Pi must not crash, must re-authenticate",
+      "Verify no API key appears in any console.log, pi.ui.notify, or tool result text",
+    ],
+  },
+};
+
+function renderReviewBrief(config: CoordConfig, stream: StreamDef): string {
+  const backlogPath = join(stream.path, "docs", "backlog.md");
+  const statusMap = parseBacklog(backlogPath);
+  const stats = streamStats(stream);
+
+  const guidance = STREAM_REVIEW_GUIDANCE[stream.name];
+
+  const itemLines = stream.ids.map(id => {
+    const s = statusMap.get(id) ?? "todo";
+    const icon = s === "done" ? "[x]" : s === "in-progress" ? "[~]" : s === "blocked" ? "[!]" : "[ ]";
+    return `    ${icon} ${id}`;
+  }).join("\n");
+
+  let brief = [
+    "",
+    `${"-".repeat(66)}`,
+    `  AgentKMS · Adversarial Review Brief`,
+    `${"-".repeat(66)}`,
+    "",
+    `  Stream:   ${stream.name}`,
+    `  Branch:   ${stream.branch}`,
+    `  Progress: ${stats.done}/${stats.total} items done (${stats.pct}%)`,
+    "",
+    `  ⚠️  INDEPENDENT SESSION REQUIRED`,
+    `  Do not use the session that wrote this code.`,
+    `  Open a NEW Pi session with /new or a fresh terminal.`,
+    `  Paste this entire brief as your opening message.`,
+    "",
+    `  Backlog items under review:`,
+    itemLines,
+    "",
+  ].join("\n");
+
+  if (guidance) {
+    brief += `  Security invariants to verify:\n`;
+    for (const inv of guidance.invariants) {
+      brief += `    • ${inv}\n`;
+    }
+    brief += `\n  Adversarial cases to run:\n`;
+    for (const ac of guidance.adversarialCases) {
+      brief += `    → ${ac}\n`;
+    }
+    brief += "\n";
+  }
+
+  brief += [
+    `  Instructions for the reviewer:`,
+    `    1. Read every file in the stream's worktree that was added or modified.`,
+    `       Path: ${stream.path}`,
+    `    2. Run: go test -race ./... (or equivalent for TypeScript streams)`,
+    `       Report ALL failures — do not dismiss any as flaky.`,
+    `    3. Check each security invariant above explicitly. Do not assume.`,
+    `    4. Run each adversarial case. Report pass/fail for each.`,
+    `    5. Return a structured findings report:`,
+    `       - PASS / FAIL for each invariant`,
+    `       - PASS / FAIL for each adversarial case`,
+    `       - Any additional issues found during reading`,
+    `    6. The implementing session must address ALL findings before marking [x].`,
+    "",
+    `${"-".repeat(66)}`,
+    "",
+  ].join("\n");
+
+  return brief;
+}
+
 // ── Extension ─────────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
@@ -331,13 +518,27 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify(renderGates(config), "info");
           break;
 
+        case "review": {
+          const stream = currentStream;
+          if (!stream) {
+            ctx.ui.notify(
+              "Not in a registered stream directory. Run /coord status.",
+              "error"
+            );
+            break;
+          }
+          ctx.ui.notify(renderReviewBrief(config, stream), "info");
+          break;
+        }
+
         default:
           ctx.ui.notify(
             "Usage: /coord <subcommand>\n\n" +
             "  status  — Progress table across all streams\n" +
             "  next    — Next TODO item in this stream\n" +
             "  focus   — This stream's focus and context\n" +
-            "  gates   — Gate status (what must complete before streams unlock)",
+            "  gates   — Gate status (what must complete before streams unlock)\n" +
+            "  review  — Print adversarial review brief for independent session",
             "info"
           );
       }

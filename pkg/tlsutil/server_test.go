@@ -62,7 +62,45 @@ func mustClientCert(t *testing.T, ca *tlsutil.CertBundle, cn string) *tlsutil.Ce
 
 // ── ServerTLSConfig tests ─────────────────────────────────────────────────────
 
-func TestServerTLSConfig_ValidConfig(t *testing.T) {
+func TestClientTLSConfig_ValidConfig(t *testing.T) {
+	ca := mustCA(t)
+	client := mustClientCert(t, ca, "agentkms-client")
+
+	cfg, err := tlsutil.ClientTLSConfig(ca.CertPEM, client.CertPEM, client.KeyPEM)
+	if err != nil {
+		t.Fatalf("ClientTLSConfig failed: %v", err)
+	}
+	if cfg.MinVersion != tls.VersionTLS13 {
+		t.Errorf("expected MinVersion TLS 1.3, got %x", cfg.MinVersion)
+	}
+	if len(cfg.Certificates) != 1 {
+		t.Fatalf("expected 1 certificate, got %d", len(cfg.Certificates))
+	}
+	if cfg.RootCAs == nil {
+		t.Error("expected RootCAs to be set")
+	}
+}
+
+func TestClientTLSConfig_InvalidCA(t *testing.T) {
+	ca := mustCA(t)
+	client := mustClientCert(t, ca, "agentkms-client")
+
+	_, err := tlsutil.ClientTLSConfig([]byte("invalid ca"), client.CertPEM, client.KeyPEM)
+	if err == nil {
+		t.Fatal("expected error with invalid CA")
+	}
+}
+
+func TestClientTLSConfig_InvalidClientCert(t *testing.T) {
+	ca := mustCA(t)
+
+	_, err := tlsutil.ClientTLSConfig(ca.CertPEM, []byte("invalid"), []byte("invalid"))
+	if err == nil {
+		t.Fatal("expected error with invalid client cert")
+	}
+}
+
+func TestServerTLSConfig_ValidConfig2(t *testing.T) {
 	ca := mustCA(t)
 	srv := mustServerCert(t, ca)
 

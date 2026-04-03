@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/policy"
+	"github.com/agentkms/agentkms/pkg/tlsutil"
 )
 
 const (
@@ -57,12 +59,24 @@ func main() {
 	elkAddr    := flag.String("elk-addr", envOr("AGENTKMS_ELK_ADDR", defaultELKAddr), "Elasticsearch address (optional)")
 	elkIndex   := flag.String("elk-index", envOr("AGENTKMS_ELK_INDEX", "agentkms-audit"), "Elasticsearch index")
 	env        := flag.String("env", envOr("AGENTKMS_ENV", defaultEnvironment), "Deployment environment")
+	tlsCert    := flag.String("tls-cert", envOr("AGENTKMS_TLS_CERT", ""), "Server TLS certificate path (required in production)")
+	tlsKey     := flag.String("tls-key", envOr("AGENTKMS_TLS_KEY", ""), "Server TLS key path (required in production)")
+	vaultCert  := flag.String("vault-tls-cert", envOr("AGENTKMS_VAULT_TLS_CERT", ""), "Client TLS cert for Vault/OpenBao")
+	vaultKey   := flag.String("vault-tls-key", envOr("AGENTKMS_VAULT_TLS_KEY", ""), "Client TLS key for Vault/OpenBao")
+	vaultCA    := flag.String("vault-tls-ca", envOr("AGENTKMS_VAULT_TLS_CA", ""), "CA certificate for Vault/OpenBao")
 	flag.Parse()
 
 	// ── Logger ─────────────────────────────────────────────────────────────────
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})))
+
+	if *env == "production" {
+		if *tlsCert == "" || *tlsKey == "" {
+			slog.Error("server TLS is required in production (--tls-cert, --tls-key)")
+			os.Exit(1)
+		}
+	}
 
 	slog.Info("agentkms starting",
 		"addr", *addr,
@@ -108,6 +122,34 @@ func main() {
 
 	slog.Info("audit sink ready", "path", *auditLog)
 
+	// ── Vault mTLS ─────────────────────────────────────────────────────────────
+	var vaultTLS *tls.Config
+	if *vaultCert != "" && *vaultKey != "" && *vaultCA != "" {
+		vaultCABytes, err := os.ReadFile(*vaultCA)
+		if err != nil {
+			slog.Error("failed to read vault ca", "error", err)
+			os.Exit(1)
+		}
+		vaultCertBytes, err := os.ReadFile(*vaultCert)
+		if err != nil {
+			slog.Error("failed to read vault cert", "error", err)
+			os.Exit(1)
+		}
+		vaultKeyBytes, err := os.ReadFile(*vaultKey)
+		if err != nil {
+			slog.Error("failed to read vault key", "error", err)
+			os.Exit(1)
+		}
+		vaultTLS, err = tlsutil.ClientTLSConfig(vaultCABytes, vaultCertBytes, vaultKeyBytes)
+		if err != nil {
+			slog.Error("failed to build vault tls config", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("vault client mtls configured")
+	} else if *env == "production" && *vaultAddr != "" {
+		slog.Warn("vault mtls not configured in production")
+	}
+
 	// ── Backend ────────────────────────────────────────────────────────────────
 	var bknd backend.Backend
 
@@ -122,8 +164,9 @@ func main() {
 		}
 
 		cfg := backend.OpenBaoConfig{
-			Address: *vaultAddr,
-			Token:   vaultToken,
+			Address:   *vaultAddr,
+			Token:     vaultToken,
+			TLSConfig: vaultTLS,
 		}
 		// Read mount paths from config if provided, otherwise use defaults.
 		if mountTransit, mountKV := mountsFromConfig(*configPath); mountTransit != "" {
@@ -152,6 +195,7 @@ func main() {
 		loader := policy.NewVaultPolicyLoader(policy.VaultPolicyConfig{
 			Address:           *vaultAddr,
 			Token:             vaultToken,
+			TLSConfig:         vaultTLS,
 			PolicyPath:        *vaultPolicyPath,
 			LocalFallbackPath: *policyFile,
 			ReloadInterval:    *vaultPolicyReload,
@@ -181,7 +225,7 @@ func main() {
 	// ── Credential vender ─────────────────────────────────────────────────────
 	apiServer := api.NewServer(bknd, auditor, eng, *env)
 	if *vaultAddr != "" {
-		kv := credentials.NewOpenBaoKV(*vaultAddr, vaultToken)
+		kv := credentials.NewOpenBaoKV(*vaultAddr, vaultToken, vaultTLS)
 		apiServer.SetVender(credentials.NewVender(kv, "kv"))
 		slog.Info("credential vender ready")
 	}
@@ -208,16 +252,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	slog.Info("listening", "addr", ln.Addr().String())
-
 	// ── Signal handling + graceful shutdown ────────────────────────────────────
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
 	errCh := make(chan error, 1)
 	go func() {
-		if err := httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("http server: %w", err)
+		if *tlsCert != "" && *tlsKey != "" {
+			slog.Info("listening (TLS)", "addr", ln.Addr().String())
+			if err := httpServer.ServeTLS(ln, *tlsCert, *tlsKey); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("http server (tls): %w", err)
+			}
+		} else {
+			slog.Warn("listening (PLAIN HTTP)", "addr", ln.Addr().String())
+			if err := httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("http server: %w", err)
+			}
 		}
 	}()
 

@@ -68,7 +68,9 @@ type VendedCredential struct {
 
 	// APIKey is the LLM provider API key.
 	// SECURITY: NEVER log, audit, or store this value.  It is key material.
-	APIKey string
+	// Use []byte so callers can zero it after writing the HTTP response.
+	// Call Zero() in a defer immediately after use.
+	APIKey []byte
 
 	// ExpiresAt is when this credential should be considered expired.
 	// The Pi extension refreshes the credential before this time.
@@ -76,6 +78,15 @@ type VendedCredential struct {
 
 	// TTLSeconds is the number of seconds until ExpiresAt.
 	TTLSeconds int
+}
+
+// Zero overwrites the APIKey with zeros.  Call this in a defer after
+// writing the HTTP response to minimize the window during which the
+// key is resident in heap memory.
+func (c *VendedCredential) Zero() {
+	for i := range c.APIKey {
+		c.APIKey[i] = 0
+	}
 }
 
 // KVReader is the interface for reading secrets from the backend KV store.
@@ -133,7 +144,7 @@ func (v *Vender) Vend(ctx context.Context, provider string) (*VendedCredential, 
 
 	return &VendedCredential{
 		Provider:   provider,
-		APIKey:     apiKey, // SECURITY: caller must not log or audit this value
+		APIKey:     []byte(apiKey), // SECURITY: caller must call Zero() after use
 		ExpiresAt:  expiresAt,
 		TTLSeconds: int(CredentialTTL.Seconds()),
 	}, nil

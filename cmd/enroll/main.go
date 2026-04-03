@@ -41,6 +41,11 @@ import (
 	"github.com/agentkms/agentkms/internal/auth"
 )
 
+// httpClient is a shared HTTP client with a 30-second timeout.
+// Used for OIDC discovery, token exchange, and AgentKMS bootstrap.
+// SECURITY: replaces http.DefaultClient which has no timeout.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "agentkms enroll: %v\n", err)
@@ -335,7 +340,7 @@ func fetchOIDCDiscovery(ctx context.Context, issuer string) (*oidcDiscovery, err
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GET %s: %w", well, err)
 	}
@@ -362,7 +367,7 @@ func exchangeCodeForIDToken(ctx context.Context, tokenEndpoint, clientID, code, 
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("POST %s: %w", tokenEndpoint, err)
 	}
@@ -402,7 +407,7 @@ func agentKMSBootstrap(ctx context.Context, agentKMSAddr, idToken string) (strin
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("POST %s: %w", enrollURL, err)
 	}

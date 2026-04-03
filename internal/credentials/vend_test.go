@@ -48,7 +48,7 @@ func TestVend_Success(t *testing.T) {
 	if cred.Provider != "anthropic" {
 		t.Errorf("Provider = %q, want anthropic", cred.Provider)
 	}
-	if cred.APIKey != "sk-ant-test-key-abcdef" {
+	if string(cred.APIKey) != "sk-ant-test-key-abcdef" {
 		t.Errorf("APIKey mismatch")
 	}
 	if cred.TTLSeconds != int(credentials.CredentialTTL.Seconds()) {

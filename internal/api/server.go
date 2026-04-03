@@ -11,6 +11,8 @@ package api
 import (
 	"context"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/agentkms/agentkms/internal/audit"
 	"github.com/agentkms/agentkms/internal/backend"
@@ -52,7 +54,15 @@ type Server struct {
 	env string
 
 	mux *http.ServeMux
+
+	// credRateLimit tracks the last vend time per caller+provider.
+	// Key: "callerID:provider", Value: time.Time of last vend.
+	credRateLimit sync.Map
 }
+
+// credRateLimitInterval is the minimum interval between credential vends
+// for the same caller+provider combination.
+const credRateLimitInterval = 60 * time.Second
 
 // SetVender wires in the credential vender after construction.
 // Call this from cmd/server/main.go once the KV backend is available.

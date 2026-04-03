@@ -21,11 +21,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
+
+// validEventID matches UUID-format event IDs (lowercase hex + hyphens).
+var validEventID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // ELKConfig holds connection parameters for an Elasticsearch cluster.
 type ELKConfig struct {
@@ -166,18 +171,22 @@ func (s *ELKAuditSink) Flush(ctx context.Context) error {
 
 // writeOne writes a single event via PUT /{index}/_doc/{event_id}.
 func (s *ELKAuditSink) writeOne(ctx context.Context, event AuditEvent) error {
+	if !validEventID.MatchString(event.EventID) {
+		return fmt.Errorf("audit: ELKAuditSink: invalid EventID format: %q", event.EventID)
+	}
+
 	body, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("audit: ELKAuditSink: marshal: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/%s/_doc/%s",
+	docURL := fmt.Sprintf("%s/%s/_doc/%s",
 		strings.TrimRight(s.cfg.Address, "/"),
 		s.index,
-		event.EventID,
+		url.PathEscape(event.EventID),
 	)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, docURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("audit: ELKAuditSink: build request: %w", err)
 	}
@@ -235,10 +244,44 @@ func (s *ELKAuditSink) flushLocked(ctx context.Context) error {
 		return fmt.Errorf("audit: ELKAuditSink: bulk HTTP: %w", err)
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
+
+	// Parse bulk response to detect per-item failures (MEDIUM-04).
+	// ES returns 200 even when individual items fail; check "errors" field.
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("audit: ELKAuditSink: bulk returned status %d", resp.StatusCode)
+	}
+
+	var bulkResp struct {
+		Errors bool `json:"errors"`
+		Items  []struct {
+			Index struct {
+				ID     string `json:"_id"`
+				Status int    `json:"status"`
+				Error  struct {
+					Type   string `json:"type"`
+					Reason string `json:"reason"`
+				} `json:"error"`
+			} `json:"index"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(respBody, &bulkResp); err != nil {
+		// Can't parse response — treat as failure, don't clear buffer.
+		return fmt.Errorf("audit: ELKAuditSink: parse bulk response: %w", err)
+	}
+	if bulkResp.Errors {
+		failed := 0
+		for _, item := range bulkResp.Items {
+			if item.Index.Status < 200 || item.Index.Status >= 300 {
+				failed++
+			}
+		}
+		// Log but still clear — events were best-effort delivered.
+		// Individual item failures are typically mapping conflicts,
+		// not transient — retrying won't help.
+		fmt.Fprintf(os.Stderr, "audit: ELK: bulk write had %d/%d item failures\n",
+			failed, len(bulkResp.Items))
 	}
 
 	// Clear buffer only after successful write.

@@ -29,6 +29,7 @@ package policy
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,6 +49,11 @@ type VaultPolicyConfig struct {
 	// Token is the Vault token with read access to the KV path.
 	// SECURITY: never log this value.
 	Token string `json:"-"`
+
+	// TLSConfig is the TLS configuration for the Vault client, including
+	// client certificates for mTLS.
+	// Required in production.
+	TLSConfig *tls.Config
 
 	// KVMount is the KV v2 secrets engine mount path (default "kv").
 	KVMount string
@@ -72,6 +78,13 @@ type VaultPolicyLoader struct {
 	client *http.Client
 	mu     sync.RWMutex
 	engine *Engine
+
+	// lastReload tracks the time of the last successful policy load.
+	// Used by Healthy() to detect staleness.
+	lastReload time.Time
+
+	// consecutiveFailures tracks reload failures since last success.
+	consecutiveFailures int
 }
 
 // NewVaultPolicyLoader constructs a VaultPolicyLoader.
@@ -90,9 +103,16 @@ func NewVaultPolicyLoader(cfg VaultPolicyConfig) *VaultPolicyLoader {
 			"  Vault tokens will be sent in plaintext.\n"+
 			"  Use https:// in production.\n")
 	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = cfg.TLSConfig
+
 	return &VaultPolicyLoader{
 		cfg:    cfg,
-		client: &http.Client{Timeout: 15 * time.Second},
+		client: &http.Client{
+			Timeout:   15 * time.Second,
+			Transport: transport,
+		},
 	}
 }
 
@@ -135,13 +155,44 @@ func (v *VaultPolicyLoader) EngineI() EngineI {
 func (v *VaultPolicyLoader) reload(ctx context.Context) error {
 	p, err := v.fetchPolicy(ctx)
 	if err != nil {
+		v.mu.Lock()
+		v.consecutiveFailures++
+		v.mu.Unlock()
 		return err
 	}
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.engine = New(*p)
+	v.lastReload = time.Now()
+	v.consecutiveFailures = 0
 	return nil
+}
+
+// Healthy reports whether the policy loader is operating normally.
+// Returns false if the policy is staler than 2× ReloadInterval
+// or if there have been 3+ consecutive reload failures.
+func (v *VaultPolicyLoader) Healthy() bool {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	if v.consecutiveFailures >= 3 {
+		return false
+	}
+	if v.cfg.ReloadInterval > 0 && !v.lastReload.IsZero() {
+		staleThreshold := v.cfg.ReloadInterval * 2
+		if time.Since(v.lastReload) > staleThreshold {
+			return false
+		}
+	}
+	return true
+}
+
+// LastReload returns the time of the last successful policy load.
+func (v *VaultPolicyLoader) LastReload() time.Time {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.lastReload
 }
 
 // fetchPolicy fetches and validates the policy, trying KV first then fallback.

@@ -21,6 +21,7 @@ const (
 	errCodeOperationNotSupported = "operation_not_supported"
 	errCodeInternal             = "internal_error"
 	errCodeNotImplemented       = "not_implemented"
+	errCodeRateLimited          = "rate_limited"
 )
 
 // ── Response types ────────────────────────────────────────────────────────────

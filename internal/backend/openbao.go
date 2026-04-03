@@ -25,6 +25,7 @@ package backend
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -56,6 +57,11 @@ type OpenBaoConfig struct {
 	// SECURITY: json:"-" prevents accidental token exposure if this struct is
 	// ever serialised to JSON (e.g. debug logging, config export, tracing).
 	Token string `json:"-"`
+
+	// TLSConfig is the TLS configuration for the Vault client, including
+	// client certificates for mTLS.
+	// Required in production.
+	TLSConfig *tls.Config
 
 	// MountPath is the path at which the Transit secrets engine is mounted.
 	// Defaults to "transit" if empty.
@@ -105,7 +111,12 @@ func NewOpenBaoBackend(cfg OpenBaoConfig) (*OpenBaoBackend, error) {
 
 	client := cfg.HTTPClient
 	if client == nil {
-		client = http.DefaultClient
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = cfg.TLSConfig
+		client = &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: transport,
+		}
 	}
 
 	return &OpenBaoBackend{

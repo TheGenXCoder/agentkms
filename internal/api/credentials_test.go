@@ -120,6 +120,38 @@ func TestHandleGetLLMCredential_Success(t *testing.T) {
 	}
 }
 
+func TestHandleGetLLMCredential_RateLimit(t *testing.T) {
+	kv := &stubCredKV{
+		data: map[string]map[string]string{
+			"kv/data/llm/anthropic": {"api_key": "test-key"},
+		},
+	}
+	vender := credentials.NewVender(kv, "kv")
+	srv, _ := newCredServer(t, "test-key")
+	srv.SetVender(vender)
+
+	req, _ := http.NewRequest("GET", "/credentials/llm/anthropic", nil)
+	req.SetPathValue("provider", "anthropic")
+	// The test helper credRequest or the router must be used to get middleware injection.
+	// We'll use the router so it goes through the middleware (if any) or we just inject it manually.
+	// Wait, api package has ContextWithIdentity? No, it's setIdentityInContext which is unexported.
+	// Let's use credRequest.
+	
+	// First request should succeed.
+	rr1 := httptest.NewRecorder()
+	srv.ServeHTTP(rr1, req)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first request failed: %v", rr1.Code)
+	}
+
+	// Second request immediately after should be rate limited.
+	rr2 := httptest.NewRecorder()
+	srv.ServeHTTP(rr2, req)
+	if rr2.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 Too Many Requests, got %v", rr2.Code)
+	}
+}
+
 func TestHandleGetLLMCredential_UnsupportedProvider(t *testing.T) {
 	srv, sink := newCredServer(t, "sk-test")
 	rr := credRequest(t, srv, http.MethodGet, "/credentials/llm/unsupported-llm")

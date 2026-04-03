@@ -46,7 +46,7 @@ func TestOpenBaoKV_GetSecret_Success(t *testing.T) {
 	})
 	defer srv.Close()
 
-	kv := credentials.NewOpenBaoKV(srv.URL, "test-token")
+	kv := credentials.NewOpenBaoKV(srv.URL, "test-token", nil)
 	fields, err := kv.GetSecret(context.Background(), "kv/data/llm/anthropic")
 	if err != nil {
 		t.Fatalf("GetSecret: %v", err)
@@ -60,7 +60,7 @@ func TestOpenBaoKV_GetSecret_NotFound(t *testing.T) {
 	srv := httptest.NewServer(&fakeVaultKV{data: map[string]map[string]string{}})
 	defer srv.Close()
 
-	kv := credentials.NewOpenBaoKV(srv.URL, "test-token")
+	kv := credentials.NewOpenBaoKV(srv.URL, "test-token", nil)
 	_, err := kv.GetSecret(context.Background(), "kv/data/llm/missing")
 	if err == nil {
 		t.Fatal("expected error for missing path")
@@ -74,7 +74,7 @@ func TestOpenBaoKV_GetSecret_ServerError(t *testing.T) {
 	srv := httptest.NewServer(&fakeVaultKV{status: http.StatusInternalServerError})
 	defer srv.Close()
 
-	kv := credentials.NewOpenBaoKV(srv.URL, "test-token")
+	kv := credentials.NewOpenBaoKV(srv.URL, "test-token", nil)
 	_, err := kv.GetSecret(context.Background(), "kv/data/llm/anthropic")
 	if err == nil {
 		t.Fatal("expected error for server 500")
@@ -85,7 +85,7 @@ func TestOpenBaoKV_GetSecret_CancelledContext(t *testing.T) {
 	srv := httptest.NewServer(&fakeVaultKV{data: map[string]map[string]string{}})
 	defer srv.Close()
 
-	kv := credentials.NewOpenBaoKV(srv.URL, "test-token")
+	kv := credentials.NewOpenBaoKV(srv.URL, "test-token", nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := kv.GetSecret(ctx, "kv/data/llm/anthropic")
@@ -102,7 +102,7 @@ func TestOpenBaoKV_GetSecret_EmptyData(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	kv := credentials.NewOpenBaoKV(srv.URL, "test-token")
+	kv := credentials.NewOpenBaoKV(srv.URL, "test-token", nil)
 	_, err := kv.GetSecret(context.Background(), "kv/data/llm/anthropic")
 	if err == nil {
 		t.Fatal("expected error for empty data envelope")

@@ -23,6 +23,7 @@ package auth
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,6 +75,11 @@ type PKIConfig struct {
 	// SECURITY: never log this value.
 	BootstrapToken string `json:"-"`
 
+	// TLSConfig is the TLS configuration for the Vault client, including
+	// client certificates for mTLS.
+	// Required in production.
+	TLSConfig *tls.Config
+
 	// PKIMount is the path where the PKI engine is mounted.
 	// Defaults to "pki" if empty.
 	PKIMount string
@@ -110,9 +116,16 @@ func NewPKIClient(cfg PKIConfig) *PKIClient {
 			"  bootstrap tokens will be sent in plaintext.\n"+
 			"  Use https:// in production.\n")
 	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = cfg.TLSConfig
+
 	return &PKIClient{
 		cfg:    cfg,
-		client: &http.Client{Timeout: 30 * time.Second},
+		client: &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: transport,
+		},
 	}
 }
 

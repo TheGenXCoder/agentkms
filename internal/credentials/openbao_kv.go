@@ -2,6 +2,7 @@ package credentials
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,12 +24,16 @@ type OpenBaoKV struct {
 // NewOpenBaoKV constructs an OpenBaoKV reader.
 // address is the OpenBao base URL (e.g. "http://openbao:8200").
 // token is the Vault token with read access to the KV mount.
-func NewOpenBaoKV(address, token string) *OpenBaoKV {
+func NewOpenBaoKV(address, token string, tlsConfig *tls.Config) *OpenBaoKV {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsConfig
+
 	return &OpenBaoKV{
 		address: strings.TrimRight(address, "/"),
 		token:   token,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout:   10 * time.Second,
+			Transport: transport,
 		},
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/agentkms/agentkms/internal/audit"
 	"github.com/agentkms/agentkms/internal/credentials"
@@ -93,6 +94,19 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 	// Store provider in audit event (safe — it's just the provider name, not the key).
 	ev.KeyID = "llm/" + provider
 
+	// ── Rate limit check (MEDIUM-05) ─────────────────────────────────────
+	rateLimitKey := id.CallerID + ":" + provider
+	if last, ok := s.credRateLimit.Load(rateLimitKey); ok {
+		if time.Since(last.(time.Time)) < credRateLimitInterval {
+			ev.Outcome = audit.OutcomeDenied
+			ev.DenyReason = "rate limited: credential recently vended"
+			_ = s.auditLog(ctx, ev)
+			s.writeError(w, http.StatusTooManyRequests, errCodeRateLimited,
+				"credential recently vended — retry after TTL expires")
+			return
+		}
+	}
+
 	// ── 2. Policy check ────────────────────────────────────────────────────
 	decision, pErr := s.policy.Evaluate(ctx, id, audit.OperationCredentialVend, ev.KeyID)
 	if pErr != nil {
@@ -160,12 +174,16 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// ── 5. Response ────────────────────────────────────────────────────────
+	// Record successful vend time for rate limiting.
+	s.credRateLimit.Store(rateLimitKey, time.Now())
 	// SECURITY: this is the only response in the entire codebase that
 	// contains a live API key.  The handler writes it directly here and
 	// passes it nowhere else.  The key is NOT stored in the audit event.
+	// Zero the key in memory immediately after writing the response.
+	defer cred.Zero()
 	writeJSON(w, http.StatusOK, credentialResponse{
 		Provider:   cred.Provider,
-		APIKey:     cred.APIKey,
+		APIKey:     string(cred.APIKey),
 		ExpiresAt:  cred.ExpiresAt.Format("2006-01-02T15:04:05Z"),
 		TTLSeconds: cred.TTLSeconds,
 	})

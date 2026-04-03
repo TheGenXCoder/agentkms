@@ -19,6 +19,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# If invoked from inside a git worktree (.git is a file, not a directory),
+# resolve REPO_ROOT to the main repository so worktree paths are correct.
+# This lets the script be called from any worktree, not just the main repo.
+if [ -f "$REPO_ROOT/.git" ]; then
+  # .git file contains: "gitdir: /path/to/main/.git/worktrees/<name>"
+  _gitdir="$(sed 's/^gitdir: //' "$REPO_ROOT/.git")"
+  # Path: .git/worktrees/<name> → dirname×3 → main repo root
+  REPO_ROOT="$(cd "$(dirname "$(dirname "$(dirname "$_gitdir")")")" && pwd)"
+  SCRIPT_DIR="$REPO_ROOT/scripts"
+  unset _gitdir
+fi
+
 PARENT_DIR="$(dirname "$REPO_ROOT")"
 PROJECT="$(basename "$REPO_ROOT")"
 BACKLOG="$REPO_ROOT/docs/backlog.md"
@@ -407,6 +420,43 @@ setup_tmux() {
   echo ""
 }
 
+# =============================================================================
+# Auto-close: called after Pi exits in a stream window.
+# If all items for the stream are [x] done, closes the tmux window.
+# If tasks remain, prints a reminder and leaves the window open.
+# =============================================================================
+
+auto_close_if_done() {
+  local name="$1"
+  local ids path backlog total done
+  ids=$(stream_prop "IDS" "$name")
+  path=$(stream_path "$name")
+  backlog="$path/docs/backlog.md"
+  total=0; done=0
+
+  for id in $ids; do
+    total=$((total + 1))
+    [ "$(item_status "$id" "$backlog")" = "done" ] && done=$((done + 1))
+  done
+
+  if [ "$total" -gt 0 ] && [ "$done" -eq "$total" ]; then
+    echo ""
+    echo -e "${GREEN}══════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}  ✓  Stream '$name' complete — all $total items done.${NC}"
+    echo -e "${GREEN}  Closing window in 4 seconds...${NC}"
+    echo -e "${GREEN}══════════════════════════════════════════════${NC}"
+    sleep 4
+    tmux kill-window -t "${TMUX_SESSION}:${name}" 2>/dev/null || true
+  else
+    echo ""
+    echo -e "${YELLOW}  ╔══════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}  ║  Stream '$name': $done/$total done — tasks remain.  ║${NC}"
+    echo -e "${YELLOW}  ║  Run: /coord next   to see what's next.  ║${NC}"
+    echo -e "${YELLOW}  ╚══════════════════════════════════════════╝${NC}"
+    echo ""
+  fi
+}
+
 # Open any newly unlocked streams into the existing tmux session
 open_new_streams() {
   if ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
@@ -540,6 +590,10 @@ main() {
       setup_worktrees
       write_coord_config
       open_new_streams
+      ;;
+    _close_if_done)
+      [ -n "${2:-}" ] || { echo "Usage: coordinate.sh _close_if_done <stream>"; exit 1; }
+      auto_close_if_done "$2"
       ;;
     teardown)
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null \

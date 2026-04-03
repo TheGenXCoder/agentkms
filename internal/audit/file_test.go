@@ -247,6 +247,33 @@ func TestFileAuditSink_EventID_Unique(t *testing.T) {
 	}
 }
 
+func TestFileAuditSink_Flush_CancelledContext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "flush-cancel.log")
+	sink, err := audit.NewFileAuditSink(path)
+	if err != nil {
+		t.Fatalf("NewFileAuditSink: %v", err)
+	}
+	defer sink.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled
+
+	// Flush must respect context cancellation and return an error,
+	// not hang or panic.
+	if err := sink.Flush(ctx); err == nil {
+		t.Fatal("expected error for cancelled context, got nil")
+	}
+}
+
+func TestFileAuditSink_NewFileAuditSink_BadPath(t *testing.T) {
+	// Point to a directory that does not exist — os.OpenFile must fail.
+	badPath := filepath.Join(t.TempDir(), "nonexistent", "audit.log")
+	_, err := audit.NewFileAuditSink(badPath)
+	if err == nil {
+		t.Fatal("expected error for non-existent parent directory, got nil")
+	}
+}
+
 func TestFileAuditSink_PayloadHash_NotPayload(t *testing.T) {
 	// SECURITY: verify that audit events with PayloadHash set are stored as
 	// the hash string, not as anything that could be interpreted as payload.

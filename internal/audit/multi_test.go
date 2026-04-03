@@ -13,6 +13,9 @@ import (
 
 // stubSink is a test-only Auditor that records received events and can be
 // configured to return errors.
+//
+// NOTE: stubSink is not safe for concurrent use.  MultiAuditor calls sinks
+// sequentially (not in parallel), so no synchronisation is needed here.
 type stubSink struct {
 	name     string
 	logErr   error // if non-nil, Log returns this error
@@ -21,15 +24,10 @@ type stubSink struct {
 	logCount   atomic.Int64
 	flushCount atomic.Int64
 	events     []audit.AuditEvent
-	mu         stubMu
 }
-
-// minimal mutex wrapper so we can lock for slice append
-type stubMu struct{ mu interface{ Lock(); Unlock() } }
 
 func (s *stubSink) Log(_ context.Context, ev audit.AuditEvent) error {
 	s.logCount.Add(1)
-	// We don't need a real mutex for these tests — we control goroutine access.
 	s.events = append(s.events, ev)
 	return s.logErr
 }

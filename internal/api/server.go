@@ -14,6 +14,7 @@ import (
 
 	"github.com/agentkms/agentkms/internal/audit"
 	"github.com/agentkms/agentkms/internal/backend"
+	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/policy"
 )
 
@@ -44,12 +45,20 @@ type Server struct {
 	backend backend.Backend
 	auditor audit.Auditor
 	policy  policy.EngineI
+	vender  *credentials.Vender // nil until SetVender is called
 
 	// env identifies the deployment tier for audit events.
 	// Values: "production", "staging", "dev".
 	env string
 
 	mux *http.ServeMux
+}
+
+// SetVender wires in the credential vender after construction.
+// Call this from cmd/server/main.go once the KV backend is available.
+// If not called, /credentials/llm/* returns 503 Service Unavailable.
+func (s *Server) SetVender(v *credentials.Vender) {
+	s.vender = v
 }
 
 // NewServer constructs a Server, registers all routes on an internal mux, and
@@ -134,4 +143,9 @@ func (s *Server) registerRoutes() {
 
 	// C-05: fully implemented — delegates to backend.RotateKey.
 	s.mux.HandleFunc("POST /rotate/{keyid...}", wrap(s.handleRotateKey))
+
+	// LV-01: credential vending
+	s.mux.HandleFunc("GET /credentials/llm", wrap(s.handleListLLMProviders))
+	s.mux.HandleFunc("GET /credentials/llm/{provider}", wrap(s.handleGetLLMCredential))
+	s.mux.HandleFunc("POST /credentials/llm/{provider}/refresh", wrap(s.handleRefreshLLMCredential))
 }

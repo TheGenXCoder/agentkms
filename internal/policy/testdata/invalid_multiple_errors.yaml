@@ -1,0 +1,52 @@
+version: "1"
+rules:
+  # Missing ID.
+  - description: no id here
+    match: {}
+    effect: allow
+
+  # Unknown effect.
+  - id: bad-effect
+    match: {}
+    effect: "permit"
+
+  # Unknown operation.
+  - id: bad-op
+    match:
+      operations: ["sign", "explode"]
+    effect: allow
+
+  # Unknown role.
+  - id: bad-role
+    match:
+      identity:
+        roles: ["admin"]
+    effect: allow
+
+  # Invalid time window: start >= end.
+  - id: bad-time-window
+    match: {}
+    effect: allow
+    time_window:
+      start_utc: 22
+      end_utc: 6
+
+  # Both key_ids and key_prefix set.
+  - id: key-conflict
+    match:
+      key_prefix: "foo/"
+      key_ids: ["foo/bar"]
+    effect: allow
+
+  # Duplicate ID (same as bad-effect above).
+  - id: bad-effect
+    match: {}
+    effect: deny
+
+  # Rate limit with zero max_requests.
+  - id: bad-rate-limit
+    match: {}
+    effect: allow
+    rate_limit:
+      max_requests: 0
+      window: "1h"

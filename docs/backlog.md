@@ -135,16 +135,16 @@
 | PI-01 | P0 | T1 | [x] | Scaffold Pi package (`pi-package/`) with `package.json` (`pi-package` keyword, pi manifest) | See `docs/architecture.md §6.2` |
 | PI-02 | P0 | T1 | [x] | Implement `client.ts` — HTTP client for AgentKMS API over mTLS (Node.js `https` module) | Thin; no crypto logic in this file |
 | PI-03 | P0 | T1 | [x] | Implement `identity.ts` — reads `~/.agentkms/client.crt` and `client.key` | Used by extension to establish mTLS |
-| PI-04 | P0 | T1 | [~] | Implement `session_start` hook — auth, LLM credential injection | Pending independent review (touches auth) |
-| PI-05 | P0 | T1 | [~] | Implement provider override via `pi.registerProvider()` + `getApiKey()` reading from runtime map | Pending independent review (key injection mechanism) |
-| PI-06 | P0 | T1 | [~] | Implement `before_provider_request` hook — proactive token + key refresh | Pending independent review |
-| PI-07 | P0 | T1 | [~] | Implement `session_shutdown` hook — token revocation | Pending independent review (touches auth/revocation) |
-| PI-08 | P0 | T1 | [~] | Implement `tool_call` hook — credential path protection (block reads to `.env`, `auth.json`, etc.) | Pending independent review |
-| PI-09 | P0 | T1 | [~] | Implement `model_select` hook — fetch credentials for newly selected provider | Pending independent review |
-| PI-10 | P1 | T1 | [~] | Implement `crypto_sign` tool | Pending independent review (crypto surface) |
-| PI-11 | P1 | T1 | [~] | Implement `crypto_encrypt` tool | Pending independent review |
-| PI-12 | P1 | T1 | [~] | Implement `crypto_decrypt` tool | Pending independent review |
-| PI-13 | P1 | T1 | [~] | Write `skills/agentkms/SKILL.md` | Pending independent review |
+| PI-04 | P0 | T1 | [x] | Implement `session_start` hook — auth, LLM credential injection | Independent review passed; F-1 (toJSON) fixed before commit |
+| PI-05 | P0 | T1 | [x] | Implement provider override via `pi.registerProvider()` + `getApiKey()` reading from runtime map | Independent review passed |
+| PI-06 | P0 | T1 | [x] | Implement `before_provider_request` hook — proactive token + key refresh | Independent review passed |
+| PI-07 | P0 | T1 | [x] | Implement `session_shutdown` hook — token revocation | Independent review passed |
+| PI-08 | P0 | T1 | [x] | Implement `tool_call` hook — credential path protection (block reads to `.env`, `auth.json`, etc.) | F-3/F-4 fixed; blocks read+write+edit (stronger than spec) |
+| PI-09 | P0 | T1 | [x] | Implement `model_select` hook — fetch credentials for newly selected provider | Independent review passed |
+| PI-10 | P1 | T1 | [x] | Implement `crypto_sign` tool | Independent review passed; payload_hash excluded from session history |
+| PI-11 | P1 | T1 | [x] | Implement `crypto_encrypt` tool | Independent review passed |
+| PI-12 | P1 | T1 | [x] | Implement `crypto_decrypt` tool | Independent review passed |
+| PI-13 | P1 | T1 | [x] | Write `skills/agentkms/SKILL.md` | Independent review passed |
 | PI-14 | P1 | T1 | [ ] | Publish to private npm registry | Pin version in enterprise settings.json |
 | PI-15 | P2 | T2 | [ ] | Implement `/agentkms-status` Pi command (token TTL, connected identity, active providers) | Developer visibility |
 | PI-16 | P2 | T2 | [ ] | Write enterprise `settings.json` template + AGENTS.md template for distribution | Via `agentkms enroll` CLI output |

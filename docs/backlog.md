@@ -39,15 +39,15 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| A-01 | P0 | T0 | [ ] | Implement mTLS server setup (`pkg/tlsutil/server.go`) | TLS 1.3 minimum, require + verify client cert |
-| A-02 | P0 | T0 | [ ] | Implement cert identity extraction (`internal/auth/mtls.go`) | Parse CN, O, OU, SPIFFE SAN URI into `Identity` struct |
-| A-03 | P0 | T0 | [ ] | Implement session token issuance (`internal/auth/tokens.go`) | HMAC-signed, 15min TTL, bound to identity |
-| A-04 | P0 | T0 | [ ] | Implement token validation middleware | Applied to all endpoints except /auth/session |
-| A-05 | P0 | T0 | [ ] | Implement token revocation (in-memory blocklist for T0; persistent for T1+) | Immediate effect on revoke |
-| A-06 | P0 | T0 | [ ] | Implement `POST /auth/session` handler | mTLS only, no body, issues token |
-| A-07 | P0 | T0 | [ ] | Implement `POST /auth/refresh` handler | Validates existing token, issues new one with fresh TTL |
-| A-08 | P0 | T0 | [ ] | Implement `POST /auth/revoke` handler | Adds token to blocklist, 204 response |
-| A-09 | P0 | T0 | [ ] | Implement `agentkms-dev enroll` CLI (`cmd/enroll/main.go`) | Generates local dev CA + developer cert + key in `~/.agentkms/dev/` |
+| A-01 | P0 | T0 | [x] | Implement mTLS server setup (`pkg/tlsutil/server.go`) | TLS 1.3 minimum, require + verify client cert |
+| A-02 | P0 | T0 | [x] | Implement cert identity extraction (`internal/auth/mtls.go`) | Parse CN, O, OU, SPIFFE SAN URI into `Identity` struct |
+| A-03 | P0 | T0 | [x] | Implement session token issuance (`internal/auth/tokens.go`) | HMAC-signed, 15min TTL, bound to identity |
+| A-04 | P0 | T0 | [x] | Implement token validation middleware | Applied to all endpoints except /auth/session; cert-binding replay protection |
+| A-05 | P0 | T0 | [x] | Implement token revocation (in-memory blocklist for T0; persistent for T1+) | Immediate effect on revoke; TTL-based pruning |
+| A-06 | P0 | T0 | [x] | Implement `POST /auth/session` handler | mTLS only, no body, issues token |
+| A-07 | P0 | T0 | [x] | Implement `POST /auth/refresh` handler | Validates existing token, issues new one with fresh TTL |
+| A-08 | P0 | T0 | [x] | Implement `POST /auth/revoke` handler | Adds token to blocklist, 204 response |
+| A-09 | P0 | T0 | [x] | Implement `agentkms-dev enroll` CLI | Implemented as `agentkms-dev enroll` subcommand in `cmd/dev/main.go`; `cmd/enroll/main.go` remains a stub for production SSO (A-11) |
 | A-10 | P1 | T1 | [ ] | Implement PKI engine integration for cert issuance (OpenBao PKI backend) | Issues team intermediate CAs and developer certs |
 | A-11 | P1 | T1 | [ ] | Implement OIDC/SAML SSO flow in `agentkms enroll` | Browser-based enrollment; maps SSO identity to team cert |
 | A-12 | P2 | T2 | [ ] | Implement SPIFFE/SVID support for workload identity (K8s service accounts) | Required for CI/CD and service-to-service auth |
@@ -59,12 +59,12 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| P-01 | P0 | T0 | [ ] | Define policy rule schema (team, scope, key, operation, rate, time) | YAML + Go structs |
-| P-02 | P0 | T0 | [ ] | Implement policy loader from local YAML (`internal/policy/loader.go`) | Used in T0/dev mode |
-| P-03 | P0 | T0 | [ ] | Implement policy evaluator (`internal/policy/engine.go`) | Returns allow/deny + reason for every (identity, operation, key-id) triple |
-| P-04 | P0 | T0 | [ ] | Enforce deny-by-default — no operation succeeds without explicit allow | Test: empty policy = all operations denied |
+| P-01 | P0 | T0 | [x] | Define policy rule schema (team, scope, key, operation, rate, time) | YAML + Go structs in `rules.go` |
+| P-02 | P0 | T0 | [x] | Implement policy loader from local YAML (`internal/policy/loader.go`) | Used in T0/dev mode |
+| P-03 | P0 | T0 | [x] | Implement policy evaluator (`internal/policy/engine.go`) | Returns allow/deny + reason for every (identity, operation, key-id) triple |
+| P-04 | P0 | T0 | [x] | Enforce deny-by-default — no operation succeeds without explicit allow | Test: empty policy = all operations denied |
 | P-05 | P1 | T1 | [ ] | Implement policy loader from OpenBao/Vault policy engine | Replaces local YAML in T1+ |
-| P-06 | P1 | T1 | [ ] | Implement rate limiting in policy engine | Per-identity, per-operation, per-time-window |
+| P-06 | P1 | T1 | [x] | Implement rate limiting in policy engine | Per (rule, callerID) sliding-window counter; conservative shared budget |
 | P-07 | P2 | T2 | [ ] | Implement anomaly detection (rules-based) | Spike detection, unusual hours, repeated denials |
 | P-08 | P3 | T3 | [ ] | Implement ML-augmented anomaly detection | Baseline normal, flag statistical outliers |
 
@@ -74,13 +74,13 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| C-01 | P0 | T0 | [ ] | Implement `POST /sign/{key-id}` handler | Policy check → backend.Sign() → audit → return signature only |
-| C-02 | P0 | T0 | [ ] | Implement `POST /encrypt/{key-id}` handler | Policy check → backend.Encrypt() → audit → return ciphertext only |
-| C-03 | P0 | T0 | [ ] | Implement `POST /decrypt/{key-id}` handler | Policy check → backend.Decrypt() → audit → return plaintext only |
-| C-04 | P0 | T0 | [ ] | Implement `GET /keys` handler | Returns metadata only — id, algorithm, versions, dates. NEVER key material. |
-| C-05 | P1 | T1 | [ ] | Implement `POST /keys/{key-id}/rotate` handler | Delegates to backend.RotateKey(), audits, returns new version metadata |
-| C-06 | P0 | T0 | [ ] | Adversarial tests: verify no key material in any response, log, or error | Priority 0 — this is the core guarantee |
-| C-07 | P1 | T1 | [ ] | Implement request input validation (payload_hash format, algorithm enum, key-id format) | Reject invalid inputs before policy check |
+| C-01 | P0 | T0 | [x] | Implement `POST /sign/{key-id}` handler | Policy check → backend.Sign() → audit → return signature only |
+| C-02 | P0 | T0 | [x] | Implement `POST /encrypt/{key-id}` handler | Policy check → backend.Encrypt() → audit → return ciphertext only |
+| C-03 | P0 | T0 | [x] | Implement `POST /decrypt/{key-id}` handler | Policy check → backend.Decrypt() → audit → return plaintext only |
+| C-04 | P0 | T0 | [x] | Implement `GET /keys` handler | Returns metadata only — id, algorithm, versions, dates. NEVER key material. |
+| C-05 | P1 | T1 | [ ] | Implement `POST /keys/{key-id}/rotate` handler | Stub in place; blocked on B-01 full wiring |
+| C-06 | P0 | T0 | [x] | Adversarial tests: verify no key material in any response, log, or error | handlers_test.go: PEM scan, binary scan, audit field checks, panic recovery |
+| C-07 | P1 | T1 | [x] | Implement request input validation (payload_hash format, algorithm enum, key-id format) | validation.go; rejects malformed input before policy check |
 
 ---
 
@@ -101,7 +101,7 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| B-01 | P0 | T1 | [ ] | Implement OpenBao/Vault Transit backend (`internal/backend/openbao.go`) | Supports: sign, encrypt, decrypt, list, rotate |
+| B-01 | P0 | T1 | [x] | Implement OpenBao/Vault Transit backend (`internal/backend/openbao.go`) | Supports: sign, encrypt, decrypt, list, rotate; unit tests + integration test skeleton (build tag: integration) |
 | B-02 | P1 | T1 | [ ] | Write integration tests against local OpenBao instance | Use `agentkms-dev` to spin up test instance |
 | B-03 | P2 | T2 | [ ] | Implement HashiCorp Vault backend (`internal/backend/vault.go`) | Same interface as OpenBao; separate for namespace/config differences |
 | B-04 | P2 | T3 | [ ] | Implement AWS KMS backend (`internal/backend/awskms.go`) | Multi-region asymmetric keys; FIPS 140-2 path |
@@ -115,7 +115,7 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| AU-01 | P0 | T0 | [ ] | Implement file audit sink (append-only JSON lines, local dev) | Baseline — always available |
+| AU-01 | P0 | T0 | [x] | Implement file audit sink (append-only JSON lines, local dev) | Done as F-06; `internal/audit/file.go` |
 | AU-02 | P1 | T1 | [ ] | Implement ELK audit sink (`internal/audit/elk.go`) — Elasticsearch ingest API | Phase 1 production audit backend |
 | AU-03 | P1 | T1 | [ ] | Deploy local ELK stack on K8s (Helm charts) and validate audit event ingestion | — |
 | AU-04 | P1 | T1 | [ ] | Build Kibana dashboard: operations by team, denied ops, anomaly timeline | Compliance officer-friendly |
@@ -132,19 +132,19 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| PI-01 | P0 | T1 | [ ] | Scaffold Pi package (`pi-package/`) with `package.json` (`pi-package` keyword, pi manifest) | See `docs/architecture.md §6.2` |
-| PI-02 | P0 | T1 | [ ] | Implement `client.ts` — HTTP client for AgentKMS API over mTLS (Node.js `https` module) | Thin; no crypto logic in this file |
-| PI-03 | P0 | T1 | [ ] | Implement `identity.ts` — reads `~/.agentkms/client.crt` and `client.key` | Used by extension to establish mTLS |
-| PI-04 | P0 | T1 | [ ] | Implement `session_start` hook — auth, LLM credential injection | See detailed code in §6.2 |
-| PI-05 | P0 | T1 | [ ] | Implement provider override via `pi.registerProvider()` + `getApiKey()` reading from runtime map | The core key injection mechanism |
-| PI-06 | P0 | T1 | [ ] | Implement `before_provider_request` hook — proactive token + key refresh | TTL thresholds: token < 5min, LLM key < 10min |
-| PI-07 | P0 | T1 | [ ] | Implement `session_shutdown` hook — token revocation | Best-effort; natural expiry is fallback |
-| PI-08 | P0 | T1 | [ ] | Implement `tool_call` hook — credential path protection (block reads to `.env`, `auth.json`, etc.) | Defence in depth |
-| PI-09 | P0 | T1 | [ ] | Implement `model_select` hook — fetch credentials for newly selected provider | Handles mid-session provider switch |
-| PI-10 | P1 | T1 | [ ] | Implement `crypto_sign` tool | See §6.2 — payload_hash only in body |
-| PI-11 | P1 | T1 | [ ] | Implement `crypto_encrypt` tool | — |
-| PI-12 | P1 | T1 | [ ] | Implement `crypto_decrypt` tool | — |
-| PI-13 | P1 | T1 | [ ] | Write `skills/agentkms/SKILL.md` | When to use, rules, key ID format |
+| PI-01 | P0 | T1 | [x] | Scaffold Pi package (`pi-package/`) with `package.json` (`pi-package` keyword, pi manifest) | See `docs/architecture.md §6.2` |
+| PI-02 | P0 | T1 | [x] | Implement `client.ts` — HTTP client for AgentKMS API over mTLS (Node.js `https` module) | Thin; no crypto logic in this file |
+| PI-03 | P0 | T1 | [x] | Implement `identity.ts` — reads `~/.agentkms/client.crt` and `client.key` | Used by extension to establish mTLS |
+| PI-04 | P0 | T1 | [x] | Implement `session_start` hook — auth, LLM credential injection | See detailed code in §6.2 |
+| PI-05 | P0 | T1 | [x] | Implement provider override via `pi.registerProvider()` + `getApiKey()` reading from runtime map | The core key injection mechanism |
+| PI-06 | P0 | T1 | [x] | Implement `before_provider_request` hook — proactive token + key refresh | TTL thresholds: token < 5min, LLM key < 10min |
+| PI-07 | P0 | T1 | [x] | Implement `session_shutdown` hook — token revocation | Best-effort; natural expiry is fallback |
+| PI-08 | P0 | T1 | [x] | Implement `tool_call` hook — credential path protection (block reads to `.env`, `auth.json`, etc.) | Blocks read + write + edit to credential paths |
+| PI-09 | P0 | T1 | [x] | Implement `model_select` hook — fetch credentials for newly selected provider | Handles mid-session provider switch |
+| PI-10 | P1 | T1 | [x] | Implement `crypto_sign` tool | payload_hash only in body; key_version in response |
+| PI-11 | P1 | T1 | [x] | Implement `crypto_encrypt` tool | — |
+| PI-12 | P1 | T1 | [x] | Implement `crypto_decrypt` tool | — |
+| PI-13 | P1 | T1 | [x] | Write `skills/agentkms/SKILL.md` | When to use, rules, key ID format |
 | PI-14 | P1 | T1 | [ ] | Publish to private npm registry | Pin version in enterprise settings.json |
 | PI-15 | P2 | T2 | [ ] | Implement `/agentkms-status` Pi command (token TTL, connected identity, active providers) | Developer visibility |
 | PI-16 | P2 | T2 | [ ] | Write enterprise `settings.json` template + AGENTS.md template for distribution | Via `agentkms enroll` CLI output |
@@ -155,10 +155,10 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| D-01 | P0 | T0 | [ ] | Implement `agentkms-dev server` command — starts local service with in-memory backend | Mirrors production API surface exactly |
-| D-02 | P0 | T0 | [ ] | Implement `agentkms-dev enroll` — generates local dev CA + developer cert | Writes to `~/.agentkms/dev/` |
-| D-03 | P1 | T0 | [ ] | Implement `agentkms-dev key create` — creates personal key in dev backend | `--name`, `--algorithm` flags |
-| D-04 | P1 | T0 | [ ] | Implement dev policy loader from `~/.agentkms/dev-policy.yaml` | Same schema as production policy |
+| D-01 | P0 | T0 | [x] | Implement `agentkms-dev server` command — starts local service with in-memory backend | Mirrors production API surface exactly; loopback-only enforcement |
+| D-02 | P0 | T0 | [x] | Implement `agentkms-dev enroll` — generates local dev CA + developer cert | Writes to `~/.agentkms/dev/` |
+| D-03 | P1 | T0 | [x] | Implement `agentkms-dev key create` — creates personal key in dev backend | `--name`, `--algorithm` flags |
+| D-04 | P1 | T0 | [x] | Implement dev policy loader from `~/.agentkms/dev-policy.yaml` | Same schema as production policy |
 | D-05 | P2 | T3 | [ ] | Implement `agentkms-dev sync` — pull key metadata + policy from central (read-only) | Stretch goal; see §4.6 |
 
 ---

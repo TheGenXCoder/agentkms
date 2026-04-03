@@ -62,11 +62,39 @@ agentkms/
 ## Validation Rule — Independent Review Required
 **Never validate your own work.** After completing any task, an independent Pi session running a different model must review the implementation before the backlog item is marked `[x]`. Self-review has the same blind spots as the code that produced the bug.
 
+The review has **two components**. Both must pass.
+
+### Component 1 — Adversarial Security Review
+
 Workflow:
 1. Complete implementation, run tests locally (`go test -race ./...`).
-2. Run `/coord review` — it prints a complete adversarial brief.
+2. Run `/coord review` — it prints a complete adversarial + quality brief.
 3. Open a **new Pi session** (`/new` or fresh terminal) with no prior context.
 4. Paste the brief. Let the independent session review and report findings.
 5. Address all findings. Only then mark the backlog item `[x]`.
 
 This applies to: all security-critical items (all A-*, C-*, P-* items), all D-* items (the dev server is the thing all other streams depend on), and any change that touches auth, policy, audit, or backend.
+
+### Component 2 — Code Quality Gate
+
+Run before every commit. All checks must pass:
+
+```bash
+bash scripts/quality_check.sh
+```
+
+This project wraps the global quality gate skill (`~/.pi/agent/skills/quality-gate`). For configuration options, run `/skill:quality-gate`.
+
+**Coverage thresholds by package type:**
+- `internal/auth`, `internal/policy`, `internal/audit` — ≥ 85%
+- `internal/api`, `internal/backend` (non-integration) — ≥ 80%
+- `pkg/` packages — ≥ 80%
+- Integration-only code (build tag `integration`) — exempt from non-integration coverage
+
+**t.Skip rule:** Any `t.Skip` or `t.Skipf` must have a comment on the preceding line in the format:
+```go
+// TODO(#<issue-number>): skip until <YYYY-MM-DD> — <reason>
+t.Skipf("...")
+```
+
+**Exported function test rule:** Every exported function in `internal/` and `pkg/` must be called by at least one test. The quality script checks this automatically.

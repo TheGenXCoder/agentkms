@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/agentkms/agentkms/internal/audit"
@@ -77,10 +78,10 @@ func (s *Server) handleEncrypt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// SECURITY: Do NOT log plaintext or its length in audit events.
-	// Instead, compute a hash of the plaintext for audit purposes.
-	// This allows reconstructing the audit trail without exposing sensitive data.
-	payloadHash := sha256.Sum256(plaintext)
-	ev.PayloadHash = hex.EncodeToString(payloadHash[:])
+	// Instead, record a sha256 hash of the plaintext for the audit trail.
+	// Format: "sha256:<64-char hex>" — must match AuditEvent.PayloadHash spec.
+	rawHash := sha256.Sum256(plaintext)
+	ev.PayloadHash = fmt.Sprintf("sha256:%s", hex.EncodeToString(rawHash[:]))
 
 	// ── 3. Policy check ───────────────────────────────────────────────────────
 	dec := s.policy.Evaluate(policy.Request{

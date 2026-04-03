@@ -584,6 +584,71 @@ func TestAuditEvent_SignOperation_LoggedCorrectly(t *testing.T) {
 	}
 }
 
+// TestAuditEvent_EncryptOperation_PayloadHashFormat verifies that the encrypt
+// handler writes a properly formatted "sha256:<hex>" payload hash — never the
+// raw plaintext — into the audit event.
+func TestAuditEvent_EncryptOperation_PayloadHashFormat(t *testing.T) {
+	aB := backend.NewDevBackend()
+	_ = aB.CreateKey("audit/enc-key", backend.AlgorithmAES256GCM, "dev-team")
+	ts, _ := auth.NewTokenStore()
+	pf := &policy.PolicyFile{
+		Version: 1,
+		Rules: []policy.Rule{{
+			ID:          "allow-all",
+			Identities:  []string{"*"},
+			Teams:       []string{"*"},
+			Operations:  []string{"*"},
+			KeyPrefixes: []string{""},
+			Effect:      policy.EffectAllow,
+		}},
+	}
+	cap := &captureAuditor{}
+	srv := NewServer(Config{
+		Backend:     aB,
+		Auditor:     cap,
+		Tokens:      ts,
+		Policy:      policy.NewEngine(pf),
+		Environment: "dev",
+	})
+
+	id := &identity.Identity{CallerID: "bert@dev", TeamID: "dev-team"}
+	tokenStr, _, _ := ts.Issue(id)
+
+	original := []byte("plaintext that must not appear in audit")
+	plaintextB64 := base64.StdEncoding.EncodeToString(original)
+	body := fmt.Sprintf(`{"plaintext":%q}`, plaintextB64)
+	req := httptest.NewRequest("POST", "/encrypt/audit/enc-key", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("encrypt: %d %s", w.Code, w.Body.String())
+	}
+	if len(cap.events) == 0 {
+		t.Fatal("no audit events logged")
+	}
+	ev := cap.events[0]
+	if ev.Operation != audit.OperationEncrypt {
+		t.Errorf("operation: want %q, got %q", audit.OperationEncrypt, ev.Operation)
+	}
+	if ev.Outcome != audit.OutcomeSuccess {
+		t.Errorf("outcome: want %q, got %q", audit.OutcomeSuccess, ev.Outcome)
+	}
+	// CRITICAL: PayloadHash must use the canonical "sha256:<hex>" format.
+	if !strings.HasPrefix(ev.PayloadHash, "sha256:") {
+		t.Errorf("REGRESSION: encrypt audit PayloadHash must start with \"sha256:\", got %q", ev.PayloadHash)
+	}
+	if len(ev.PayloadHash) != len("sha256:")+64 {
+		t.Errorf("REGRESSION: encrypt audit PayloadHash length wrong, got %q", ev.PayloadHash)
+	}
+	// ADVERSARIAL: audit event must not contain the plaintext.
+	evJSON, _ := json.Marshal(ev)
+	if bytes.Contains(evJSON, original) {
+		t.Fatal("ADVERSARIAL: audit event JSON contains plaintext")
+	}
+}
+
 func TestAuditEvent_DeniedOperation_RecordsDenyReason(t *testing.T) {
 	b := backend.NewDevBackend()
 	ts, _ := auth.NewTokenStore()

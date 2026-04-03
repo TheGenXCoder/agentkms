@@ -18,13 +18,6 @@ import (
 type decryptRequest struct {
 	// Ciphertext is the opaque blob returned by /encrypt, base64-encoded.
 	Ciphertext string `json:"ciphertext"`
-
-	// ConfirmSensitive indicates this is a second request for a high-sensitivity key.
-	ConfirmSensitive bool `json:"confirm_sensitive,omitempty"`
-
-	// Commitment is the commitment value returned by the first request for a 
-	// high-sensitivity key. Required when ConfirmSensitive is true.
-	Commitment string `json:"commitment,omitempty"`
 }
 
 type decryptResponse struct {
@@ -33,20 +26,6 @@ type decryptResponse struct {
 	// It must not be logged, stored in version control, or included in
 	// error messages.
 	Plaintext string `json:"plaintext"`
-}
-
-type sensitiveDecryptResponse struct {
-	// IsSensitive indicates this is a high-sensitivity key requiring
-	// additional confirmation.
-	IsSensitive bool `json:"is_sensitive"`
-
-	// Commitment is a cryptographic commitment to the plaintext data.
-	// The caller must use this value in a second request with confirm_sensitive=true
-	// to actually retrieve the plaintext.
-	Commitment string `json:"commitment"`
-
-	// Message is a human-readable explanation of how to retrieve the data.
-	Message string `json:"message"`
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────

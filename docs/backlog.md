@@ -200,16 +200,11 @@
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
 | FX-01 | P2 | T3 | [ ] | gRPC API option (in addition to REST) | Lower latency for high-throughput workloads |
-| FX-02 | P2 | T3 | [ ] | Sub-agent identity scoping (agent spawns sub-agent with reduced key scope) | Needed for multi-agent orchestration |
+| FX-02 | P2 | T3 | [x] | Sub-agent identity scoping (agent spawns sub-agent with reduced key scope) | Needed for multi-agent orchestration |
 | FX-03 | P2 | T3 | [ ] | Key ceremony tooling for HSM-backed root keys | Investor-grade provenance for root CA |
 | FX-04 | P3 | T3 | [ ] | Personal key offline support (local sync of personal key material to dev backend) | Requires careful threat modelling |
-<<<<<<< HEAD
-| FX-05 | P3 | T3 | [ ] | Automated SOC 2 evidence collection (exports audit records mapped to controls) | Reduces auditor prep from weeks to hours |
-| FX-06 | P3 | T3 | [x] | Web UI for key management, audit browsing, team policy editing | Non-developer enterprise admin UX |
-=======
 | FX-05 | P3 | T3 | [x] | Automated SOC 2 evidence collection (exports audit records mapped to controls) | Reduces auditor prep from weeks to hours |
-| FX-06 | P3 | T3 | [ ] | Web UI for key management, audit browsing, team policy editing | Non-developer enterprise admin UX |
->>>>>>> feature/t3-secops
+| FX-06 | P3 | T3 | [x] | Web UI for key management, audit browsing, team policy editing | Non-developer enterprise admin UX |
 
 ---
 

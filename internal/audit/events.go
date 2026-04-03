@@ -39,6 +39,7 @@ const (
 	OperationKeyCreate      = "key_create"
 	OperationRevokeCert     = "revoke_cert"
 	OperationGetCRL         = "get_crl"
+	OperationAuthDelegate   = "auth_delegate"
 )
 
 // ── Outcome constants ─────────────────────────────────────────────────────────

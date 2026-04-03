@@ -134,8 +134,25 @@ func run() error {
 	}
 	slog.Info("dev backend ready (in-memory; keys lost on restart)")
 
+	// ── Set up policy engine ──────────────────────────────────────────────
+	eng := policy.New(policy.Policy{
+		Version: "1.0",
+		Rules: []policy.Rule{
+			{
+				ID:          "dev-allow-all",
+				Description: "Allow all for dev",
+				Effect:      policy.EffectAllow,
+				Match: policy.Match{
+					Identity: policy.IdentityMatch{
+						Roles: []string{"developer", "service", "agent"},
+					},
+				},
+			},
+		},
+	})
+
 	// ── Build auth handler ────────────────────────────────────────────────
-	authHandler := api.NewAuthHandler(tokenSvc, auditor, envFlag)
+	authHandler := api.NewAuthHandler(tokenSvc, auditor, policy.AsEngineI(eng), envFlag)
 
 	// ── Wire routes ───────────────────────────────────────────────────────
 	mux := http.NewServeMux()
@@ -150,6 +167,10 @@ func run() error {
 	// POST /auth/revoke — requires valid session token.
 	mux.Handle("POST /auth/revoke",
 		auth.RequireToken(tokenSvc)(http.HandlerFunc(authHandler.Revoke)))
+
+	// POST /auth/delegate — requires valid session token (FX-02).
+	mux.Handle("POST /auth/delegate",
+		auth.RequireToken(tokenSvc)(http.HandlerFunc(authHandler.Delegate)))
 
 	// POST /auth/certificate/revoke — admin-only.
 	mux.Handle("POST /auth/certificate/revoke",

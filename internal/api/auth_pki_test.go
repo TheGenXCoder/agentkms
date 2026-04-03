@@ -8,6 +8,7 @@ import (
 
 	"github.com/agentkms/agentkms/internal/audit"
 	"github.com/agentkms/agentkms/internal/auth"
+	"github.com/agentkms/agentkms/internal/policy"
 )
 
 func TestAuthHandler_CRL(t *testing.T) {
@@ -27,7 +28,7 @@ func TestAuthHandler_CRL(t *testing.T) {
 
 	auditor, _ := audit.NewFileAuditSink("/dev/null")
 	tokens, _ := auth.NewTokenService(auth.NewRevocationList())
-	handler := NewAuthHandler(tokens, auditor, "dev")
+	handler := NewAuthHandler(tokens, auditor, policy.DenyAllEngine{}, "dev")
 	handler.SetPKI(pkiClient, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/auth/crl", nil)
@@ -60,7 +61,7 @@ func TestAuthHandler_RevokeCertificate(t *testing.T) {
 
 	auditor, _ := audit.NewFileAuditSink("/dev/null")
 	tokens, _ := auth.NewTokenService(auth.NewRevocationList())
-	handler := NewAuthHandler(tokens, auditor, "dev")
+	handler := NewAuthHandler(tokens, auditor, policy.DenyAllEngine{}, "dev")
 	handler.SetPKI(pkiClient, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/auth/revoke-cert", bytes.NewBufferString(`{"serial_number":"123"}`))

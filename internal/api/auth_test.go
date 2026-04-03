@@ -16,6 +16,7 @@ import (
 	"github.com/agentkms/agentkms/internal/api"
 	"github.com/agentkms/agentkms/internal/audit"
 	"github.com/agentkms/agentkms/internal/auth"
+	"github.com/agentkms/agentkms/internal/policy"
 	"github.com/agentkms/agentkms/pkg/tlsutil"
 )
 
@@ -53,7 +54,7 @@ func newTestStack(t *testing.T) (*auth.TokenService, *api.AuthHandler, *nullAudi
 		t.Fatalf("NewTokenService: %v", err)
 	}
 	auditor := &nullAuditor{}
-	handler := api.NewAuthHandler(svc, auditor, "test")
+	handler := api.NewAuthHandler(svc, auditor, policy.DenyAllEngine{}, "test")
 	return svc, handler, auditor
 }
 

@@ -9,9 +9,11 @@ import (
 	"testing"
 
 	"github.com/agentkms/agentkms/internal/api"
+	"github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/policy"
+	"github.com/agentkms/agentkms/pkg/identity"
 )
 
 // ── stub KVReader ─────────────────────────────────────────────────────────────
@@ -38,7 +40,9 @@ func newCredServer(t *testing.T, apiKey string) (*api.Server, *capturingAuditor)
 	t.Helper()
 	b := backend.NewDevBackend()
 	aud := &capturingAuditor{}
-	srv := api.NewServer(b, aud, policy.AllowAllEngine{}, "dev")
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
+	srv := api.NewServer(b, aud, policy.AllowAllEngine{}, ts, "dev")
 	if apiKey != "" {
 		kv := &stubCredKV{
 			data: map[string]map[string]string{
@@ -58,6 +62,12 @@ func credRequest(t *testing.T, srv *api.Server, method, path string) *httptest.R
 	if err != nil {
 		t.Fatalf("http.NewRequest: %v", err)
 	}
+	id := identity.Identity{
+		CallerID: "test-user",
+		TeamID:   "test-team",
+		Role:     identity.RoleDeveloper,
+	}
+	req = req.WithContext(api.SetIdentityInContext(req.Context(), id))
 	srv.ServeHTTP(rr, req)
 	return rr
 }
@@ -131,10 +141,16 @@ func TestHandleGetLLMCredential_RateLimit(t *testing.T) {
 	srv.SetVender(vender)
 
 	req, _ := http.NewRequest("GET", "/credentials/llm/anthropic", nil)
+	id := identity.Identity{
+		CallerID: "test-user",
+		TeamID:   "test-team",
+		Role:     identity.RoleDeveloper,
+	}
+	req = req.WithContext(api.SetIdentityInContext(req.Context(), id))
 	req.SetPathValue("provider", "anthropic")
 	// The test helper credRequest or the router must be used to get middleware injection.
 	// We'll use the router so it goes through the middleware (if any) or we just inject it manually.
-	// Wait, api package has ContextWithIdentity? No, it's setIdentityInContext which is unexported.
+	// Wait, api package has ContextWithIdentity? No, it's SetIdentityInContext which is unexported.
 	// Let's use credRequest.
 	
 	// First request should succeed.
@@ -180,7 +196,9 @@ func TestHandleGetLLMCredential_NotFound(t *testing.T) {
 	// Vender configured, but this provider has no key in KV
 	b := backend.NewDevBackend()
 	aud := &capturingAuditor{}
-	srv := api.NewServer(b, aud, policy.AllowAllEngine{}, "dev")
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
+	srv := api.NewServer(b, aud, policy.AllowAllEngine{}, ts, "dev")
 	kv := &stubCredKV{data: map[string]map[string]string{}} // empty KV
 	srv.SetVender(credentials.NewVender(kv, "kv"))
 
@@ -193,7 +211,9 @@ func TestHandleGetLLMCredential_NotFound(t *testing.T) {
 func TestHandleGetLLMCredential_PolicyDeny(t *testing.T) {
 	b := backend.NewDevBackend()
 	aud := &capturingAuditor{}
-	srv := api.NewServer(b, aud, policy.DenyAllEngine{}, "dev")
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
+	srv := api.NewServer(b, aud, policy.DenyAllEngine{}, ts, "dev")
 	kv := &stubCredKV{
 		data: map[string]map[string]string{
 			"kv/data/llm/anthropic": {"api_key": "sk-test"},
@@ -245,7 +265,9 @@ func TestHandleGetLLMCredential_KVError(t *testing.T) {
 	kvErr := errors.New("connection refused")
 	b := backend.NewDevBackend()
 	aud := &capturingAuditor{}
-	srv := api.NewServer(b, aud, policy.AllowAllEngine{}, "dev")
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
+	srv := api.NewServer(b, aud, policy.AllowAllEngine{}, ts, "dev")
 	kv := &stubCredKV{err: kvErr}
 	srv.SetVender(credentials.NewVender(kv, "kv"))
 
@@ -258,14 +280,17 @@ func TestHandleGetLLMCredential_KVError(t *testing.T) {
 func TestNewServer_NilPanics(t *testing.T) {
 	b := backend.NewDevBackend()
 	aud := &capturingAuditor{}
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
 
 	for _, tc := range []struct {
 		name string
 		fn   func()
 	}{
-		{"nil backend", func() { api.NewServer(nil, aud, policy.AllowAllEngine{}, "dev") }},
-		{"nil auditor", func() { api.NewServer(b, nil, policy.AllowAllEngine{}, "dev") }},
-		{"nil policy", func() { api.NewServer(b, aud, nil, "dev") }},
+		{"nil backend", func() { api.NewServer(nil, aud, policy.AllowAllEngine{}, ts, "dev") }},
+		{"nil auditor", func() { api.NewServer(b, nil, policy.AllowAllEngine{}, ts, "dev") }},
+		{"nil policy", func() { api.NewServer(b, aud, nil, ts, "dev") }},
+		{"nil tokens", func() { api.NewServer(b, aud, policy.AllowAllEngine{}, nil, "dev") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {

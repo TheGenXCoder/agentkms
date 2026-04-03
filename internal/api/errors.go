@@ -22,6 +22,7 @@ const (
 	errCodeInternal             = "internal_error"
 	errCodeNotImplemented       = "not_implemented"
 	errCodeRateLimited          = "rate_limited"
+	errCodeUnauthorized         = "unauthorized"
 )
 
 // ── Response types ────────────────────────────────────────────────────────────

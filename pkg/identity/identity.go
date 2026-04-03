@@ -80,4 +80,12 @@ type Identity struct {
 	// of the client certificate.  Used to bind session tokens to a specific
 	// certificate and detect token replay attacks across connections.
 	CertFingerprint string
+
+	// Scopes is the set of operations and resources the identity is permitted
+	// to access.  If non-empty, the identity's permissions are restricted to
+	// only those explicitly granted by the scopes, even if the policy would
+	// allow more.
+	//
+	// Format: "operation:resource" (e.g. "sign:key-123", "encrypt:*").
+	Scopes []string
 }

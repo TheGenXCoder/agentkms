@@ -41,14 +41,15 @@ var ErrTokenRevoked = errors.New("auth: token revoked")
 // tokenClaims is the JSON payload embedded in a session token.
 // Field names are intentionally short (no sensitive data; just compact).
 type tokenClaims struct {
-	JTI       string `json:"jti"`            // Unique token ID (used for revocation)
-	Subject   string `json:"sub"`            // CallerID from cert CN
-	Team      string `json:"team"`           // TeamID from cert O
-	Role      string `json:"role"`           // Role from cert OU
-	SPIFFE    string `json:"spiffe,omitempty"` // SPIFFE ID from cert SAN (may be empty)
-	CertFP    string `json:"cfp"`            // Cert fingerprint (SHA-256 hex of DER)
-	IssuedAt  int64  `json:"iat"`            // Unix timestamp (seconds)
-	ExpiresAt int64  `json:"exp"`            // Unix timestamp (seconds)
+	JTI       string   `json:"jti"`            // Unique token ID (used for revocation)
+	Subject   string   `json:"sub"`            // CallerID from cert CN
+	Team      string   `json:"team"`           // TeamID from cert O
+	Role      string   `json:"role"`           // Role from cert OU
+	SPIFFE    string   `json:"spiffe,omitempty"` // SPIFFE ID from cert SAN (may be empty)
+	CertFP    string   `json:"cfp"`            // Cert fingerprint (SHA-256 hex of DER)
+	Scopes    []string `json:"scp,omitempty"`   // Delegated scopes
+	IssuedAt  int64    `json:"iat"`            // Unix timestamp (seconds)
+	ExpiresAt int64    `json:"exp"`            // Unix timestamp (seconds)
 }
 
 // Token is a validated, parsed session token.  Returned by TokenService.Validate
@@ -137,6 +138,7 @@ func (s *TokenService) Issue(id *identity.Identity) (string, *Token, error) {
 		Role:      string(id.Role),
 		SPIFFE:    id.SPIFFEID,
 		CertFP:    id.CertFingerprint,
+		Scopes:    id.Scopes,
 		IssuedAt:  now.Unix(),
 		ExpiresAt: exp.Unix(),
 	}
@@ -296,6 +298,49 @@ func computeHMAC(key []byte, data string) []byte {
 	return h.Sum(nil)
 }
 
+// IssueDelegated creates and signs a new session token with a specific
+// TTL and scopes.  Used for sub-agent delegation (FX-02).
+//
+// The new token is bound to the same identity as the parent, but with
+// a restricted set of scopes and a typically shorter TTL.
+func (s *TokenService) IssueDelegated(id *identity.Identity, ttl time.Duration, scopes []string) (string, *Token, error) {
+	jti, err := newJTI()
+	if err != nil {
+		return "", nil, fmt.Errorf("auth: generating token ID: %w", err)
+	}
+
+	now := s.nowFunc()
+	exp := now.Add(ttl)
+
+	claims := tokenClaims{
+		JTI:       jti,
+		Subject:   id.CallerID,
+		Team:      id.TeamID,
+		Role:      string(id.Role),
+		SPIFFE:    id.SPIFFEID,
+		CertFP:    id.CertFingerprint,
+		Scopes:    scopes,
+		IssuedAt:  now.Unix(),
+		ExpiresAt: exp.Unix(),
+	}
+
+	tokenStr, err := s.sign(claims)
+	if err != nil {
+		return "", nil, err
+	}
+
+	idWithScopes := *id
+	idWithScopes.Scopes = scopes
+
+	tok := &Token{
+		JTI:       jti,
+		Identity:  idWithScopes,
+		IssuedAt:  now,
+		ExpiresAt: exp,
+	}
+	return tokenStr, tok, nil
+}
+
 // claimsToToken converts validated tokenClaims to a Token.
 func claimsToToken(claims *tokenClaims) *Token {
 	return &Token{
@@ -306,6 +351,7 @@ func claimsToToken(claims *tokenClaims) *Token {
 			Role:            identity.Role(claims.Role),
 			SPIFFEID:        claims.SPIFFE,
 			CertFingerprint: claims.CertFP,
+			Scopes:          claims.Scopes,
 		},
 		IssuedAt:  time.Unix(claims.IssuedAt, 0).UTC(),
 		ExpiresAt: time.Unix(claims.ExpiresAt, 0).UTC(),

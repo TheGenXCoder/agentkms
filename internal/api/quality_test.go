@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/agentkms/agentkms/internal/api"
+	"github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/policy"
 	"github.com/agentkms/agentkms/pkg/identity"
@@ -30,7 +31,9 @@ func (e errorEngine) Evaluate(_ context.Context, _ identity.Identity, _, _ strin
 func TestHandlers_PolicyEngineError_Return500(t *testing.T) {
 	newErrServer := func(b backend.Backend) (*api.Server, *capturingAuditor) {
 		aud := &capturingAuditor{}
-		return api.NewServer(b, aud, errorEngine{}, "dev"), aud
+		rl := auth.NewRevocationList()
+		ts, _ := auth.NewTokenService(rl)
+		return api.NewServer(b, aud, errorEngine{}, ts, "dev"), aud
 	}
 
 	t.Run("sign", func(t *testing.T) {
@@ -165,7 +168,9 @@ func TestRecoveryMiddleware_PanicProducesCleanJSON(t *testing.T) {
 	panicker := panicOnSign{inner}
 
 	aud := &capturingAuditor{}
-	srv := api.NewServer(panicker, aud, policy.AllowAllEngine{}, "dev")
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
+	srv := api.NewServer(panicker, aud, policy.AllowAllEngine{}, ts, "dev")
 
 	rr := request(t, srv, http.MethodPost, "/sign/panic/key",
 		jsonReader(t, map[string]any{
@@ -331,7 +336,9 @@ func TestAdversarial_AuditFailure_EncryptAndDecrypt_Return500(t *testing.T) {
 	// Mirrors TestAdversarial_AuditFailure_SuccessPath_Returns500 for sign,
 	// verifying encrypt and decrypt also fail closed when the audit sink fails.
 	newFail := func(b backend.Backend) *api.Server {
-		return api.NewServer(b, &failingAuditor{}, policy.AllowAllEngine{}, "dev")
+		rl := auth.NewRevocationList()
+		ts, _ := auth.NewTokenService(rl)
+		return api.NewServer(b, &failingAuditor{}, policy.AllowAllEngine{}, ts, "dev")
 	}
 
 	t.Run("encrypt audit fail", func(t *testing.T) {
@@ -391,10 +398,18 @@ func TestExtractRemoteIP_IPv6(t *testing.T) {
 	// it via an audit event's SourceIP field.
 	b := backend.NewDevBackend()
 	aud := &capturingAuditor{}
-	srv := api.NewServer(b, aud, policy.DenyAllEngine{}, "dev")
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
+	srv := api.NewServer(b, aud, policy.DenyAllEngine{}, ts, "dev")
 
 	// Craft a request with an IPv6 remote addr.
 	req, _ := http.NewRequest(http.MethodGet, "/keys", nil)
+	id := identity.Identity{
+		CallerID: "test-user",
+		TeamID:   "test-team",
+		Role:     identity.RoleDeveloper,
+	}
+	req = req.WithContext(api.SetIdentityInContext(req.Context(), id))
 	req.RemoteAddr = "[::1]:54321"
 
 	rr := httptest.NewRecorder()

@@ -40,17 +40,26 @@ func NewMultiAuditor(sinks ...Auditor) *MultiAuditor {
 	return &MultiAuditor{sinks: s}
 }
 
-// Log calls Log on every configured sink, collecting all errors.
+// Log validates the event and then calls Log on every configured sink,
+// collecting all errors.
 //
-// If k of N sinks fail, the returned error joins k individual errors.
-// The error message identifies which sink index failed; since sink
-// implementations are opaque interfaces, index-based identification is the
-// best available without requiring sinks to expose a Name() method.
+// Validation (AuditEvent.Validate) runs before any sink is called. If the
+// event fails validation — e.g. DenyReason contains a PEM block or a
+// 32-byte hex blob — Log returns an error immediately without writing to
+// any sink. This is a deliberate fail-closed policy: writing potential key
+// material to an audit sink is a worse outcome than a missed event.
+//
+// If k of N sinks fail after a valid event, the returned error joins k
+// individual errors. The error message identifies which sink index failed.
 //
 // IMPORTANT: a non-nil return does NOT mean the event was undelivered — some
-// sinks may have succeeded.  The caller should log the error at an
-// appropriate severity and decide whether to fail the operation.
+// sinks may have succeeded. The caller should log the error at an appropriate
+// severity and decide whether to fail the operation.
 func (m *MultiAuditor) Log(ctx context.Context, event AuditEvent) error {
+	// Validate before writing. Fail closed on any key-material pattern.
+	if err := event.Validate(); err != nil {
+		return fmt.Errorf("audit: MultiAuditor rejected unsafe event: %w", err)
+	}
 	return m.fanOut(ctx, func(sink Auditor, idx int) error {
 		if err := sink.Log(ctx, event); err != nil {
 			return fmt.Errorf("audit sink[%d]: log: %w", idx, err)

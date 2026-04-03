@@ -6,7 +6,7 @@ Private key material never leaves this service. Agents, developers, and applicat
 
 ## Core Guarantee
 
-```
+```text
 Agent calls AgentKMS → receives signature
 Agent calls AgentKMS → receives ciphertext
 Agent calls AgentKMS → receives short-lived LLM API key (in-memory, not persisted)
@@ -16,10 +16,20 @@ Private key material: stays in the backend (OpenBao / AWS KMS / etc.)
                       no exceptions
 ```
 
+## Features (T1 - T3 Complete)
+
+- **Cloud-Native Backends**: Full integration with OpenBao / HashiCorp Vault Transit engine with Zero-Downtime Dual-Run migration support.
+- **Enterprise Audit Logging**: Streaming NDJSON exports, Splunk HEC, Datadog, ELK, and Generic SIEM Webhook integration with cryptographic HMAC-SHA256 signature verification.
+- **Agentic Identity & Orchestration**: Sub-Agent Identity Scoping via `POST /auth/delegate` (minting short-lived, permission-restricted Macaroons for sub-agents).
+- **High-Performance APIs**: Parallel REST and gRPC endpoints for zero-latency cryptographic operations at swarm-scale.
+- **Automated Security Operations**: ML-augmented statistical anomaly detection (flagging token velocity spikes and unusual access patterns), automated SOC 2 HTML compliance reports, and an embedded Enterprise Admin Web UI.
+- **Pi Integration**: A lightweight TypeScript extension (`@org/agentkms`) that enforces credential path protection, seamless provider model switching, and real-time connection visibility via `/agentkms-status`.
+
 ## Docs
 
 - **Architecture**: [`docs/architecture.md`](docs/architecture.md) — read this first
 - **Backlog**: [`docs/backlog.md`](docs/backlog.md)
+- **Compliance & Runbooks**: [`docs/compliance-controls.md`](docs/compliance-controls.md), [`docs/security-runbook.md`](docs/security-runbook.md), [`docs/rotation-runbook.md`](docs/rotation-runbook.md)
 - **Pi context**: [`AGENTS.md`](AGENTS.md) — constraints for Pi agent sessions on this project
 
 ## Quick Start (Local Dev)
@@ -44,4 +54,4 @@ pi install npm:@org/agentkms
 
 SOC 2 Type 2 · PCI-DSS · ISO 27001 · GDPR · CCPA · Colorado AI Act · SLG/FedRAMP-Ready
 
-See [`docs/architecture.md#8-compliance-coverage`](docs/architecture.md#8-compliance-coverage).
+See [`docs/compliance-controls.md`](docs/compliance-controls.md) for testable evidence.

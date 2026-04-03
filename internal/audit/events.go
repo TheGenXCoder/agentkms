@@ -174,11 +174,12 @@ func NewEventID() (string, error) {
 // in the AuditEvent do not contain patterns associated with key material.
 //
 // Fields checked:
-//   - DenyReason: must not contain PEM block delimiters ("-----BEGIN" /
+//   - DenyReason, ErrorDetail, CallerID, UserAgent, KeyID:
+//     must not contain PEM block delimiters ("-----BEGIN" /
 //     "-----END") or a hex-encoded sequence of ≥ 32 bytes (64 hex chars).
 //
-// Why fail closed: if DenyReason contains a PEM-encoded private key or a
-// 32-byte hex blob, writing it to any audit sink (ELK, Splunk, CloudWatch)
+// Why fail closed: if any free-text field contains a PEM-encoded private key
+// or a 32-byte hex blob, writing it to any audit sink (ELK, Splunk, CloudWatch)
 // constitutes a key-material leak — a catastrophic security violation.
 // A missed audit event is recoverable; a key leak is not.
 //
@@ -187,8 +188,19 @@ func NewEventID() (string, error) {
 //
 // F-09.
 func (e AuditEvent) Validate() error {
-	if err := checkForKeyMaterial("DenyReason", e.DenyReason); err != nil {
-		return fmt.Errorf("audit: AuditEvent.Validate: %w", err)
+	for _, fc := range []struct {
+		name  string
+		value string
+	}{
+		{"DenyReason", e.DenyReason},
+		{"ErrorDetail", e.ErrorDetail},
+		{"CallerID", e.CallerID},
+		{"UserAgent", e.UserAgent},
+		{"KeyID", e.KeyID},
+	} {
+		if err := checkForKeyMaterial(fc.name, fc.value); err != nil {
+			return fmt.Errorf("audit: AuditEvent.Validate: %w", err)
+		}
 	}
 	return nil
 }

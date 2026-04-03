@@ -111,8 +111,11 @@ func main() {
 	// ── Backend ────────────────────────────────────────────────────────────────
 	var bknd backend.Backend
 
+	// Read the Vault token once — used by backend, policy loader, and credential vender.
+	var vaultToken string
 	if *vaultAddr != "" {
-		token, err := readToken(*tokenPath)
+		var err error
+		vaultToken, err = readToken(*tokenPath)
 		if err != nil {
 			slog.Error("failed to read vault token", "path", *tokenPath, "error", err)
 			os.Exit(1)
@@ -120,7 +123,7 @@ func main() {
 
 		cfg := backend.OpenBaoConfig{
 			Address: *vaultAddr,
-			Token:   token,
+			Token:   vaultToken,
 		}
 		// Read mount paths from config if provided, otherwise use defaults.
 		if mountTransit, mountKV := mountsFromConfig(*configPath); mountTransit != "" {
@@ -146,14 +149,9 @@ func main() {
 
 	if *vaultPolicyPath != "" && *vaultAddr != "" {
 		// Load policy from Vault KV (with optional local fallback).
-		token, terr := readToken(*tokenPath)
-		if terr != nil {
-			slog.Error("vault policy: failed to read token", "error", terr)
-			os.Exit(1)
-		}
 		loader := policy.NewVaultPolicyLoader(policy.VaultPolicyConfig{
 			Address:           *vaultAddr,
-			Token:             token,
+			Token:             vaultToken,
 			PolicyPath:        *vaultPolicyPath,
 			LocalFallbackPath: *policyFile,
 			ReloadInterval:    *vaultPolicyReload,
@@ -183,12 +181,9 @@ func main() {
 	// ── Credential vender ─────────────────────────────────────────────────────
 	apiServer := api.NewServer(bknd, auditor, eng, *env)
 	if *vaultAddr != "" {
-		token, err := readToken(*tokenPath)
-		if err == nil {
-			kv := credentials.NewOpenBaoKV(*vaultAddr, token)
-			apiServer.SetVender(credentials.NewVender(kv, "kv"))
-			slog.Info("credential vender ready")
-		}
+		kv := credentials.NewOpenBaoKV(*vaultAddr, vaultToken)
+		apiServer.SetVender(credentials.NewVender(kv, "kv"))
+		slog.Info("credential vender ready")
 	}
 
 	mux := http.NewServeMux()

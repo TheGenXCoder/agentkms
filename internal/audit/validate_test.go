@@ -340,3 +340,96 @@ func TestValidate_StopsAtFirstViolation(t *testing.T) {
 		t.Fatal("unexpected joined error from single-field Validate")
 	}
 }
+
+// ── CRITICAL-03: Validate checks all free-text fields ─────────────────────────
+
+func TestValidate_ErrorDetail_PEM_Rejected(t *testing.T) {
+	ev, _ := audit.New()
+	ev.CallerID = "test@team"
+	ev.TeamID = "team"
+	ev.Operation = audit.OperationSign
+	ev.Outcome = audit.OutcomeError
+	ev.ErrorDetail = "-----BEGIN EC PRIVATE KEY-----\nMHQ..."
+	err := ev.Validate()
+	if err == nil {
+		t.Fatal("expected PEM in ErrorDetail to be rejected")
+	}
+	if !strings.Contains(err.Error(), "ErrorDetail") {
+		t.Fatalf("expected ErrorDetail in error, got: %q", err.Error())
+	}
+}
+
+func TestValidate_ErrorDetail_HexBlob_Rejected(t *testing.T) {
+	ev, _ := audit.New()
+	ev.CallerID = "test@team"
+	ev.TeamID = "team"
+	ev.Operation = audit.OperationSign
+	ev.Outcome = audit.OutcomeError
+	ev.ErrorDetail = "vault returned: " + hex64
+	err := ev.Validate()
+	if err == nil {
+		t.Fatal("expected hex blob in ErrorDetail to be rejected")
+	}
+}
+
+func TestValidate_CallerID_PEM_Rejected(t *testing.T) {
+	ev, _ := audit.New()
+	ev.CallerID = "-----BEGIN PRIVATE KEY-----"
+	ev.TeamID = "team"
+	ev.Operation = audit.OperationSign
+	ev.Outcome = audit.OutcomeSuccess
+	err := ev.Validate()
+	if err == nil {
+		t.Fatal("expected PEM in CallerID to be rejected")
+	}
+	if !strings.Contains(err.Error(), "CallerID") {
+		t.Fatalf("expected CallerID in error, got: %q", err.Error())
+	}
+}
+
+func TestValidate_UserAgent_HexBlob_Rejected(t *testing.T) {
+	ev, _ := audit.New()
+	ev.CallerID = "test@team"
+	ev.TeamID = "team"
+	ev.Operation = audit.OperationSign
+	ev.Outcome = audit.OutcomeSuccess
+	ev.UserAgent = hex128
+	err := ev.Validate()
+	if err == nil {
+		t.Fatal("expected hex blob in UserAgent to be rejected")
+	}
+	if !strings.Contains(err.Error(), "UserAgent") {
+		t.Fatalf("expected UserAgent in error, got: %q", err.Error())
+	}
+}
+
+func TestValidate_KeyID_PEM_Rejected(t *testing.T) {
+	ev, _ := audit.New()
+	ev.CallerID = "test@team"
+	ev.TeamID = "team"
+	ev.Operation = audit.OperationSign
+	ev.Outcome = audit.OutcomeSuccess
+	ev.KeyID = "-----END RSA PRIVATE KEY-----"
+	err := ev.Validate()
+	if err == nil {
+		t.Fatal("expected PEM in KeyID to be rejected")
+	}
+	if !strings.Contains(err.Error(), "KeyID") {
+		t.Fatalf("expected KeyID in error, got: %q", err.Error())
+	}
+}
+
+func TestValidate_CleanFreeTextFields_Pass(t *testing.T) {
+	ev, _ := audit.New()
+	ev.CallerID = "agent-42@engineering"
+	ev.TeamID = "engineering"
+	ev.Operation = audit.OperationSign
+	ev.Outcome = audit.OutcomeSuccess
+	ev.ErrorDetail = "connection timeout after 30s"
+	ev.UserAgent = "pi-agent/1.2.3"
+	ev.KeyID = "agentkms-signing-v2"
+	ev.DenyReason = ""
+	if err := ev.Validate(); err != nil {
+		t.Fatalf("clean event should pass: %v", err)
+	}
+}

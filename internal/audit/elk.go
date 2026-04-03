@@ -16,11 +16,12 @@ package audit
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
-	"crypto/tls"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,12 @@ type ELKAuditSink struct {
 	client *http.Client
 	mu     sync.Mutex
 	buf    []AuditEvent
+
+	// dropped tracks events dropped due to buffer overflow.
+	dropped int
+
+	// maxBuf is the hard cap on buffer size (BufferSize * 20).
+	maxBuf int
 }
 
 // NewELKAuditSink creates an ELKAuditSink ready to write events.
@@ -93,6 +100,15 @@ func NewELKAuditSink(ctx context.Context, cfg ELKConfig) (*ELKAuditSink, error) 
 		cfg:    cfg,
 		index:  index,
 		client: &http.Client{Timeout: 15 * time.Second, Transport: transport},
+	}
+	// Hard cap: 20× buffer size, minimum 100.
+	if cfg.BufferSize > 1 {
+		sink.maxBuf = cfg.BufferSize * 20
+	} else {
+		sink.maxBuf = 100
+	}
+	if sink.maxBuf < 100 {
+		sink.maxBuf = 100
 	}
 
 	// Start background flush goroutine if interval is configured.
@@ -121,6 +137,14 @@ func (s *ELKAuditSink) Log(ctx context.Context, event AuditEvent) error {
 	}
 
 	s.buf = append(s.buf, event)
+
+	// Cap buffer to prevent unbounded growth during sustained ELK outage.
+	if len(s.buf) > s.maxBuf {
+		drop := len(s.buf) - s.maxBuf
+		s.buf = s.buf[drop:]
+		s.dropped += drop
+	}
+
 	if len(s.buf) >= s.cfg.BufferSize {
 		return s.flushLocked(ctx)
 	}
@@ -218,6 +242,10 @@ func (s *ELKAuditSink) flushLocked(ctx context.Context) error {
 	}
 
 	// Clear buffer only after successful write.
+	if s.dropped > 0 {
+		fmt.Fprintf(os.Stderr, "audit: ELK: %d events were dropped due to buffer overflow\n", s.dropped)
+		s.dropped = 0
+	}
 	s.buf = s.buf[:0]
 	return nil
 }
@@ -243,7 +271,11 @@ func (s *ELKAuditSink) flushLoop(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 			s.mu.Lock()
-			_ = s.flushLocked(ctx)
+			if err := s.flushLocked(ctx); err != nil {
+				// Log flush failure — operator visibility for HIGH-01.
+				fmt.Fprintf(os.Stderr, "audit: ELK: flush error: %v (buffer=%d, dropped=%d)\n",
+					err, len(s.buf), s.dropped)
+			}
 			s.mu.Unlock()
 		}
 	}

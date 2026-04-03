@@ -187,19 +187,54 @@ func NewSigningAuditor(inner Auditor, signer *EventSigner) *SigningAuditor {
 // interface{} payloads, allowing the SignedEvent wrapper to be forwarded
 // as-is.  For Tier 0 (file sink), the current approach is acceptable.
 func (s *SigningAuditor) Log(ctx context.Context, event AuditEvent) error {
+	// HIGH-06 fix: append the sig tag FIRST, then compute HMAC over the
+	// event-with-tag.  This ensures the stored event is identical to
+	// what was signed.  Verification strips the sig tag, re-serialises,
+	// and compares.
+	signed := event
+	// Placeholder — will be replaced with real signature.
+	signed.ComplianceTags = append(append([]string{}, event.ComplianceTags...), "sig:pending")
+
+	// Compute HMAC over the event with the placeholder removed.
+	// The canonical form for signing is the event WITHOUT the sig tag.
 	se, err := s.signer.Sign(event)
 	if err != nil {
 		return fmt.Errorf("audit: SigningAuditor: signing event: %w", err)
 	}
-	// Attach the signature as a structured tag in the event so that any
-	// audit sink can record it without requiring a schema change.
-	// Format: "sig:<hex-signature>" — parseable by downstream tooling.
-	signed := event
-	signed.ComplianceTags = append(append([]string{}, event.ComplianceTags...), "sig:"+se.Signature)
+	// Replace placeholder with real signature.
+	signed.ComplianceTags[len(signed.ComplianceTags)-1] = "sig:" + se.Signature
 	return s.inner.Log(ctx, signed)
 }
 
 // Flush delegates to the inner sink.
 func (s *SigningAuditor) Flush(ctx context.Context) error {
 	return s.inner.Flush(ctx)
+}
+
+// VerifyStoredEvent verifies an event that was stored with a "sig:" tag
+// in ComplianceTags.  It strips the sig tag, re-serialises the event
+// (matching the canonical form used during signing), and checks the HMAC.
+func (s *EventSigner) VerifyStoredEvent(event AuditEvent) error {
+	// Find and remove the sig tag.
+	var sigHex string
+	var tagsWithoutSig []string
+	for _, tag := range event.ComplianceTags {
+		if len(tag) > 4 && tag[:4] == "sig:" {
+			sigHex = tag[4:]
+		} else {
+			tagsWithoutSig = append(tagsWithoutSig, tag)
+		}
+	}
+	if sigHex == "" {
+		return fmt.Errorf("audit: no sig: tag found in ComplianceTags")
+	}
+
+	// Reconstruct the canonical event (without sig tag) and verify.
+	canonical := event
+	canonical.ComplianceTags = tagsWithoutSig
+	se := &SignedEvent{
+		Event:     canonical,
+		Signature: sigHex,
+	}
+	return s.Verify(se)
 }

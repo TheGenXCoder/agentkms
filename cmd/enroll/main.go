@@ -20,6 +20,8 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -244,20 +246,18 @@ func obtainOIDCBootstrapToken(issuer, clientID, agentKMSAddr string) (string, er
 	if err != nil {
 		return "", err
 	}
-	// PKCE code challenge method: "plain" (code_challenge = code_verifier).
-	// TODO(#3): upgrade to S256 before production — "plain" method means
-	// an attacker who intercepts the authorization URL could replay the code.
-	// S256: code_challenge = base64url(sha256(code_verifier)).
-	// This is acceptable for T1 POC (loopback callback, short-lived state).
-	// Do NOT ship "plain" to production.
+	// PKCE S256: code_challenge = base64url(sha256(code_verifier))
+	challengeHash := sha256.Sum256([]byte(codeVerifier))
+	codeChallenge := base64.RawURLEncoding.EncodeToString(challengeHash[:])
+
 	authURL := disc.AuthorizationEndpoint +
 		"?response_type=code" +
 		"&client_id=" + url.QueryEscape(clientID) +
 		"&redirect_uri=" + url.QueryEscape(callbackURL) +
 		"&scope=openid+email+profile" +
 		"&state=" + state +
-		"&code_challenge=" + codeVerifier +
-		"&code_challenge_method=plain"
+		"&code_challenge=" + codeChallenge +
+		"&code_challenge_method=S256"
 
 	// ── 4. Open browser ────────────────────────────────────────────────────────
 	fmt.Fprintf(os.Stderr, "\nOpening browser for SSO login...\n")

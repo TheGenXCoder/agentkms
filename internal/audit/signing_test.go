@@ -368,3 +368,54 @@ func TestVerify_UsesHMACEqual(t *testing.T) {
 	// If we get here without panics and with correct results, the constant-time
 	// comparison is in place (the test covers both match and mismatch branches).
 }
+
+// HIGH-06: Verify that a stored event (with sig: tag in ComplianceTags)
+// can be verified via VerifyStoredEvent — proving the HMAC was computed
+// over the canonical event without the sig: tag.
+func TestVerifyStoredEvent_RoundTrip(t *testing.T) {
+	ev, _ := audit.New()
+	ev.CallerID = "test@team"
+	ev.TeamID = "team"
+	ev.Operation = audit.OperationSign
+	ev.Outcome = audit.OutcomeSuccess
+	ev.ComplianceTags = []string{"soc2", "pci"}
+
+	signer, err := audit.NewEventSigner()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate what SigningAuditor.Log does:
+	se, err := signer.Sign(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := ev
+	stored.ComplianceTags = append(append([]string{}, ev.ComplianceTags...), "sig:"+se.Signature)
+
+	// VerifyStoredEvent should pass on the stored event.
+	if err := signer.VerifyStoredEvent(stored); err != nil {
+		t.Fatalf("VerifyStoredEvent should pass: %v", err)
+	}
+
+	// Tamper with stored event — should fail.
+	tampered := stored
+	tampered.CallerID = "attacker@evil"
+	if err := signer.VerifyStoredEvent(tampered); err == nil {
+		t.Fatal("VerifyStoredEvent should fail for tampered event")
+	}
+}
+
+func TestVerifyStoredEvent_NoSigTag_Error(t *testing.T) {
+	ev, _ := audit.New()
+	ev.CallerID = "test@team"
+	ev.TeamID = "team"
+	ev.Operation = audit.OperationSign
+	ev.Outcome = audit.OutcomeSuccess
+
+	signer, _ := audit.NewEventSigner()
+	err := signer.VerifyStoredEvent(ev)
+	if err == nil {
+		t.Fatal("expected error when no sig: tag")
+	}
+}

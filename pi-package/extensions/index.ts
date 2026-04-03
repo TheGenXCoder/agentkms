@@ -128,6 +128,45 @@ export default function (pi: ExtensionAPI) {
   // Register crypto tools.
   registerCryptoTools(pi, getSessionToken, getClient);
 
+  // ── agentkms-status (PI-15) ──────────────────────────────────────────────
+
+  pi.registerCommand("agentkms-status", {
+    description: "Show AgentKMS connection status, token TTL, and active providers",
+    handler: async (_args, ctx) => {
+      if (!sessionToken) {
+        ctx.ui.notify(
+          "AgentKMS: not authenticated.  " +
+          "A session must be active to establish an AgentKMS connection.",
+          "warning",
+        );
+        return;
+      }
+
+      const now = Date.now();
+      const tokenTTL = Math.max(0, Math.round((sessionToken.expiresAt - now) / 1000 / 60));
+
+      let message = "AgentKMS Status\n";
+      message += "────────────────────────────────────────────────\n";
+      message += `Identity:      ${sessionToken.identity.callerId}\n`;
+      message += `Team:          ${sessionToken.identity.teamId}\n`;
+      message += `Session:       ${sessionToken.identity.agentSession}\n`;
+      message += `Token Expiry:  ${new Date(sessionToken.expiresAt).toLocaleTimeString()} ` +
+                 `(${tokenTTL} min remaining)\n\n`;
+
+      if (runtimeKeys.size > 0) {
+        message += "Active LLM Providers:\n";
+        for (const [provider, cred] of runtimeKeys) {
+          const credTTL = Math.max(0, Math.round((cred.expiresAt - now) / 1000 / 60));
+          message += `  • ${provider.padEnd(12)} ${credTTL} min remaining\n`;
+        }
+      } else {
+        message += "No active LLM providers configured.";
+      }
+
+      ctx.ui.notify(message, "info");
+    },
+  });
+
   // ── session_start (PI-04) ────────────────────────────────────────────────
 
   pi.on("session_start", async (_event, ctx) => {

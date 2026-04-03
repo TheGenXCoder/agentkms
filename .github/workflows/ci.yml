@@ -1,0 +1,169 @@
+# =============================================================================
+# AgentKMS CI Pipeline
+#
+# Triggers: push to any branch, pull requests to main.
+#
+# Jobs:
+#   quality    — go vet, go test -race, coverage thresholds, quality gate
+#   build      — docker build (validates Dockerfile; does not push)
+#   health     — coordinate.sh health (worktree + branch + build integrity)
+#   integration — go test with 'integration' build tag against a live OpenBao
+#                 (runs on push to main and release tags only)
+#
+# Secrets required (set in repo Settings → Secrets):
+#   (none for quality/build — all checks use only the repo content)
+#   REGISTRY_TOKEN  — for Docker push on release tags (not wired yet, IN-06)
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+env:
+  GO_VERSION: "1.25"
+  # Thresholds must match scripts/quality_check.sh
+  COVERAGE_MIN: "80"
+  SECURITY_COVERAGE_MIN: "85"
+  SECURITY_PACKAGES: "internal/auth*,internal/policy*,internal/audit*"
+
+jobs:
+  # ── quality ──────────────────────────────────────────────────────────────────
+  quality:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Verify module integrity
+        run: go mod verify
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Tests with race detector
+        run: go test -race -count=1 -timeout=5m ./...
+
+      - name: Coverage check
+        run: |
+          # Run quality gate script (handles per-package threshold logic).
+          # Script auto-detects Go, reads go.mod for module path.
+          bash scripts/quality_check.sh
+        env:
+          COVERAGE_MIN: ${{ env.COVERAGE_MIN }}
+          SECURITY_COVERAGE_MIN: ${{ env.SECURITY_COVERAGE_MIN }}
+          SECURITY_PACKAGES: ${{ env.SECURITY_PACKAGES }}
+
+  # ── build ─────────────────────────────────────────────────────────────────────
+  build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: quality
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: agentkms:${{ github.sha }}
+          # Cache layers between runs for faster builds.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Build for linux/amd64 in CI (matches K8s nodes).
+          platforms: linux/amd64
+
+  # ── health ────────────────────────────────────────────────────────────────────
+  health:
+    name: Coordinator Health
+    runs-on: ubuntu-latest
+    needs: quality
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up worktrees
+        # In CI we run in a single checkout; create worktrees from the
+        # feature branches so health_check can inspect them.
+        # Failures here are non-fatal (feature branches may not exist in
+        # a shallow clone); the main-repo build check always runs.
+        run: |
+          git fetch --unshallow 2>/dev/null || true
+          git fetch origin 2>/dev/null || true
+          bash scripts/coordinate.sh setup 2>/dev/null || true
+
+      - name: Run health check
+        run: bash scripts/coordinate.sh health
+
+  # ── integration ───────────────────────────────────────────────────────────────
+  integration:
+    name: Integration Tests (OpenBao)
+    runs-on: ubuntu-latest
+    # Only run on main and release tags — integration tests need OpenBao and
+    # take significantly longer than unit tests.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    needs: [quality, build]
+
+    services:
+      openbao:
+        image: openbao/openbao:latest
+        env:
+          BAO_DEV_ROOT_TOKEN_ID: root
+          BAO_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+        options: >-
+          --health-cmd "bao status"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Wait for OpenBao
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8200/v1/sys/health && break
+            sleep 2
+          done
+
+      - name: Run integration tests
+        run: |
+          go test -race -count=1 -timeout=10m \
+            -tags=integration \
+            ./internal/backend/...
+        env:
+          OPENBAO_ADDR: http://127.0.0.1:8200
+          OPENBAO_TOKEN: root

@@ -31,6 +31,10 @@ import (
 )
 
 const (
+	defaultVaultPolicyPath = "" // empty = use local file only
+)
+
+const (
 	defaultListenAddr  = ":8200"
 	defaultConfigPath  = "/etc/agentkms/config.yaml"
 	defaultTokenPath   = "/vault/secrets/token"
@@ -46,7 +50,9 @@ func main() {
 	configPath := flag.String("config", envOr("AGENTKMS_CONFIG", defaultConfigPath), "Config file path")
 	tokenPath  := flag.String("token-path", envOr("AGENTKMS_VAULT_TOKEN_PATH", defaultTokenPath), "Vault token file path")
 	vaultAddr  := flag.String("vault-addr", envOr("AGENTKMS_VAULT_ADDR", ""), "OpenBao/Vault address")
-	policyFile := flag.String("policy", envOr("AGENTKMS_POLICY", ""), "Policy YAML file (optional; empty = deny all)")
+	policyFile  := flag.String("policy", envOr("AGENTKMS_POLICY", ""), "Policy YAML file (optional; empty = deny all)")
+	vaultPolicyPath := flag.String("vault-policy-path", envOr("AGENTKMS_VAULT_POLICY_PATH", ""), "Vault KV path for policy (e.g. policy/production); overrides --policy")
+	vaultPolicyReload := flag.Duration("vault-policy-reload", 60*time.Second, "How often to reload policy from Vault KV")
 	auditLog   := flag.String("audit-log", envOr("AGENTKMS_AUDIT_LOG", defaultAuditLog), "Audit log file path")
 	elkAddr    := flag.String("elk-addr", envOr("AGENTKMS_ELK_ADDR", defaultELKAddr), "Elasticsearch address (optional)")
 	elkIndex   := flag.String("elk-index", envOr("AGENTKMS_ELK_INDEX", "agentkms-audit"), "Elasticsearch index")
@@ -138,16 +144,38 @@ func main() {
 	// ── Policy engine ──────────────────────────────────────────────────────────
 	var eng policy.EngineI
 
-	if *policyFile != "" {
+	if *vaultPolicyPath != "" && *vaultAddr != "" {
+		// Load policy from Vault KV (with optional local fallback).
+		token, terr := readToken(*tokenPath)
+		if terr != nil {
+			slog.Error("vault policy: failed to read token", "error", terr)
+			os.Exit(1)
+		}
+		loader := policy.NewVaultPolicyLoader(policy.VaultPolicyConfig{
+			Address:           *vaultAddr,
+			Token:             token,
+			PolicyPath:        *vaultPolicyPath,
+			LocalFallbackPath: *policyFile,
+			ReloadInterval:    *vaultPolicyReload,
+		})
+		if err := loader.Load(context.Background()); err != nil {
+			slog.Error("failed to load policy from Vault KV", "path", *vaultPolicyPath, "error", err)
+			os.Exit(1)
+		}
+		eng = loader.EngineI()
+		slog.Info("policy loaded from Vault KV",
+			"path", *vaultPolicyPath,
+			"reload_interval", vaultPolicyReload.String())
+	} else if *policyFile != "" {
 		p, err := policy.LoadFromFile(*policyFile)
 		if err != nil {
 			slog.Error("failed to load policy", "path", *policyFile, "error", err)
 			os.Exit(1)
 		}
 		eng = policy.AsEngineI(policy.New(*p))
-		slog.Info("policy loaded", "path", *policyFile)
+		slog.Info("policy loaded from file", "path", *policyFile)
 	} else {
-		slog.Warn("no policy file configured — all operations denied by default")
+		slog.Warn("no policy configured — all operations denied by default")
 		eng = policy.DenyAllEngine{}
 	}
 

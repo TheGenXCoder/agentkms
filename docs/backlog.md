@@ -88,10 +88,10 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| LV-01 | P0 | T1 | [ ] | Implement `GET /credentials/llm/{provider}` handler | Fetches scoped LLM key from backend, returns with 60min TTL |
-| LV-02 | P0 | T1 | [ ] | Implement LLM key storage in backend (provider keys stored as secrets, scoped per team) | Supports: anthropic, openai, google, azure, bedrock, mistral, groq |
-| LV-03 | P0 | T1 | [ ] | Implement credential scoping (vended key tied to session identity and expiry) | Revocation cascades: revoke session → vended keys invalidated |
-| LV-04 | P1 | T1 | [ ] | Implement credential refresh endpoint (`POST /credentials/llm/{provider}/refresh`) | Called by Pi extension when key is < 10min from expiry |
+| LV-01 | P0 | T1 | [x] | Implement `GET /credentials/llm/{provider}` handler | Fetches scoped LLM key from backend, returns with 60min TTL |
+| LV-02 | P0 | T1 | [x] | Implement LLM key storage in backend (provider keys stored as secrets, scoped per team) | Supports: anthropic, openai, google, azure, bedrock, mistral, groq |
+| LV-03 | P0 | T1 | [x] | Implement credential scoping (vended key tied to session identity and expiry) | Revocation cascades: revoke session → vended keys invalidated |
+| LV-04 | P1 | T1 | [x] | Implement credential refresh endpoint (`POST /credentials/llm/{provider}/refresh`) | Called by Pi extension when key is < 10min from expiry |
 | LV-05 | P1 | T2 | [ ] | Implement master LLM key rotation schedule | Rotates master keys; all new vended keys use new version |
 | LV-06 | P2 | T2 | [ ] | Implement credential audit trail (every vend, every use-associated-session logged) | Ties LLM usage back to agent session identity for compliance |
 
@@ -102,7 +102,7 @@
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
 | B-01 | P0 | T1 | [x] | Implement OpenBao/Vault Transit backend (`internal/backend/openbao.go`) | Supports: sign, encrypt, decrypt, list, rotate; unit tests + integration test skeleton (build tag: integration) |
-| B-02 | P1 | T1 | [ ] | Write integration tests against local OpenBao instance | Use `agentkms-dev` to spin up test instance |
+| B-02 | P1 | T1 | [x] | Write integration tests against local OpenBao instance | Use `agentkms-dev` to spin up test instance |
 | B-03 | P2 | T2 | [ ] | Implement HashiCorp Vault backend (`internal/backend/vault.go`) | Same interface as OpenBao; separate for namespace/config differences |
 | B-04 | P2 | T3 | [ ] | Implement AWS KMS backend (`internal/backend/awskms.go`) | Multi-region asymmetric keys; FIPS 140-2 path |
 | B-05 | P3 | T3 | [ ] | Implement GCP Cloud KMS backend (`internal/backend/gcpkms.go`) | — |
@@ -116,8 +116,8 @@
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
 | AU-01 | P0 | T0 | [x] | Implement file audit sink (append-only JSON lines, local dev) | Done as F-06; `internal/audit/file.go` |
-| AU-02 | P1 | T1 | [ ] | Implement ELK audit sink (`internal/audit/elk.go`) — Elasticsearch ingest API | Phase 1 production audit backend |
-| AU-03 | P1 | T1 | [ ] | Deploy local ELK stack on K8s (Helm charts) and validate audit event ingestion | — |
+| AU-02 | P1 | T1 | [x] | Implement ELK audit sink (`internal/audit/elk.go`) — Elasticsearch ingest API | Phase 1 production audit backend |
+| AU-03 | P1 | T1 | [x] | Deploy local ELK stack on K8s (Helm charts) and validate audit event ingestion | — |
 | AU-04 | P1 | T1 | [ ] | Build Kibana dashboard: operations by team, denied ops, anomaly timeline | Compliance officer-friendly |
 | AU-05 | P2 | T2 | [ ] | Implement Splunk HEC audit sink (`internal/audit/splunk.go`) | — |
 | AU-06 | P2 | T2 | [ ] | Implement Datadog audit sink (`internal/audit/datadog.go`) | — |

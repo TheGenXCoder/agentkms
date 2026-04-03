@@ -32,7 +32,7 @@ import (
 // │  Auditor  audit.Auditor    ← injected by caller                         │
 // │    T0: *audit.FileAuditSink or *audit.MultiAuditor.                     │
 // │                                                                          │
-// │  Policy   policy.EngineI   ← injected by caller                         │
+// │  Policy   policy.Engine    ← injected by caller                         │
 // │    TODO(P-01,P-03): Wire real policy engine once P-03 is complete.       │
 // │    Production must use a configured Engine, not DenyAllEngine.           │
 // │    Never inject AllowAllEngine outside unit tests.                       │

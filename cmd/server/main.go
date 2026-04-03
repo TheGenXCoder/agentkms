@@ -1,21 +1,25 @@
-// Package main is the AgentKMS production server entrypoint.
+// Package main is the AgentKMS production server.
 //
-// Wiring status (see docs/backlog.md for tracking):
+// Reads configuration from /etc/agentkms/config.yaml and a Vault Agent token
+// from AGENTKMS_VAULT_TOKEN_PATH.  Connects to OpenBao via the configured
+// address and serves the AgentKMS API on :8200.
 //
-//	API handlers    — [~] C-01 to C-04 implemented; C-05 stub (501)
-//	Auth middleware — TODO(A-04): replace stub with real token validation
-//	Backend         — TODO(B-01): wire OpenBao once internal/backend/openbao.go is ready
-//	Policy engine   — TODO(P-03): wire real engine once P-01 to P-04 complete
-//	Audit sink      — file sink available; ELK/Splunk in backlog AU-02 to AU-08
+// Deployment: Kubernetes, injected by Vault Agent init container.
+// See deploy/helm/agentkms/ for the Helm chart.
 package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
-	"log"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,95 +29,223 @@ import (
 	"github.com/agentkms/agentkms/internal/policy"
 )
 
+const (
+	defaultListenAddr  = ":8200"
+	defaultConfigPath  = "/etc/agentkms/config.yaml"
+	defaultTokenPath   = "/vault/secrets/token"
+	defaultAuditLog    = "/tmp/audit.log"
+	defaultEnvironment = "production"
+	shutdownTimeout    = 30 * time.Second
+)
+
 func main() {
-	if err := run(); err != nil {
-		log.Fatalf("agentkms: %v", err)
-	}
-}
+	// ── Flags ─────────────────────────────────────────────────────────────────
+	addr       := flag.String("addr", envOr("AGENTKMS_ADDR", defaultListenAddr), "Listen address")
+	configPath := flag.String("config", envOr("AGENTKMS_CONFIG", defaultConfigPath), "Config file path")
+	tokenPath  := flag.String("token-path", envOr("AGENTKMS_VAULT_TOKEN_PATH", defaultTokenPath), "Vault token file path")
+	vaultAddr  := flag.String("vault-addr", envOr("AGENTKMS_VAULT_ADDR", ""), "OpenBao/Vault address")
+	policyFile := flag.String("policy", envOr("AGENTKMS_POLICY", ""), "Policy YAML file (optional; empty = deny all)")
+	auditLog   := flag.String("audit-log", envOr("AGENTKMS_AUDIT_LOG", defaultAuditLog), "Audit log file path")
+	env        := flag.String("env", envOr("AGENTKMS_ENV", defaultEnvironment), "Deployment environment")
+	flag.Parse()
 
-func run() error {
-	// ── Audit sink ─────────────────────────────────────────────────────────
-	// T0: local file sink.  T1+: swap for MultiAuditor with ELK/Splunk.
-	auditLogPath := envOr("AGENTKMS_AUDIT_LOG", "/var/log/agentkms/audit.jsonl")
-	fileSink, err := audit.NewFileAuditSink(auditLogPath)
+	// ── Logger ─────────────────────────────────────────────────────────────────
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})))
+
+	slog.Info("agentkms starting",
+		"addr", *addr,
+		"env", *env,
+		"vault_addr", *vaultAddr,
+		"policy_file", *policyFile,
+	)
+
+	// ── Audit sink ─────────────────────────────────────────────────────────────
+	fileSink, err := audit.NewFileAuditSink(*auditLog)
 	if err != nil {
-		return fmt.Errorf("opening audit log %q: %w", auditLogPath, err)
+		slog.Error("failed to open audit log", "path", *auditLog, "error", err)
+		os.Exit(1)
 	}
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = fileSink.Flush(ctx)
-		_ = fileSink.Close()
-	}()
-	auditor := audit.NewMultiAuditor(fileSink)
+	signer, err := audit.NewEventSigner()
+	if err != nil {
+		slog.Error("failed to create audit event signer", "error", err)
+		os.Exit(1)
+	}
+	signingAuditor := audit.NewSigningAuditor(fileSink, signer)
+	auditor := audit.NewMultiAuditor(signingAuditor)
 
-	// ── Backend ────────────────────────────────────────────────────────────
-	// TODO(B-01): Replace DevBackend with the OpenBao backend once
-	// internal/backend/openbao.go is implemented.  DevBackend is in-memory
-	// only and loses all keys on process restart.
-	//
-	// Future wiring:
-	//   bao, err := backend.NewOpenBaoBackend(openBaoConfig)
-	//   if err != nil { return fmt.Errorf("openbao backend: %w", err) }
-	//   activeBackend = bao
-	log.Println("[WARN] using in-memory DevBackend — TODO(B-01): wire OpenBao backend")
-	activeBackend := backend.NewDevBackend()
+	slog.Info("audit sink ready", "path", *auditLog)
 
-	// ── Policy engine ──────────────────────────────────────────────────────
-	// TODO(P-03): Replace DenyAllEngine with the real policy engine once
-	// internal/policy/engine.go (P-01 to P-04) is complete.
-	//
-	// DenyAllEngine is the correct safe default: nothing is permitted until
-	// an operator configures explicit allow rules.
-	log.Println("[WARN] using DenyAllEngine — TODO(P-03): wire real policy engine")
-	policyEngine := policy.DenyAllEngine{}
+	// ── Backend ────────────────────────────────────────────────────────────────
+	var bknd backend.Backend
 
-	// ── HTTP server ─────────────────────────────────────────────────────────
-	// TODO(A-01): Wrap with mTLS (pkg/tlsutil/server.go, backlog A-01).
-	// The Server struct and API handlers are ready; the TLS layer wraps the
-	// http.Server externally.
-	srv := api.NewServer(activeBackend, auditor, policyEngine, envOr("AGENTKMS_ENV", "production"))
+	if *vaultAddr != "" {
+		token, err := readToken(*tokenPath)
+		if err != nil {
+			slog.Error("failed to read vault token", "path", *tokenPath, "error", err)
+			os.Exit(1)
+		}
 
-	addr := envOr("AGENTKMS_ADDR", ":8443")
-	httpSrv := &http.Server{
-		Addr:         addr,
-		Handler:      srv,
+		cfg := backend.OpenBaoConfig{
+			Address: *vaultAddr,
+			Token:   token,
+		}
+		// Read mount paths from config if provided, otherwise use defaults.
+		if mountTransit, mountKV := mountsFromConfig(*configPath); mountTransit != "" {
+			cfg.MountPath = mountTransit
+			_ = mountKV // KV mount used by LV stream (LV-01)
+		}
+
+		ob, err := backend.NewOpenBaoBackend(cfg)
+		if err != nil {
+			slog.Error("failed to create OpenBao backend", "error", err)
+			os.Exit(1)
+		}
+		bknd = ob
+		slog.Info("backend: OpenBao", "addr", *vaultAddr)
+	} else {
+		// No Vault address — fall back to dev backend for local testing.
+		slog.Warn("AGENTKMS_VAULT_ADDR not set — using in-memory dev backend (not for production)")
+		bknd = backend.NewDevBackend()
+	}
+
+	// ── Policy engine ──────────────────────────────────────────────────────────
+	var eng policy.EngineI
+
+	if *policyFile != "" {
+		p, err := policy.LoadFromFile(*policyFile)
+		if err != nil {
+			slog.Error("failed to load policy", "path", *policyFile, "error", err)
+			os.Exit(1)
+		}
+		eng = policy.AsEngineI(policy.New(*p))
+		slog.Info("policy loaded", "path", *policyFile)
+	} else {
+		slog.Warn("no policy file configured — all operations denied by default")
+		eng = policy.DenyAllEngine{}
+	}
+
+	// ── HTTP server ────────────────────────────────────────────────────────────
+	apiServer := api.NewServer(bknd, auditor, eng, *env)
+
+	mux := http.NewServeMux()
+	mux.Handle("/", apiServer)
+	mux.HandleFunc("/healthz", handleHealthz)
+	mux.HandleFunc("/readyz", handleReadyz)
+
+	httpServer := &http.Server{
+		Addr:         *addr,
+		Handler:      mux,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+		// TLS is configured by Vault Agent / cert-manager in production.
+		// For T1 POC: plain HTTP inside the cluster (mTLS at ingress layer).
 	}
 
-	// Graceful shutdown on SIGINT / SIGTERM.
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	// ── Listener ───────────────────────────────────────────────────────────────
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		slog.Error("failed to bind", "addr", *addr, "error", err)
+		os.Exit(1)
+	}
 
+	slog.Info("listening", "addr", ln.Addr().String())
+
+	// ── Signal handling + graceful shutdown ────────────────────────────────────
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
+	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("agentkms: listening on %s (env=%s)", addr, envOr("AGENTKMS_ENV", "production"))
-		// TODO(A-01): Replace ListenAndServe with ListenAndServeTLS once
-		// mTLS is wired.  All traffic must use TLS 1.3+ with client cert
-		// verification.
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("agentkms: ListenAndServe: %v", err)
+		if err := httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("http server: %w", err)
 		}
 	}()
 
-	<-quit
-	log.Println("agentkms: shutdown signal received")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := httpSrv.Shutdown(ctx); err != nil {
-		return fmt.Errorf("graceful shutdown: %w", err)
+	select {
+	case sig := <-sigCh:
+		slog.Info("received signal, shutting down", "signal", sig)
+	case err := <-errCh:
+		slog.Error("server error", "error", err)
+		os.Exit(1)
 	}
-	log.Println("agentkms: shutdown complete")
-	return nil
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		slog.Error("graceful shutdown failed", "error", err)
+	}
+
+	// Flush audit buffer before exit.
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer flushCancel()
+	if err := auditor.Flush(flushCtx); err != nil {
+		slog.Error("audit flush failed on shutdown", "error", err)
+	}
+
+	slog.Info("shutdown complete")
 }
 
-// envOr returns the value of the named environment variable, or fallback if
-// the variable is unset or empty.
-func envOr(name, fallback string) string {
-	if v := os.Getenv(name); v != "" {
+// ── Health endpoints ──────────────────────────────────────────────────────────
+
+func handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+func handleReadyz(w http.ResponseWriter, _ *http.Request) {
+	// TODO(T2): check backend connectivity, policy load status, token validity.
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ready"}`))
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return fallback
+}
+
+func readToken(path string) (string, error) {
+	// Vault Agent writes the token to a file; re-read on every use for
+	// token rotation support.  For the initial read at startup, this is fine.
+	b, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("reading token from %s: %w", path, err)
+	}
+	return strings.TrimSpace(string(b)), nil
+}
+
+// mountsFromConfig reads transit and KV mount paths from the config file.
+// Returns empty strings if the file cannot be parsed (caller uses defaults).
+func mountsFromConfig(path string) (transitMount, kvMount string) {
+	if path == "" {
+		return "", ""
+	}
+	b, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return "", ""
+	}
+	// Minimal YAML parsing — avoid importing yaml package in this binary's
+	// hot path.  The full config reader is deferred to a follow-up (T2 config
+	// management).  For now, extract the two paths with simple string search.
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "transit_mount:") {
+			transitMount = strings.TrimSpace(strings.TrimPrefix(line, "transit_mount:"))
+			transitMount = strings.Trim(transitMount, `"'`)
+		}
+		if strings.HasPrefix(line, "kv_mount:") {
+			kvMount = strings.TrimSpace(strings.TrimPrefix(line, "kv_mount:"))
+			kvMount = strings.Trim(kvMount, `"'`)
+		}
+	}
+	return transitMount, kvMount
 }

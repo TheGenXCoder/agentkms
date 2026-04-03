@@ -41,6 +41,38 @@ import (
 	"github.com/agentkms/agentkms/pkg/identity"
 )
 
+// EngineI is the interface that API handlers use to evaluate policy.
+// It accepts a context and string operation, returning (Decision, error).
+type EngineI interface {
+	Evaluate(ctx context.Context, id identity.Identity, operation string, keyID string) (Decision, error)
+}
+
+// DenyAllEngine denies every operation. Safe default before policy is loaded.
+type DenyAllEngine struct{}
+
+func (DenyAllEngine) Evaluate(_ context.Context, _ identity.Identity, _, _ string) (Decision, error) {
+	return Decision{Allow: false, DenyReason: "policy: no policy configured — all operations denied"}, nil
+}
+
+// AllowAllEngine permits every operation. For tests only — never production.
+type AllowAllEngine struct{}
+
+func (AllowAllEngine) Evaluate(_ context.Context, _ identity.Identity, _, _ string) (Decision, error) {
+	return Decision{Allow: true}, nil
+}
+
+// AsEngineI wraps *Engine as an EngineI for injection into api.NewServer.
+func AsEngineI(e *Engine) EngineI { return &engineIAdapter{e: e} }
+
+type engineIAdapter struct{ e *Engine }
+
+func (a *engineIAdapter) Evaluate(ctx context.Context, id identity.Identity, operation string, keyID string) (Decision, error) {
+	if err := ctx.Err(); err != nil {
+		return Decision{}, err
+	}
+	return a.e.Evaluate(id, Operation(operation), keyID), nil
+}
+
 // denyByDefaultReason is the DenyReason returned when no rule matched.
 // It is exported as a constant so tests can assert the exact string without
 // hardcoding it in multiple places.
@@ -143,42 +175,6 @@ func (rls *rateLimitState) bucketCount() int {
 	return len(rls.buckets)
 }
 
-// ── Engine interface (used by API handlers) ──────────────────────────────────
-
-// EngineI is the interface that API handlers use to evaluate policy.
-// It accepts a context, string operation (use audit.Operation* constants),
-// and returns (Decision, error) so callers can distinguish policy denials
-// from internal engine errors.
-//
-// The concrete *Engine implements EngineI via the Evaluate wrapper below.
-// Test stubs (AllowAllEngine, DenyAllEngine) also implement EngineI.
-type EngineI interface {
-	Evaluate(ctx context.Context, id identity.Identity, operation string, keyID string) (Decision, error)
-}
-
-// ── Adapter stubs (for tests and safe defaults) ───────────────────────────────
-
-// DenyAllEngine is the safe default EngineI used in production until a real
-// policy file is loaded.  Every operation is denied.  Use this as the default
-// in cmd/server to ensure no operations succeed without explicit configuration.
-type DenyAllEngine struct{}
-
-func (DenyAllEngine) Evaluate(_ context.Context, id identity.Identity, operation, keyID string) (Decision, error) {
-	return Decision{
-		Allow:      false,
-		DenyReason: "policy: no policy configured — all operations denied by default",
-	}, nil
-}
-
-// AllowAllEngine is a test-only EngineI that permits every operation.
-//
-// ⚠️  NEVER use AllowAllEngine in production or staging environments.
-type AllowAllEngine struct{}
-
-func (AllowAllEngine) Evaluate(_ context.Context, id identity.Identity, operation, keyID string) (Decision, error) {
-	return Decision{Allow: true}, nil
-}
-
 // ── Engine ────────────────────────────────────────────────────────────────────
 
 // Engine evaluates (identity, operation, key-id) triples against a Policy.
@@ -242,34 +238,6 @@ func (e *Engine) ResetRateLimits() {
 // inject a controlled timestamp for time-window and rate-limit testing.
 func (e *Engine) Evaluate(id identity.Identity, op Operation, keyID string) Decision {
 	return e.EvaluateAt(id, op, keyID, time.Now().UTC())
-}
-
-// EvaluateCtx implements the EngineI interface used by API handlers.
-// It adapts the context+string+error signature to the internal Evaluate
-// method.  The context is checked for cancellation but not otherwise used
-// (policy evaluation is pure in-memory, no I/O).
-func (e *Engine) EvaluateCtx(ctx context.Context, id identity.Identity, operation string, keyID string) (Decision, error) {
-	if err := ctx.Err(); err != nil {
-		return Decision{}, err
-	}
-	return e.Evaluate(id, Operation(operation), keyID), nil
-}
-
-// Compile-time assertion: *Engine satisfies EngineI via EvaluateCtx.
-// API handlers call the EngineI interface, not *Engine directly.
-var _ EngineI = (*engineIAdapter)(nil)
-
-// engineIAdapter wraps *Engine and implements EngineI.
-type engineIAdapter struct{ e *Engine }
-
-func (a *engineIAdapter) Evaluate(ctx context.Context, id identity.Identity, operation string, keyID string) (Decision, error) {
-	return a.e.EvaluateCtx(ctx, id, operation, keyID)
-}
-
-// AsEngineI wraps a concrete *Engine as an EngineI for injection into
-// api.NewServer and similar constructors that take the interface.
-func AsEngineI(e *Engine) EngineI {
-	return &engineIAdapter{e: e}
 }
 
 // EvaluateAt is the time-injectable variant of Evaluate.  now must be UTC.

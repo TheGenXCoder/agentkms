@@ -334,10 +334,17 @@ function renderReviewBrief(config: CoordConfig, stream: StreamDef): string {
     return `    ${icon} ${id}`;
   }).join("\n");
 
+  const isTS = stream.name === "pi-pkg";
+  const qualityScript = `bash ${config.repoRoot}/scripts/quality_check.sh`;
+  // Note: project script delegates to global skill: ~/.pi/agent/skills/quality-gate
+  const qualityNote = isTS
+    ? "(TypeScript stream — manual checks: no crypto imports, runtimeKeys in-memory only, toJSON redacts keys)"
+    : qualityScript;
+
   let brief = [
     "",
     `${"-".repeat(66)}`,
-    `  AgentKMS · Adversarial Review Brief`,
+    `  AgentKMS · Review Brief  [Adversarial + Quality]`,
     `${"-".repeat(66)}`,
     "",
     `  Stream:   ${stream.name}`,
@@ -354,6 +361,8 @@ function renderReviewBrief(config: CoordConfig, stream: StreamDef): string {
     "",
   ].join("\n");
 
+  // Part 1: Adversarial security
+  brief += `  ── PART 1: Adversarial Security Review ──────────────────────────────\n\n`;
   if (guidance) {
     brief += `  Security invariants to verify:\n`;
     for (const inv of guidance.invariants) {
@@ -364,21 +373,31 @@ function renderReviewBrief(config: CoordConfig, stream: StreamDef): string {
       brief += `    → ${ac}\n`;
     }
     brief += "\n";
+  } else {
+    brief += `  (No stream-specific guidance — review security invariants from AGENTS.md)\n\n`;
   }
 
+  // Part 2: Code quality gate
   brief += [
-    `  Instructions for the reviewer:`,
-    `    1. Read every file in the stream's worktree that was added or modified.`,
-    `       Path: ${stream.path}`,
-    `    2. Run: go test -race ./... (or equivalent for TypeScript streams)`,
-    `       Report ALL failures — do not dismiss any as flaky.`,
-    `    3. Check each security invariant above explicitly. Do not assume.`,
-    `    4. Run each adversarial case. Report pass/fail for each.`,
-    `    5. Return a structured findings report:`,
-    `       - PASS / FAIL for each invariant`,
-    `       - PASS / FAIL for each adversarial case`,
-    `       - Any additional issues found during reading`,
-    `    6. The implementing session must address ALL findings before marking [x].`,
+    `  ── PART 2: Code Quality Gate ────────────────────────────────────────`,
+    "",
+    `  Run the quality check script and report each result:`,
+    `    ${qualityNote}`,
+    "",
+    `  Quality checks:`,
+    `    □ go vet — zero issues`,
+    `    □ Coverage >= threshold (internal/auth|policy|audit >= 85%, others >= 80%)`,
+    `    □ Every exported function in internal/ and pkg/ has at least one test`,
+    `    □ Every t.Skip/t.Skipf has a linked issue: // TODO(#NNN): skip until YYYY-MM-DD`,
+    `    □ Architecture conformance: implementation matches docs/architecture.md`,
+    "",
+    `  ── PART 3: Instructions ──────────────────────────────────────────────`,
+    "",
+    `  1. Read every modified/added file. Path: ${stream.path}`,
+    `  2. Part 1: verify each invariant and adversarial case. PASS/FAIL each.`,
+    `  3. Part 2: run the quality script. PASS/FAIL each check.`,
+    `  4. Report all findings with severity: CRITICAL/HIGH/MEDIUM/LOW.`,
+    `  5. The implementing session must address ALL findings before marking [x].`,
     "",
     `${"-".repeat(66)}`,
     "",

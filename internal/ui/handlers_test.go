@@ -123,3 +123,87 @@ func TestHandleListAudit(t *testing.T) {
 		t.Errorf("expected at least 1 audit event, got %d", len(events))
 	}
 }
+
+type mockBackend struct {
+	backend.Backend
+	listKeysErr error
+}
+
+func (m *mockBackend) ListKeys(ctx context.Context, scope backend.KeyScope) ([]*backend.KeyMeta, error) {
+	if m.listKeysErr != nil {
+		return nil, m.listKeysErr
+	}
+	return m.Backend.ListKeys(ctx, scope)
+}
+
+func TestHandleListKeys_Error(t *testing.T) {
+	errBackend := &mockBackend{
+		Backend:     backend.NewDevBackend(),
+		listKeysErr: context.DeadlineExceeded,
+	}
+
+	h := &Handlers{Backend: errBackend}
+
+	req := httptest.NewRequest("GET", "/ui/api/keys", nil)
+	w := httptest.NewRecorder()
+	h.HandleListKeys(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 Internal Server Error, got %d", w.Code)
+	}
+}
+
+type nullAud struct{}
+func (n nullAud) Log(ctx context.Context, ev audit.AuditEvent) error { return nil }
+func (n nullAud) Flush(ctx context.Context) error { return nil }
+
+func TestHandleListAudit_NotSupported(t *testing.T) {
+	h := &Handlers{
+		Auditor: nullAud{},
+	}
+
+	req := httptest.NewRequest("GET", "/ui/api/audit", nil)
+	w := httptest.NewRecorder()
+	h.HandleListAudit(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("expected 501 Not Implemented, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdatePolicy_InvalidYAML(t *testing.T) {
+	h := &Handlers{}
+
+	req := httptest.NewRequest("PUT", "/ui/api/policy", bytes.NewBufferString("\tinvalid\t::::"))
+	w := httptest.NewRecorder()
+	h.HandleUpdatePolicy(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request, got %d", w.Code)
+	}
+}
+
+func TestRegisterHandlers(t *testing.T) {
+	mux := http.NewServeMux()
+	h := &Handlers{
+		Backend: backend.NewDevBackend(),
+	}
+	RegisterHandlers(mux, h)
+
+	// test GET /ui/api/keys
+	req := httptest.NewRequest("GET", "/ui/api/keys", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", w.Code)
+	}
+
+	// test GET /ui redirect
+	req2 := httptest.NewRequest("GET", "/ui", nil)
+	w2 := httptest.NewRecorder()
+	mux.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusMovedPermanently {
+		t.Errorf("expected 301 Moved Permanently, got %d", w2.Code)
+	}
+}

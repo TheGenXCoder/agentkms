@@ -17,6 +17,7 @@ import (
 	"github.com/agentkms/agentkms/internal/audit"
 	"github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/policy"
+	"github.com/agentkms/agentkms/pkg/identity"
 	"github.com/agentkms/agentkms/pkg/tlsutil"
 )
 
@@ -562,5 +563,207 @@ func TestRefreshRevoke_WithMiddleware(t *testing.T) {
 	refreshH.ServeHTTP(w3, r3)
 	if w3.Code != http.StatusUnauthorized {
 		t.Errorf("refresh with revoked token: status = %d, want 401", w3.Code)
+	}
+}
+// ── POST /auth/delegate tests ─────────────────────────────────────────────────
+
+// mockPolicyEngine implements policy.EngineI for testing.
+type mockPolicyEngine struct {
+	allow bool
+}
+
+func (m *mockPolicyEngine) Evaluate(ctx context.Context, id identity.Identity, operation string, keyID string) (policy.Decision, error) {
+	if m.allow {
+		return policy.Decision{Allow: true}, nil
+	}
+	return policy.Decision{Allow: false, DenyReason: "mock deny"}, nil
+}
+func (m *mockPolicyEngine) GetPolicy() policy.Policy { return policy.Policy{} }
+func (m *mockPolicyEngine) Reload(p policy.Policy) error { return nil }
+
+func newTestStackWithMockPolicy(t *testing.T, allow bool) (*auth.TokenService, *api.AuthHandler, *nullAuditor) {
+	t.Helper()
+	rl := auth.NewRevocationList()
+	svc, err := auth.NewTokenService(rl)
+	if err != nil {
+		t.Fatalf("NewTokenService: %v", err)
+	}
+	auditor := &nullAuditor{}
+	handler := api.NewAuthHandler(svc, auditor, &mockPolicyEngine{allow: allow}, "test")
+	return svc, handler, auditor
+}
+
+func TestDelegate_Valid_Returns200WithToken(t *testing.T) {
+	svc, handler, _ := newTestStackWithMockPolicy(t, true)
+	cert := makeTestCert(t, "bert@platform-team")
+
+	// sessionToken uses the handler which now has a mockPolicyEngine
+	parentTokStr := sessionToken(t, handler, cert.Cert)
+	parentTok, _ := svc.Validate(parentTokStr)
+
+	reqBody := `{"scopes": ["sign:key-123"], "ttl_seconds": 300}`
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest(http.MethodPost, "/auth/delegate", strings.NewReader(reqBody))
+	r.Header.Set("Content-Type", "application/json")
+	r = withToken(r, parentTok)
+	
+	handler.Delegate(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Delegate: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	resp := decodeSession(t, w.Body)
+	tok, ok := resp["token"].(string)
+	if !ok || tok == "" {
+		t.Fatal("Delegate response missing 'token'")
+	}
+	if resp["token_type"] != "Bearer" {
+		t.Errorf("token_type = %v, want Bearer", resp["token_type"])
+	}
+	if expiresIn, ok := resp["expires_in"].(float64); !ok || expiresIn != 300 {
+		t.Errorf("expires_in = %v, want 300", resp["expires_in"])
+	}
+	if sid, ok := resp["session_id"].(string); !ok || sid == "" {
+		t.Error("missing or empty session_id")
+	}
+
+	// Validate the new token.
+	newTok, err := svc.Validate(tok)
+	if err != nil {
+		t.Fatalf("Validate delegated token: %v", err)
+	}
+	if len(newTok.Identity.Scopes) != 1 || newTok.Identity.Scopes[0] != "sign:key-123" {
+		t.Errorf("delegated scopes = %v, want [sign:key-123]", newTok.Identity.Scopes)
+	}
+}
+
+func TestDelegate_WrongMethod_Returns405(t *testing.T) {
+	_, handler, _ := newTestStack(t)
+
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest(http.MethodGet, "/auth/delegate", nil)
+	handler.Delegate(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", w.Code)
+	}
+}
+
+func TestDelegate_NoToken_Returns401(t *testing.T) {
+	_, handler, _ := newTestStack(t)
+
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest(http.MethodPost, "/auth/delegate", strings.NewReader(`{"scopes": ["sign:key-123"]}`))
+	handler.Delegate(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestDelegate_InvalidJSON_Returns400(t *testing.T) {
+	svc, handler, _ := newTestStackWithMockPolicy(t, true)
+	cert := makeTestCert(t, "bert@platform-team")
+	parentTokStr := sessionToken(t, handler, cert.Cert)
+	parentTok, _ := svc.Validate(parentTokStr)
+
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest(http.MethodPost, "/auth/delegate", strings.NewReader(`{invalid`))
+	r = withToken(r, parentTok)
+	handler.Delegate(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestDelegate_NoScopes_Returns400(t *testing.T) {
+	svc, handler, _ := newTestStackWithMockPolicy(t, true)
+	cert := makeTestCert(t, "bert@platform-team")
+	parentTokStr := sessionToken(t, handler, cert.Cert)
+	parentTok, _ := svc.Validate(parentTokStr)
+
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest(http.MethodPost, "/auth/delegate", strings.NewReader(`{"scopes": []}`))
+	r = withToken(r, parentTok)
+	handler.Delegate(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestDelegate_InvalidScopeFormat_Returns400(t *testing.T) {
+	svc, handler, _ := newTestStackWithMockPolicy(t, true)
+	cert := makeTestCert(t, "bert@platform-team")
+	parentTokStr := sessionToken(t, handler, cert.Cert)
+	parentTok, _ := svc.Validate(parentTokStr)
+
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest(http.MethodPost, "/auth/delegate", strings.NewReader(`{"scopes": ["invalid_format"]}`))
+	r = withToken(r, parentTok)
+	handler.Delegate(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestDelegate_PolicyDeny_Returns403(t *testing.T) {
+	svc, handler, _ := newTestStackWithMockPolicy(t, false) // false -> denies everything
+	cert := makeTestCert(t, "bert@platform-team")
+	
+	// Wait, we need the parent token to be issued! sessionToken will succeed if mockPolicyEngine isn't involved in issuance?
+	// Oh, Session doesn't evaluate policy, it just authenticates the cert. Let's check!
+	parentTokStr := sessionToken(t, handler, cert.Cert)
+	parentTok, _ := svc.Validate(parentTokStr)
+
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest(http.MethodPost, "/auth/delegate", strings.NewReader(`{"scopes": ["sign:key-123"]}`))
+	r = withToken(r, parentTok)
+	handler.Delegate(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", w.Code)
+	}
+}
+func TestRevokeCertificate_PKINotConfigured(t *testing.T) {
+	_, handler, _ := newTestStack(t)
+	// Do not set PKI
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest(http.MethodPost, "/auth/certificate/revoke", bytes.NewReader([]byte(`{"serial_number": "123"}`)))
+	handler.RevokeCertificate(w, r)
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("status = %d, want 501", w.Code)
+	}
+}
+
+func TestRevokeCertificate_WrongMethod(t *testing.T) {
+	_, handler, _ := newTestStack(t)
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest(http.MethodGet, "/auth/certificate/revoke", nil)
+	handler.RevokeCertificate(w, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", w.Code)
+	}
+}
+
+func TestCRL_PKINotConfigured(t *testing.T) {
+	_, handler, _ := newTestStack(t)
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest(http.MethodGet, "/auth/certificate/crl", nil)
+	handler.CRL(w, r)
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("status = %d, want 501", w.Code)
+	}
+}
+
+func TestCRL_WrongMethod(t *testing.T) {
+	_, handler, _ := newTestStack(t)
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest(http.MethodPost, "/auth/certificate/crl", nil)
+	handler.CRL(w, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", w.Code)
 	}
 }

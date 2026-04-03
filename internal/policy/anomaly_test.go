@@ -116,3 +116,38 @@ func TestAnomalyState_UnusualHours(t *testing.T) {
 		}
 	}
 }
+
+func TestAnomalyState_StatisticalVelocity(t *testing.T) {
+	as := newAnomalyState()
+	id := identity.Identity{CallerID: "bert", Role: identity.RoleDeveloper}
+	now := time.Now()
+
+	// 1. Establish baseline (50 requests with low velocity: 1 per minute)
+	for i := 0; i < 50; i++ {
+		// Mock time advancing 1 minute each time
+		tnow := now.Add(time.Duration(i) * time.Minute)
+		as.Detect(id, Decision{Allow: true}, tnow)
+	}
+
+	// 2. Statistical outlier: suddenly 50 requests in one minute
+	tburst := now.Add(51 * time.Minute)
+	var anomalies []AnomalyRecord
+	for i := 0; i < 50; i++ {
+		// Store the anomalies from the 11th request onwards (where count > 10).
+		res := as.Detect(id, Decision{Allow: true}, tburst)
+		if len(res) > 0 {
+			anomalies = append(anomalies, res...)
+		}
+	}
+
+	foundOutlier := false
+	for _, a := range anomalies {
+		if a.Type == AnomalyStatistical {
+			foundOutlier = true
+			break
+		}
+	}
+	if !foundOutlier {
+		t.Fatalf("expected statistical_outlier anomaly for velocity burst, got: %v", anomalies)
+	}
+}

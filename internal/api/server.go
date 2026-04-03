@@ -164,6 +164,9 @@ func (s *Server) registerRoutes() {
 	// AU-10: audit log export
 	s.mux.HandleFunc("GET /audit/export", wrap(s.handleExportAuditLogs))
 
+	// FX-05: automated SOC 2 evidence collection
+	s.mux.HandleFunc("GET /compliance/soc2", wrap(s.handleSOC2ComplianceExport))
+
 	// LV-06: credential use audit
 	s.mux.HandleFunc("POST /audit/use", wrap(s.handleLogCredentialUse))
 }

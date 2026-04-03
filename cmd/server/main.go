@@ -65,6 +65,11 @@ func main() {
 	vaultCert  := flag.String("vault-tls-cert", envOr("AGENTKMS_VAULT_TLS_CERT", ""), "Client TLS cert for Vault/OpenBao")
 	vaultKey   := flag.String("vault-tls-key", envOr("AGENTKMS_VAULT_TLS_KEY", ""), "Client TLS key for Vault/OpenBao")
 	vaultCA    := flag.String("vault-tls-ca", envOr("AGENTKMS_VAULT_TLS_CA", ""), "CA certificate for Vault/OpenBao")
+
+	// LV-05: Master key rotation flags
+	masterKeys := flag.String("master-keys", envOr("AGENTKMS_MASTER_KEYS", ""), "Comma-separated list of master keys to rotate")
+	rotateInterval := flag.Duration("rotation-interval", credentials.MasterKeyRotationInterval, "Rotation interval for master keys")
+
 	flag.Parse()
 
 	// ── Logger ─────────────────────────────────────────────────────────────────
@@ -192,6 +197,20 @@ func main() {
 		bknd = backend.NewDevBackend()
 	}
 
+	// ── Master Key Rotation ───────────────────────────────────────────────────
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if *masterKeys != "" {
+		keys := strings.Split(*masterKeys, ",")
+		for i := range keys {
+			keys[i] = strings.TrimSpace(keys[i])
+		}
+		rotator := credentials.NewRotator(bknd, keys, *rotateInterval)
+		go rotator.Start(ctx)
+		slog.Info("master key rotation worker started", "keys", keys, "interval", rotateInterval.String())
+	}
+
 	// ── Policy engine ──────────────────────────────────────────────────────────
 	var eng policy.EngineI
 
@@ -205,7 +224,7 @@ func main() {
 			LocalFallbackPath: *policyFile,
 			ReloadInterval:    *vaultPolicyReload,
 		})
-		if err := loader.Load(context.Background()); err != nil {
+		if err := loader.Load(ctx); err != nil {
 			slog.Error("failed to load policy from Vault KV", "path", *vaultPolicyPath, "error", err)
 			os.Exit(1)
 		}
@@ -340,8 +359,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancelShutdown()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		slog.Error("graceful shutdown failed", "error", err)

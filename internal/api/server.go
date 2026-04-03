@@ -116,6 +116,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // client-disconnect causes a silent audit drop — violating SOC 2 CC7.2 and
 // PCI-DSS Req 10.
 func (s *Server) auditLog(ctx context.Context, ev audit.AuditEvent) error {
+	s.RecordAuditEvent()
 	return s.auditor.Log(context.WithoutCancel(ctx), ev)
 }
 
@@ -143,9 +144,10 @@ func (s *Server) auditLog(ctx context.Context, ev audit.AuditEvent) error {
 func (s *Server) registerRoutes() {
 	// wrap applies the full middleware chain to a handler function.
 	wrap := func(h http.HandlerFunc) http.HandlerFunc {
-		return s.recoveryMiddleware(s.authMiddleware(h))
+		return s.metricsMiddleware(s.recoveryMiddleware(s.authMiddleware(h)))
 	}
 
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 	s.mux.HandleFunc("POST /sign/{keyid...}", wrap(s.handleSign))
 	s.mux.HandleFunc("POST /encrypt/{keyid...}", wrap(s.handleEncrypt))
 	s.mux.HandleFunc("POST /decrypt/{keyid...}", wrap(s.handleDecrypt))

@@ -74,6 +74,25 @@ securityContext:
   capabilities:
     drop: [ALL]
 
+# ── Horizontal Pod Autoscaler (IN-07) ──────────────────────────────────────────
+hpa:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetRPS: 500  # Requires Prometheus Adapter / Custom Metrics API
+
+# ── Monitoring (IN-08) ────────────────────────────────────────────────────────
+monitoring:
+  # Enable ServiceMonitor for Prometheus Operator
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    path: /metrics
+    # Labels to add to the ServiceMonitor, e.g. for selection by Prometheus
+    labels:
+      release: monitoring
+
 # ── Affinity / topology (T2: enable pod anti-affinity) ───────────────────────
 affinity: {}
 tolerations: []

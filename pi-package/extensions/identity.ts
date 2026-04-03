@@ -27,7 +27,10 @@ import { join } from "node:path";
 export interface AgentKMSIdentity {
   /** Absolute path to the PEM client certificate (not secret). */
   certPath: string;
-  /** Absolute path to the PEM private key (secret — do not log). */
+  /**
+   * Absolute path to the PEM private key.
+   * SECRET — do not log or include in error messages.
+   */
   keyPath: string;
   /** PEM-encoded client certificate. */
   cert: string;
@@ -45,6 +48,14 @@ export interface AgentKMSIdentity {
   serviceUrl: string;
   /** True when loaded from ~/.agentkms/dev/ (local agentkms-dev server). */
   isDev: boolean;
+  /**
+   * Prevent accidental key exposure when this object is serialised.
+   * JSON.stringify(identity) will call this and receive redacted output.
+   *
+   * Security: `key` and `keyPath` are the mTLS private key and its on-disk
+   * location — both must be omitted from any serialised representation.
+   */
+  toJSON(): Record<string, unknown>;
 }
 
 export interface AgentKMSConfig {
@@ -93,11 +104,21 @@ function tryLoadIdentity(dir: string, isDev: boolean): AgentKMSIdentity | null {
   const key  = readFileSafe(keyPath);
   if (!cert || !key) return null;
 
-  // Basic PEM format validation — defence-in-depth before passing the key
-  // to the https.Agent.  If the key file contains binary garbage or was
-  // accidentally overwritten, fail here rather than at the TLS handshake
-  // where Node.js may produce a confusing OpenSSL error message.
-  if (!cert.includes("-----BEGIN") || !key.includes("-----BEGIN")) return null;
+  // PEM format validation — defence-in-depth before passing the material
+  // to the https.Agent.  Validate specific PEM headers so that a corrupt or
+  // misplaced file produces a clear error here rather than a confusing
+  // OpenSSL error at the TLS handshake.
+  //
+  // Accepted private-key headers (PKCS#8 ECDSA/RSA, SEC1 EC, PKCS#1 RSA):
+  //   -----BEGIN PRIVATE KEY-----       (PKCS#8, most common from openssl)
+  //   -----BEGIN EC PRIVATE KEY-----    (SEC1 / legacy EC)
+  //   -----BEGIN RSA PRIVATE KEY-----   (PKCS#1 / legacy RSA)
+  if (!cert.includes("-----BEGIN CERTIFICATE-----")) return null;
+  if (
+    !key.includes("-----BEGIN PRIVATE KEY-----") &&
+    !key.includes("-----BEGIN EC PRIVATE KEY-----") &&
+    !key.includes("-----BEGIN RSA PRIVATE KEY-----")
+  ) return null;
 
   const config  = loadConfig(dir);
   const caCert  = readFileSafe(join(dir, "ca.crt")); // optional — undefined if not present
@@ -111,6 +132,26 @@ function tryLoadIdentity(dir: string, isDev: boolean): AgentKMSIdentity | null {
     caCert,
     serviceUrl: config.serviceUrl ?? defaultServiceUrl,
     isDev,
+    /**
+     * Redact private-key material from any accidental JSON serialisation.
+     *
+     * `key`     — PEM private key: the most sensitive field.
+     * `keyPath` — on-disk path to the key: tells an attacker where to find it.
+     *
+     * Both are omitted from the serialised form.  All other fields are safe to
+     * include (cert, certPath, caCert, serviceUrl, isDev).
+     */
+    toJSON(): Record<string, unknown> {
+      return {
+        certPath: this.certPath,
+        cert:     this.cert,
+        caCert:   this.caCert,
+        serviceUrl: this.serviceUrl,
+        isDev:    this.isDev,
+        key:      "[REDACTED]",
+        keyPath:  "[REDACTED]",
+      };
+    },
   };
 }
 

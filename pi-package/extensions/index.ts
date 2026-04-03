@@ -261,7 +261,11 @@ export default function (pi: ExtensionAPI) {
     const isEdit  = isToolCallEventType("edit",  event);
     if (!isRead && !isWrite && !isEdit) return;
 
-    const path = event.input.path ?? "";
+    // Cast to { path?: string } — after the guards above we know this event
+    // is a Read, Write, or Edit tool call, all of which have a `path` field
+    // in their input schema.  The cast avoids relying on TS 4.4+ aliased-
+    // condition narrowing behaviour, which is version-specific.
+    const path = (event.input as { path?: string }).path ?? "";
     if (!BLOCKED_PATH_PATTERNS.some(pattern => path.includes(pattern))) return;
 
     const opName = isRead ? "read" : isWrite ? "write" : "edit";
@@ -272,9 +276,10 @@ export default function (pi: ExtensionAPI) {
       "warning",
     );
 
-    // TODO: send a structured audit event to AgentKMS once a client-side audit
-    // endpoint is available in the API.  Currently audit is server-side only for
-    // crypto operations.  Tracking: backlog item AU-10.
+    // TODO: send a structured audit event to AgentKMS once a client-side
+    // credential-path-block audit endpoint is available.
+    // AU-10 (audit log export) is a different item.  A new backlog item should
+    // be filed under the PI or AU section for a client-side block-event sink.
 
     return { block: true, reason: `AgentKMS: ${opName} blocked — sensitive path (${path})` };
   });

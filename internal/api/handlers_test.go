@@ -1516,6 +1516,47 @@ func TestHandleSign_AllSigningAlgorithms(t *testing.T) {
 // 10 (updated). Rotate stub returns 501 AND emits an audit event
 // ════════════════════════════════════════════════════════════════════════════
 
+// TestHandleRotateKeyStub_InvalidKeyID verifies that the rotate stub rejects
+// malformed key IDs with 400 (not 501) and records an OutcomeDenied audit
+// event with a well-formed (empty) KeyID — consistent with every other handler.
+func TestHandleRotateKeyStub_InvalidKeyID(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"uppercase segment", "/rotate/UPPER/key"},
+		{"dot segment", "/rotate/has.dot"},
+		{"at-sign segment", "/rotate/user%40host"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := backend.NewDevBackend()
+			aud := &capturingAuditor{}
+			srv := api.NewServer(b, aud, policy.AllowAllEngine{}, "dev")
+
+			rr := request(t, srv, http.MethodPost, tc.path, nil)
+			assertStatus(t, rr, http.StatusBadRequest)
+			assertContentTypeJSON(t, rr)
+			_, code := assertErrorShape(t, "rotate invalid key", rr.Body.Bytes())
+			if code != "invalid_request" {
+				t.Errorf("code = %q, want invalid_request", code)
+			}
+
+			ev, ok := aud.lastEvent()
+			if !ok {
+				t.Fatal("no audit event for invalid key ID on rotate stub")
+			}
+			if ev.Outcome != audit.OutcomeDenied {
+				t.Errorf("audit outcome = %q, want denied", ev.Outcome)
+			}
+			// ev.KeyID must be empty — the invalid ID must not be stored.
+			if ev.KeyID != "" {
+				t.Errorf("ADVERSARIAL: audit ev.KeyID = %q for invalid key; want empty string", ev.KeyID)
+			}
+		})
+	}
+}
+
 // TestHandleRotateKeyStub_Returns501AndAudits verifies that the rotate stub
 // returns 501 AND writes an audit event with OperationRotateKey and
 // OutcomeError.  Previously the stub returned 501 with no audit record,
@@ -1679,6 +1720,13 @@ func TestAdversarial_AuditFailure_DenialPaths_Return500(t *testing.T) {
 		// Even the stub must fail closed if audit is unavailable.
 		srv := api.NewServer(backend.NewDevBackend(), &failingAuditor{}, policy.AllowAllEngine{}, "dev")
 		rr := request(t, srv, http.MethodPost, "/rotate/some/key", nil)
+		assertStatus(t, rr, http.StatusInternalServerError)
+	})
+
+	t.Run("rotate stub: invalid key ID + audit failure returns 500", func(t *testing.T) {
+		// Invalid key ID path on rotate stub + failing audit must return 500, not 400.
+		srv := api.NewServer(backend.NewDevBackend(), &failingAuditor{}, policy.AllowAllEngine{}, "dev")
+		rr := request(t, srv, http.MethodPost, "/rotate/INVALID/KEY", nil)
 		assertStatus(t, rr, http.StatusInternalServerError)
 	})
 }

@@ -208,7 +208,6 @@ func (s *Server) handleRotateKeyStub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ev.Operation = audit.OperationRotateKey
-	ev.KeyID = keyID
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)
 	ev.UserAgent = r.UserAgent()
@@ -217,6 +216,21 @@ func (s *Server) handleRotateKeyStub(w http.ResponseWriter, r *http.Request) {
 	ev.CallerID = id.CallerID
 	ev.TeamID = id.TeamID
 	ev.AgentSession = id.AgentSession
+
+	// Validate key ID before storing it in the audit event.  All other
+	// handlers do this; the stub must be consistent so that audit records
+	// contain only well-formed key IDs regardless of which endpoint was hit.
+	if !isValidKeyID(keyID) {
+		ev.Outcome = audit.OutcomeDenied
+		ev.DenyReason = "invalid key ID format"
+		if logErr := s.auditLog(ctx, ev); logErr != nil {
+			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
+			return
+		}
+		s.writeError(w, http.StatusBadRequest, errCodeInvalidRequest, "invalid key ID")
+		return
+	}
+	ev.KeyID = keyID
 
 	// Outcome is OutcomeError because the service failed to fulfil the request
 	// (not implemented), not because the policy denied it.

@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/agentkms/agentkms/internal/audit"
+	"github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/policy"
+	"github.com/agentkms/agentkms/pkg/identity"
 )
 
 func TestMetricsMiddleware(t *testing.T) {
@@ -20,8 +22,10 @@ func TestMetricsMiddleware(t *testing.T) {
 		t.Fatalf("failed to create auditor: %v", err)
 	}
 	engine := policy.AllowAllEngine{}
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
 
-	s := NewServer(devBackend, auditor, engine, "test")
+	s := NewServer(devBackend, auditor, engine, ts, "test")
 
 	// Reset metrics state for clean testing
 	metricsMu.Lock()
@@ -32,6 +36,12 @@ func TestMetricsMiddleware(t *testing.T) {
 	metricsMu.Unlock()
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	id := identity.Identity{
+		CallerID: "test-user",
+		TeamID:   "test-team",
+		Role:     identity.RoleDeveloper,
+	}
+	req = req.WithContext(SetIdentityInContext(req.Context(), id))
 	rr := httptest.NewRecorder()
 
 	// Initial metrics fetch should have 0 audit events
@@ -53,6 +63,7 @@ func TestMetricsMiddleware(t *testing.T) {
 	})
 
 	req2 := httptest.NewRequest(http.MethodPost, "/test", nil)
+	req2 = req2.WithContext(SetIdentityInContext(req2.Context(), id))
 	rr2 := httptest.NewRecorder()
 	testHandler(rr2, req2)
 
@@ -61,6 +72,7 @@ func TestMetricsMiddleware(t *testing.T) {
 
 	// Fetch metrics again
 	req3 := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req3 = req3.WithContext(SetIdentityInContext(req3.Context(), id))
 	rr3 := httptest.NewRecorder()
 	s.ServeHTTP(rr3, req3)
 

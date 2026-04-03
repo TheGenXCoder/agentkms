@@ -253,7 +253,7 @@ func main() {
 		slog.Error("failed to create token service", "error", err)
 		os.Exit(1)
 	}
-	authHandler := api.NewAuthHandler(tokenSvc, auditor, *env)
+	authHandler := api.NewAuthHandler(tokenSvc, auditor, eng, *env)
 
 	// A-13: setup certificate revocation if Vault is available.
 	var certChecker *auth.CertRevocationChecker
@@ -314,6 +314,7 @@ func main() {
 	mux.HandleFunc("POST /auth/session", authHandler.Session)
 	mux.HandleFunc("POST /auth/refresh", authHandler.Refresh)
 	mux.HandleFunc("POST /auth/revoke", authHandler.Revoke)
+	mux.HandleFunc("POST /auth/delegate", auth.RequireToken(tokenSvc)(http.HandlerFunc(authHandler.Delegate)).ServeHTTP)
 	mux.HandleFunc("POST /auth/certificate/revoke", authHandler.RevokeCertificate)
 	mux.HandleFunc("GET /auth/certificate/crl", authHandler.CRL)
 	mux.HandleFunc("/healthz", handleHealthz)

@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/agentkms/agentkms/internal/audit"
 	"github.com/agentkms/agentkms/internal/auth"
+	"github.com/agentkms/agentkms/internal/policy"
 )
 
 // AuthHandler implements the /auth/* HTTP endpoints.
@@ -16,24 +18,28 @@ import (
 //   POST /auth/session  — A-06: exchange mTLS cert for a session token
 //   POST /auth/refresh  — A-07: refresh an expiring session token
 //   POST /auth/revoke   — A-08: revoke a session token
+//   POST /auth/delegate — FX-02: delegate a scoped token to a sub-agent
 //
 // All endpoints are mTLS-only (TLS is enforced at the server level).
 // /auth/session is unauthenticated by token (it bootstraps the first token).
-// /auth/refresh and /auth/revoke are guarded by auth.RequireToken middleware.
+// /auth/refresh, /auth/revoke, and /auth/delegate are guarded by
+// auth.RequireToken middleware.
 type AuthHandler struct {
 	tokens      *auth.TokenService
 	pki         *auth.PKIClient           // optional; for cert revocation
 	certChecker *auth.CertRevocationChecker // optional; for cert revocation
 	auditor     audit.Auditor
+	policy      policy.EngineI            // for scope validation (FX-02)
 	environment string // "dev", "staging", "production"
 }
 
 // NewAuthHandler constructs an AuthHandler.
 // environment is included in all audit events (e.g. "dev", "production").
-func NewAuthHandler(tokens *auth.TokenService, auditor audit.Auditor, environment string) *AuthHandler {
+func NewAuthHandler(tokens *auth.TokenService, auditor audit.Auditor, eng policy.EngineI, environment string) *AuthHandler {
 	return &AuthHandler{
 		tokens:      tokens,
 		auditor:     auditor,
+		policy:      eng,
 		environment: environment,
 	}
 }
@@ -291,6 +297,109 @@ func (h *AuthHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		audit.OperationRevoke, outcome, "")
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ── POST /auth/delegate ──────────────────────────────────────────────────────
+
+// Delegate handles POST /auth/delegate.
+//
+// Authentication: requires a valid session token (via RequireToken middleware).
+// Issues a new, short-lived session token with restricted scopes.
+//
+// The parent token's identity is used as the base.  Each requested scope is
+// validated against the parent's current policy permissions.  If any requested
+// scope is not allowed by the parent's policy, the entire request is rejected.
+//
+// FX-02.
+func (h *AuthHandler) Delegate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	parentTok := auth.TokenFromContext(r.Context())
+	if parentTok == nil {
+		writeJSONError(w, http.StatusUnauthorized, "authorization required")
+		return
+	}
+
+	var req struct {
+		Scopes []string `json:"scopes"`
+		TTL    int      `json:"ttl_seconds"` // optional; max 15 mins
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if len(req.Scopes) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "scopes are required")
+		return
+	}
+
+	// Validate requested scopes against policy for the parent identity.
+	// A delegation must be a strict subset of the parent's current permissions.
+	for _, s := range req.Scopes {
+		op, keyID, err := parseScope(s)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid scope format %q: %v", s, err))
+			return
+		}
+
+		decision, err := h.policy.Evaluate(r.Context(), parentTok.Identity, op, keyID)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "policy evaluation failed")
+			return
+		}
+		if !decision.Allow {
+			h.logAudit(r.Context(), r, parentTok.Identity.CallerID, parentTok.Identity.TeamID, parentTok.JTI,
+				audit.OperationAuthDelegate, audit.OutcomeDenied,
+				fmt.Sprintf("delegation of %q denied: %s", s, decision.DenyReason))
+			writeJSONError(w, http.StatusForbidden, fmt.Sprintf("delegation of scope %q is not permitted by policy", s))
+			return
+		}
+	}
+
+	// Determine delegation TTL.  Default is 5 minutes; max is parent token's
+	// remaining life or 15 minutes (whichever is smaller).
+	ttl := 5 * time.Minute
+	if req.TTL > 0 {
+		ttl = time.Duration(req.TTL) * time.Second
+	}
+	if ttl > 15*time.Minute {
+		ttl = 15 * time.Minute
+	}
+	remaining := time.Until(parentTok.ExpiresAt)
+	if ttl > remaining {
+		ttl = remaining
+	}
+
+	tokenStr, tok, err := h.tokens.IssueDelegated(&parentTok.Identity, ttl, req.Scopes)
+	if err != nil {
+		h.logAudit(r.Context(), r, parentTok.Identity.CallerID, parentTok.Identity.TeamID, parentTok.JTI,
+			audit.OperationAuthDelegate, audit.OutcomeError, "token issuance failed")
+		writeJSONError(w, http.StatusInternalServerError, "delegation failed")
+		return
+	}
+
+	h.logAudit(r.Context(), r, parentTok.Identity.CallerID, parentTok.Identity.TeamID, tok.JTI,
+		audit.OperationAuthDelegate, audit.OutcomeSuccess, "")
+
+	writeJSON(w, http.StatusOK, sessionResponse{
+		Token:     tokenStr,
+		TokenType: "Bearer",
+		ExpiresIn: int(ttl / time.Second),
+		SessionID: tok.JTI,
+	})
+}
+
+// parseScope splits an "op:resource" string.
+func parseScope(s string) (string, string, error) {
+	parts := strings.SplitN(s, ":", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("expected op:resource")
+	}
+	return parts[0], parts[1], nil
 }
 
 // ── Audit helpers ──────────────────────────────────────────────────────────────

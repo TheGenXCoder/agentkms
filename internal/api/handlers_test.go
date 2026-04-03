@@ -53,8 +53,10 @@ import (
 
 	"github.com/agentkms/agentkms/internal/api"
 	"github.com/agentkms/agentkms/internal/audit"
+	"github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/policy"
+	"github.com/agentkms/agentkms/pkg/identity"
 )
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
@@ -169,6 +171,12 @@ func (s *spyBackend) lastDec() *backend.DecryptResult {
 	return s.decResult
 }
 
+func testTS() *auth.TokenService {
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
+	return ts
+}
+
 // ── Server constructors ───────────────────────────────────────────────────────
 
 // newAllowServer builds a Server with an allow-all policy engine.
@@ -176,7 +184,9 @@ func (s *spyBackend) lastDec() *backend.DecryptResult {
 func newAllowServer(t *testing.T, b backend.Backend) (*api.Server, *capturingAuditor) {
 	t.Helper()
 	aud := &capturingAuditor{}
-	return api.NewServer(b, aud, policy.AllowAllEngine{}, "dev"), aud
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
+	return api.NewServer(b, aud, policy.AllowAllEngine{}, ts, "dev"), aud
 }
 
 // newDenyServer builds a Server with a deny-all policy engine.
@@ -184,7 +194,9 @@ func newAllowServer(t *testing.T, b backend.Backend) (*api.Server, *capturingAud
 func newDenyServer(t *testing.T, b backend.Backend) (*api.Server, *capturingAuditor) {
 	t.Helper()
 	aud := &capturingAuditor{}
-	return api.NewServer(b, aud, policy.DenyAllEngine{}, "dev"), aud
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
+	return api.NewServer(b, aud, policy.DenyAllEngine{}, ts, "dev"), aud
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
@@ -197,6 +209,14 @@ func request(t *testing.T, srv http.Handler, method, path string, body io.Reader
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	// Inject a test identity so that authMiddleware passes.
+	id := identity.Identity{
+		CallerID: "test-user",
+		TeamID:   "test-team",
+		Role:     identity.RoleDeveloper,
+	}
+	req = req.WithContext(api.SetIdentityInContext(req.Context(), id))
+
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
 	return rr
@@ -999,7 +1019,7 @@ func TestAdversarial_AuditEvents_RequiredFieldsOnSuccess(t *testing.T) {
 			switch op.name {
 			case "sign":
 				spy2 := newSignBackend(t, op.wantKey+"-2")
-				srv2 = api.NewServer(spy2, aud2, policy.AllowAllEngine{}, "dev")
+				srv2 = api.NewServer(spy2, aud2, policy.AllowAllEngine{}, testTS(), "dev")
 				rr := request(t, srv2, http.MethodPost, "/sign/"+op.wantKey+"-2",
 					jsonReader(t, map[string]any{
 						"payload_hash": hashHex([]byte("audit")),
@@ -1009,7 +1029,7 @@ func TestAdversarial_AuditEvents_RequiredFieldsOnSuccess(t *testing.T) {
 				assertStatus(t, rr, http.StatusOK)
 			case "encrypt":
 				spy2 := newEncBackend(t, op.wantKey+"-2")
-				srv2 = api.NewServer(spy2, aud2, policy.AllowAllEngine{}, "dev")
+				srv2 = api.NewServer(spy2, aud2, policy.AllowAllEngine{}, testTS(), "dev")
 				rr := request(t, srv2, http.MethodPost, "/encrypt/"+op.wantKey+"-2",
 					jsonReader(t, map[string]any{
 						"plaintext": base64.StdEncoding.EncodeToString([]byte("data")),
@@ -1036,7 +1056,7 @@ func TestAdversarial_AuditEvents_RequiredFieldsOnSuccess(t *testing.T) {
 func TestAdversarial_AuditEvents_PayloadHashNeverPlaintext(t *testing.T) {
 	spy := newEncBackend(t, "audit-hash/enc")
 	aud := &capturingAuditor{}
-	srv := api.NewServer(spy, aud, policy.AllowAllEngine{}, "dev")
+	srv := api.NewServer(spy, aud, policy.AllowAllEngine{}, testTS(), "dev")
 
 	plaintext := []byte("SECRET DATA THAT MUST NOT APPEAR IN AUDIT LOG")
 	ptB64 := base64.StdEncoding.EncodeToString(plaintext)
@@ -1087,7 +1107,7 @@ func TestAdversarial_PolicyDenyReason_OnlyInAuditLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	aud := &capturingAuditor{}
-	srv := api.NewServer(b, aud, policy.DenyAllEngine{}, "dev")
+	srv := api.NewServer(b, aud, policy.DenyAllEngine{}, testTS(), "dev")
 
 	rr := request(t, srv, http.MethodPost, "/sign/deny/key",
 		jsonReader(t, map[string]any{
@@ -1619,7 +1639,7 @@ func TestHandleRotateKeyStub_InvalidKeyID(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			b := backend.NewDevBackend()
 			aud := &capturingAuditor{}
-			srv := api.NewServer(b, aud, policy.AllowAllEngine{}, "dev")
+			srv := api.NewServer(b, aud, policy.AllowAllEngine{}, testTS(), "dev")
 
 			rr := request(t, srv, http.MethodPost, tc.path, nil)
 			assertStatus(t, rr, http.StatusBadRequest)
@@ -1657,7 +1677,7 @@ func TestHandleRotateKey_KeyNotFoundAudits(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			b := backend.NewDevBackend() // no keys
 			aud := &capturingAuditor{}
-			srv := api.NewServer(b, aud, policy.AllowAllEngine{}, "dev")
+			srv := api.NewServer(b, aud, policy.AllowAllEngine{}, testTS(), "dev")
 
 			rr := request(t, srv, http.MethodPost, path, nil)
 			// C-05: real handler returns 404 for missing keys (not 501).
@@ -1697,7 +1717,7 @@ func TestHandleRotateKey_KeyNotFoundAudits(t *testing.T) {
 func TestAdversarial_AuditFailure_DenialPaths_Return500(t *testing.T) {
 	// newFailServer builds a Server with an always-failing auditor.
 	newFailServer := func(b backend.Backend) *api.Server {
-		return api.NewServer(b, &failingAuditor{}, policy.AllowAllEngine{}, "dev")
+		return api.NewServer(b, &failingAuditor{}, policy.AllowAllEngine{}, testTS(), "dev")
 	}
 
 	t.Run("sign: invalid key ID", func(t *testing.T) {
@@ -1741,7 +1761,7 @@ func TestAdversarial_AuditFailure_DenialPaths_Return500(t *testing.T) {
 			t.Fatal(err)
 		}
 		// deny-all policy + failing auditor: audit of denial must fail closed.
-		srv := api.NewServer(b, &failingAuditor{}, policy.DenyAllEngine{}, "dev")
+		srv := api.NewServer(b, &failingAuditor{}, policy.DenyAllEngine{}, testTS(), "dev")
 		rr := request(t, srv, http.MethodPost, "/sign/deny/key",
 			jsonReader(t, map[string]any{
 				"payload_hash": hashHex([]byte("x")), "algorithm": "ES256",
@@ -1791,21 +1811,21 @@ func TestAdversarial_AuditFailure_DenialPaths_Return500(t *testing.T) {
 
 	t.Run("list-keys: policy denied", func(t *testing.T) {
 		// deny-all + failing auditor: denial cannot be audited, must fail closed.
-		srv := api.NewServer(backend.NewDevBackend(), &failingAuditor{}, policy.DenyAllEngine{}, "dev")
+		srv := api.NewServer(backend.NewDevBackend(), &failingAuditor{}, policy.DenyAllEngine{}, testTS(), "dev")
 		rr := request(t, srv, http.MethodGet, "/keys", nil)
 		assertStatus(t, rr, http.StatusInternalServerError)
 	})
 
 	t.Run("rotate stub: audit failure returns 500 not 501", func(t *testing.T) {
 		// Even the stub must fail closed if audit is unavailable.
-		srv := api.NewServer(backend.NewDevBackend(), &failingAuditor{}, policy.AllowAllEngine{}, "dev")
+		srv := api.NewServer(backend.NewDevBackend(), &failingAuditor{}, policy.AllowAllEngine{}, testTS(), "dev")
 		rr := request(t, srv, http.MethodPost, "/rotate/some/key", nil)
 		assertStatus(t, rr, http.StatusInternalServerError)
 	})
 
 	t.Run("rotate stub: invalid key ID + audit failure returns 500", func(t *testing.T) {
 		// Invalid key ID path on rotate stub + failing audit must return 500, not 400.
-		srv := api.NewServer(backend.NewDevBackend(), &failingAuditor{}, policy.AllowAllEngine{}, "dev")
+		srv := api.NewServer(backend.NewDevBackend(), &failingAuditor{}, policy.AllowAllEngine{}, testTS(), "dev")
 		rr := request(t, srv, http.MethodPost, "/rotate/INVALID/KEY", nil)
 		assertStatus(t, rr, http.StatusInternalServerError)
 	})
@@ -1817,7 +1837,7 @@ func TestAdversarial_AuditFailure_DenialPaths_Return500(t *testing.T) {
 // This test makes that invariant explicit.
 func TestAdversarial_AuditFailure_SuccessPath_Returns500(t *testing.T) {
 	spy := newSignBackend(t, "audit-fail/sign")
-	srv := api.NewServer(spy, &failingAuditor{}, policy.AllowAllEngine{}, "dev")
+	srv := api.NewServer(spy, &failingAuditor{}, policy.AllowAllEngine{}, testTS(), "dev")
 
 	// The backend would succeed (key exists), but the audit sink fails.
 	// Handler must return 500 and discard the successful sign result.

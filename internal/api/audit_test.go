@@ -9,6 +9,7 @@ import (
 
 	"github.com/agentkms/agentkms/internal/api"
 	"github.com/agentkms/agentkms/internal/audit"
+	"github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/policy"
 )
@@ -117,5 +118,7 @@ func TestHandleLogCredentialUse(t *testing.T) {
 // newServerWithAuditor is a helper to inject a custom auditor.
 func newServerWithAuditor(t *testing.T, b backend.Backend, a audit.Auditor, p policy.EngineI) http.Handler {
 	t.Helper()
-	return api.NewServer(b, a, p, "dev")
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
+	return api.NewServer(b, a, p, ts, "dev")
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/agentkms/agentkms/internal/audit"
+	"github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/policy"
@@ -44,10 +45,11 @@ import (
 // │    TODO(A-04): Wire real token middleware once A-04 is complete.         │
 // └──────────────────────────────────────────────────────────────────────────┘
 type Server struct {
-	backend backend.Backend
-	auditor audit.Auditor
-	policy  policy.EngineI
-	vender  *credentials.Vender // nil until SetVender is called
+	backend    backend.Backend
+	auditor    audit.Auditor
+	policy     policy.EngineI
+	vender     *credentials.Vender // nil until SetVender is called
+	authTokens *auth.TokenService
 
 	// env identifies the deployment tier for audit events.
 	// Values: "production", "staging", "dev".
@@ -80,7 +82,7 @@ func (s *Server) SetVender(v *credentials.Vender) {
 // Panics immediately if any required argument is nil.  Fail-fast at
 // construction is safer than a nil-pointer panic on the first request, which
 // would be caught by recoveryMiddleware rather than surfacing at startup.
-func NewServer(b backend.Backend, a audit.Auditor, p policy.EngineI, env string) *Server {
+func NewServer(b backend.Backend, a audit.Auditor, p policy.EngineI, t *auth.TokenService, env string) *Server {
 	if b == nil {
 		panic("agentkms: NewServer requires a non-nil Backend")
 	}
@@ -90,12 +92,16 @@ func NewServer(b backend.Backend, a audit.Auditor, p policy.EngineI, env string)
 	if p == nil {
 		panic("agentkms: NewServer requires a non-nil policy EngineI")
 	}
+	if t == nil {
+		panic("agentkms: NewServer requires a non-nil TokenService")
+	}
 	s := &Server{
-		backend: b,
-		auditor: a,
-		policy:  p,
-		env:     env,
-		mux:     http.NewServeMux(),
+		backend:    b,
+		auditor:    a,
+		policy:     p,
+		authTokens: t,
+		env:        env,
+		mux:        http.NewServeMux(),
 	}
 	s.registerRoutes()
 	return s

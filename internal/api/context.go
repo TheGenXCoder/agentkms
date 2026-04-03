@@ -17,13 +17,13 @@ const (
 	identityKey contextKey = "agentkms.identity"
 )
 
-// setIdentityInContext returns a new context carrying the given Identity.
+// SetIdentityInContext returns a new context carrying the given Identity.
 // Called by the authentication middleware after the session token is
 // validated.
 //
 // The identity must be fully populated (CallerID, TeamID, Role at minimum)
 // before being stored.  Handlers must call identityFromContext to retrieve it.
-func setIdentityInContext(ctx context.Context, id identity.Identity) context.Context {
+func SetIdentityInContext(ctx context.Context, id identity.Identity) context.Context {
 	return context.WithValue(ctx, identityKey, id)
 }
 

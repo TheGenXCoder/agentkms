@@ -258,6 +258,27 @@ func (e *Engine) Evaluate(id identity.Identity, op Operation, keyID string) Deci
 // deny-by-default: there is no code path that returns Allow=true when no
 // rule explicitly grants the operation.
 func (e *Engine) EvaluateAt(id identity.Identity, op Operation, keyID string, now time.Time) Decision {
+	// ── Scope Enforcement (FX-02) ─────────────────────────────────────────────────
+	//
+	// If the identity has scopes, the operation MUST match at least one scope.
+	// Scopes are an additional "outer" filter: they cannot grant what the
+	// policy denies, but they can deny what the policy would otherwise allow.
+	if len(id.Scopes) > 0 {
+		scoped := false
+		for _, s := range id.Scopes {
+			if matchesScope(s, op, keyID) {
+				scoped = true
+				break
+			}
+		}
+		if !scoped {
+			return Decision{
+				Allow:      false,
+				DenyReason: fmt.Sprintf("policy: operation %q on %q is not within delegated scopes", op, keyID),
+			}
+		}
+	}
+
 	e.policyMu.RLock()
 	rules := e.policy.Rules // slice header copy; entries are read-only
 	e.policyMu.RUnlock()
@@ -350,6 +371,27 @@ func (e *Engine) EvaluateAt(id identity.Identity, op Operation, keyID string, no
 }
 
 // ── Match helpers ─────────────────────────────────────────────────────────────
+
+// matchesScope returns true if s (format "op:resource") matches op and keyID.
+func matchesScope(s string, op Operation, keyID string) bool {
+	parts := strings.SplitN(s, ":", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	scopeOp, scopeRes := parts[0], parts[1]
+
+	// Operation match (allow "*" or exact match).
+	if scopeOp != "*" && scopeOp != string(op) {
+		return false
+	}
+
+	// Resource match (allow "*" or exact match).
+	if scopeRes != "*" && scopeRes != keyID {
+		return false
+	}
+
+	return true
+}
 
 // matchesIdentity returns true if all non-empty fields of im match id.
 func matchesIdentity(im IdentityMatch, id identity.Identity) bool {

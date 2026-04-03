@@ -3,7 +3,18 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/agentkms/agentkms/internal/audit"
+	"github.com/agentkms/agentkms/internal/policy"
 )
+
+// populateAnomalies copies rules-based anomaly messages from a policy
+// Decision to an AuditEvent.
+func populateAnomalies(ev *audit.AuditEvent, anomalies []policy.AnomalyRecord) {
+	for _, a := range anomalies {
+		ev.Anomalies = append(ev.Anomalies, a.Message)
+	}
+}
 
 // writeJSONError writes a simple {"error": "<msg>"} JSON response.
 // Used by the auth handler and auth middleware.

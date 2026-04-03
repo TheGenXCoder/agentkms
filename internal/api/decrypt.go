@@ -143,6 +143,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 	if !decision.Allow {
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = decision.DenyReason
+		populateAnomalies(&ev, decision.Anomalies)
 		if logErr := s.auditLog(ctx, ev); logErr != nil {
 			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 			return
@@ -156,6 +157,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 	result, bErr := s.backend.Decrypt(ctx, keyID, ciphertextBytes)
 	if bErr != nil {
 		ev.Outcome = audit.OutcomeError
+		populateAnomalies(&ev, decision.Anomalies)
 		if logErr := s.auditLog(ctx, ev); logErr != nil {
 			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 			return
@@ -173,6 +175,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 	// The audit event records that a decrypt occurred (operation, key_id,
 	// caller, outcome) — sufficient for compliance without storing the data.
 	ev.Outcome = audit.OutcomeSuccess
+	populateAnomalies(&ev, decision.Anomalies)
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
 		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 		return

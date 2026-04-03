@@ -65,7 +65,7 @@
 | P-04 | P0 | T0 | [x] | Enforce deny-by-default — no operation succeeds without explicit allow | Test: empty policy = all operations denied |
 | P-05 | P1 | T1 | [x] | Implement policy loader from OpenBao/Vault policy engine | Replaces local YAML in T1+ |
 | P-06 | P1 | T1 | [x] | Implement rate limiting in policy engine | Per (rule, callerID) sliding-window counter; conservative shared budget |
-| P-07 | P2 | T2 | [ ] | Implement anomaly detection (rules-based) | Spike detection, unusual hours, repeated denials |
+| P-07 | P2 | T2 | [x] | Implement anomaly detection (rules-based) | Spike detection, unusual hours, repeated denials |
 | P-08 | P3 | T3 | [ ] | Implement ML-augmented anomaly detection | Baseline normal, flag statistical outliers |
 
 ---
@@ -103,11 +103,11 @@
 |----|-----|-------|--------|------|-------|
 | B-01 | P0 | T1 | [x] | Implement OpenBao/Vault Transit backend (`internal/backend/openbao.go`) | Supports: sign, encrypt, decrypt, list, rotate; unit tests + integration test skeleton (build tag: integration) |
 | B-02 | P1 | T1 | [x] | Write integration tests against local OpenBao instance | Use `agentkms-dev` to spin up test instance |
-| B-03 | P2 | T2 | [ ] | Implement HashiCorp Vault backend (`internal/backend/vault.go`) | Same interface as OpenBao; separate for namespace/config differences |
+| B-03 | P2 | T2 | [x] | Implement HashiCorp Vault backend (`internal/backend/vault.go`) | Same interface as OpenBao; separate for namespace/config differences |
 | B-04 | P2 | T3 | [ ] | Implement AWS KMS backend (`internal/backend/awskms.go`) | Multi-region asymmetric keys; FIPS 140-2 path |
 | B-05 | P3 | T3 | [ ] | Implement GCP Cloud KMS backend (`internal/backend/gcpkms.go`) | — |
 | B-06 | P3 | T3 | [ ] | Implement Azure Key Vault backend (`internal/backend/azurekv.go`) | — |
-| B-07 | P1 | T2 | [ ] | Implement backend feature flag + dual-run mode (old backend for reads, new for writes) | Required for zero-downtime backend migration |
+| B-07 | P1 | T2 | [x] | Implement backend feature flag + dual-run mode (old backend for reads, new for writes) | Required for zero-downtime backend migration |
 
 ---
 

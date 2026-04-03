@@ -121,6 +121,7 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 	if !decision.Allow {
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = decision.DenyReason
+		populateAnomalies(&ev, decision.Anomalies)
 		if logErr := s.auditLog(ctx, ev); logErr != nil {
 			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 			return
@@ -132,6 +133,7 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 	// ── 3. Vend credential ─────────────────────────────────────────────────
 	if s.vender == nil {
 		ev.Outcome = audit.OutcomeError
+		populateAnomalies(&ev, decision.Anomalies)
 		if logErr := s.auditLog(ctx, ev); logErr != nil {
 			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 			return
@@ -144,6 +146,7 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 	cred, vErr := s.vender.Vend(ctx, provider)
 	if vErr != nil {
 		ev.Outcome = audit.OutcomeError
+		populateAnomalies(&ev, decision.Anomalies)
 		if errors.Is(vErr, credentials.ErrCredentialNotFound) {
 			ev.DenyReason = "credential not found for provider"
 			if logErr := s.auditLog(ctx, ev); logErr != nil {
@@ -164,6 +167,7 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 
 	// ── 4. Audit (key MUST NOT appear here) ───────────────────────────────
 	ev.Outcome = audit.OutcomeSuccess
+	populateAnomalies(&ev, decision.Anomalies)
 	// ev.KeyID is already set to "llm/{provider}" — safe to audit
 	// The actual API key is deliberately absent from the audit event.
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {

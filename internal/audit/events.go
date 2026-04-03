@@ -150,6 +150,11 @@ type AuditEvent struct {
 	// Present only when Outcome is OutcomeError.
 	// SECURITY: Must not contain key material, plaintext, or credentials.
 	ErrorDetail string `json:"error_detail,omitempty"`
+
+	// Anomalies lists any rules-based anomalies detected during the
+	// operation.  Included in the audit trail for compliance monitoring
+	// and real-time alerting.
+	Anomalies []string `json:"anomalies,omitempty"`
 }
 
 // ── EventID generation ────────────────────────────────────────────────────────

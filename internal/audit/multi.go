@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // MultiAuditor fans out every Log and Flush call to a set of underlying
@@ -102,4 +103,26 @@ func (m *MultiAuditor) fanOut(ctx context.Context, op func(Auditor, int) error) 
 // configuration validation (warn if zero sinks in production).
 func (m *MultiAuditor) Sinks() int {
 	return len(m.sinks)
+}
+
+// Export implements the Exporter interface by delegating to the first sink
+// that supports exporting.
+//
+// In most configurations, only one sink (the primary storage, e.g. ELK or a
+// local file) will implement Exporter.  MultiAuditor returns the first
+// non-nil Export result it receives.
+func (m *MultiAuditor) Export(ctx context.Context, start, end time.Time) ([]AuditEvent, error) {
+	for _, sink := range m.sinks {
+		if exporter, ok := sink.(Exporter); ok {
+			events, err := exporter.Export(ctx, start, end)
+			if err != nil {
+				// Continue to next sink if one fails.
+				continue
+			}
+			if events != nil {
+				return events, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("audit: no configured sink supports export or no events found")
 }

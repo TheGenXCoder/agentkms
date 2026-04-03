@@ -1,11 +1,13 @@
 package audit
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
+	"time"
 )
 
 // FileAuditSink writes AuditEvents as append-only Newline-Delimited JSON
@@ -21,9 +23,10 @@ import (
 // Append-only guarantee: the file is opened with O_APPEND.  No existing
 // content is ever overwritten or truncated by this implementation.
 type FileAuditSink struct {
-	mu  sync.Mutex
-	f   *os.File
-	enc *json.Encoder
+	mu   sync.Mutex
+	f    *os.File
+	enc  *json.Encoder
+	path string
 }
 
 // NewFileAuditSink opens (or creates) the file at path and returns a
@@ -52,8 +55,9 @@ func NewFileAuditSink(path string) (*FileAuditSink, error) {
 	enc.SetEscapeHTML(false)
 
 	return &FileAuditSink{
-		f:   f,
-		enc: enc,
+		f:    f,
+		enc:  enc,
+		path: path,
 	}, nil
 }
 
@@ -124,4 +128,40 @@ func (s *FileAuditSink) Close() error {
 		return fmt.Errorf("audit: file sink close: %w", err)
 	}
 	return nil
+}
+
+// Export implements the Exporter interface by reading from the local file.
+//
+// SECURITY: this is only safe if the local file is protected by OS permissions
+// (0600).  In Tier 0/1, this is the canonical source of audit events.
+func (s *FileAuditSink) Export(ctx context.Context, start, end time.Time) ([]AuditEvent, error) {
+	// We open a separate read-only handle so we don't interfere with the
+	// append-only write handle and don't need to hold the mutex for the
+	// entire read duration.
+	f, err := os.Open(s.path)
+	if err != nil {
+		return nil, fmt.Errorf("audit: file sink export: %w", err)
+	}
+	defer f.Close()
+
+	var events []AuditEvent
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var ev AuditEvent
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+			// Skip malformed lines — file might be being written to.
+			continue
+		}
+		if (ev.Timestamp.After(start) || ev.Timestamp.Equal(start)) &&
+			(ev.Timestamp.Before(end) || ev.Timestamp.Equal(end)) {
+			events = append(events, ev)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("audit: file sink export scanner: %w", err)
+	}
+	return events, nil
 }

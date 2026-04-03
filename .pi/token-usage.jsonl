@@ -2,3 +2,5 @@
 {"ts": "2026-04-03T17:23:29.189926Z", "tier": "worker", "model": "devstral:24b", "provider": "ollama", "tokens_in": 3170, "tokens_out": 2, "cache_read": 0, "cache_write": 0, "cost": 0.0, "elapsed_ms": 800}
 {"ts": "2026-04-03T17:23:42.858063Z", "tier": "qa", "model": "claude-sonnet-4-6", "provider": "anthropic", "tokens_in": 3, "tokens_out": 5, "cache_read": 0, "cache_write": 4087, "cost": 0.01541, "elapsed_ms": 2086}
 {"ts": "2026-04-03T17:28:22.517703Z", "tier": "review", "model": "claude-opus-4-6", "provider": "anthropic", "tokens_in": 3, "tokens_out": 5031, "cache_read": 0, "cache_write": 44352, "cost": 0.40299, "elapsed_ms": 115421}
+{"ts": "2026-04-03T18:48:01.781979Z", "tier": "worker", "model": "devstral:24b", "provider": "ollama", "tokens_in": 3368, "tokens_out": 3477, "cache_read": 0, "cache_write": 0, "cost": 0.0, "elapsed_ms": 478296}
+{"ts": "2026-04-03T19:23:09.213826Z", "tier": "worker", "model": "devstral:24b", "provider": "ollama", "tokens_in": 7150, "tokens_out": 3785, "cache_read": 0, "cache_write": 0, "cost": 0.0, "elapsed_ms": 1136706}

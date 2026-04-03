@@ -17,7 +17,10 @@
 //   siem.go       — Generic SIEM webhook               (Tier 2, backlog AU-08)
 package audit
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Auditor is the only permitted way to write structured audit events in
 // AgentKMS.
@@ -71,4 +74,19 @@ type Auditor interface {
 	// Flush MUST NOT block indefinitely; it should apply a timeout derived
 	// from the provided context.
 	Flush(ctx context.Context) error
+}
+
+// Exporter is an optional interface that an Auditor may implement to support
+// reading back audit events for compliance delivery.
+//
+// In Tier 0/1, the FileAuditSink implements this by reading from the local
+// file.  In higher tiers, implementations may query ELK, Splunk, or other
+// external sinks.
+type Exporter interface {
+	// Export returns all audit events between start and end (inclusive).
+	//
+	// SECURITY: Callers must verify the identity has the 'auditor' role
+	// before calling Export.  The returned events may contain sensitive
+	// metadata (IPs, caller IDs).
+	Export(ctx context.Context, start, end time.Time) ([]AuditEvent, error)
 }

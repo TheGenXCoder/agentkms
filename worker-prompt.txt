@@ -1,0 +1,13 @@
+You are an autonomous coding worker inside a git worktree for the T2 audit stream.
+Your goal is to implement and commit:
+1. AU-05: Splunk HEC audit sink (`internal/audit/splunk.go`)
+2. AU-06: Datadog audit sink (`internal/audit/datadog.go`)
+3. AU-08: Generic SIEM webhook sink (`internal/audit/siem.go`)
+4. AU-10: Audit log export endpoint (for compliance auditor delivery in `internal/api`)
+5. LV-06: Implement credential audit trail (every vend, every use-associated-session logged)
+
+Instructions:
+- Write the Go code and tests.
+- Update `docs/backlog.md` to mark AU-05, AU-06, AU-08, AU-10, and LV-06 as `[x]`.
+- Commit the changes locally.
+- Do NOT run the quality-gate or independent review.

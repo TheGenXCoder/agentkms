@@ -27,6 +27,7 @@ const (
 	OperationEncrypt        = "encrypt"
 	OperationDecrypt        = "decrypt"
 	OperationCredentialVend = "credential_vend"
+	OperationCredentialUse  = "credential_use"
 	OperationCredRefresh    = "credential_refresh"
 	OperationAuth           = "auth"
 	OperationAuthRefresh    = "auth_refresh"

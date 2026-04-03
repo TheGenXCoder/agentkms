@@ -93,7 +93,7 @@
 | LV-03 | P0 | T1 | [x] | Implement credential scoping (vended key tied to session identity and expiry) | Revocation cascades: revoke session → vended keys invalidated |
 | LV-04 | P1 | T1 | [x] | Implement credential refresh endpoint (`POST /credentials/llm/{provider}/refresh`) | Called by Pi extension when key is < 10min from expiry |
 | LV-05 | P1 | T2 | [ ] | Implement master LLM key rotation schedule | Rotates master keys; all new vended keys use new version |
-| LV-06 | P2 | T2 | [ ] | Implement credential audit trail (every vend, every use-associated-session logged) | Ties LLM usage back to agent session identity for compliance |
+| LV-06 | P2 | T2 | [x] | Implement credential audit trail (every vend, every use-associated-session logged) | Ties LLM usage back to agent session identity for compliance |
 
 ---
 
@@ -119,12 +119,12 @@
 | AU-02 | P1 | T1 | [x] | Implement ELK audit sink (`internal/audit/elk.go`) — Elasticsearch ingest API | Phase 1 production audit backend |
 | AU-03 | P1 | T1 | [x] | Deploy local ELK stack on K8s (Helm charts) and validate audit event ingestion | — |
 | AU-04 | P1 | T1 | [x] | Build Kibana dashboard: operations by team, denied ops, anomaly timeline | Compliance officer-friendly |
-| AU-05 | P2 | T2 | [ ] | Implement Splunk HEC audit sink (`internal/audit/splunk.go`) | — |
-| AU-06 | P2 | T2 | [ ] | Implement Datadog audit sink (`internal/audit/datadog.go`) | — |
+| AU-05 | P2 | T2 | [x] | Implement Splunk HEC audit sink (`internal/audit/splunk.go`) | — |
+| AU-06 | P2 | T2 | [x] | Implement Datadog audit sink (`internal/audit/datadog.go`) | — |
 | AU-07 | P2 | T3 | [ ] | Implement AWS CloudWatch audit sink (`internal/audit/cloudwatch.go`) | — |
-| AU-08 | P2 | T2 | [ ] | Implement generic SIEM webhook sink (`internal/audit/siem.go`) | Configurable endpoint + auth |
+| AU-08 | P2 | T2 | [x] | Implement generic SIEM webhook sink (`internal/audit/siem.go`) | Configurable endpoint + auth |
 | AU-09 | P1 | T1 | [x] | Implement audit event signing (each event HMAC-signed by AgentKMS internal key) | EventSigner + SigningAuditor; HMAC-SHA256; sig: tag in ComplianceTags |
-| AU-10 | P2 | T2 | [ ] | Implement audit log export endpoint (for compliance auditor delivery) | Authenticated + audited |
+| AU-10 | P2 | T2 | [x] | Implement audit log export endpoint (for compliance auditor delivery) | Authenticated + audited |
 
 ---
 

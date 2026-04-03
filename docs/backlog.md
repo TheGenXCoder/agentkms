@@ -118,7 +118,7 @@
 | AU-01 | P0 | T0 | [x] | Implement file audit sink (append-only JSON lines, local dev) | Done as F-06; `internal/audit/file.go` |
 | AU-02 | P1 | T1 | [x] | Implement ELK audit sink (`internal/audit/elk.go`) — Elasticsearch ingest API | Phase 1 production audit backend |
 | AU-03 | P1 | T1 | [x] | Deploy local ELK stack on K8s (Helm charts) and validate audit event ingestion | — |
-| AU-04 | P1 | T1 | [ ] | Build Kibana dashboard: operations by team, denied ops, anomaly timeline | Compliance officer-friendly |
+| AU-04 | P1 | T1 | [x] | Build Kibana dashboard: operations by team, denied ops, anomaly timeline | Compliance officer-friendly |
 | AU-05 | P2 | T2 | [ ] | Implement Splunk HEC audit sink (`internal/audit/splunk.go`) | — |
 | AU-06 | P2 | T2 | [ ] | Implement Datadog audit sink (`internal/audit/datadog.go`) | — |
 | AU-07 | P2 | T3 | [ ] | Implement AWS CloudWatch audit sink (`internal/audit/cloudwatch.go`) | — |
@@ -171,7 +171,7 @@
 | IN-02 | P0 | T1 | [x] | Write Helm chart for AgentKMS service (3 replicas, pod anti-affinity, HPA) | deploy/helm/agentkms/; deployed to odev k3s cluster |
 | IN-03 | P0 | T1 | [x] | Deploy OpenBao via Helm (HA Raft, 3 replicas, mTLS listener) | Running on odev (openbao namespace); initialized, unsealed, HA active |
 | IN-04 | P0 | T1 | [x] | Configure OpenBao Transit + PKI secrets engines | transit/: agentkms-signing (ES256), agentkms-encrypt (AES256GCM), platform-signing; pki/: AgentKMS Intermediate CA + agentkms role; kv/: LLM creds; k8s auth role for agentkms SA |
-| IN-05 | P1 | T1 | [ ] | Deploy ELK stack via Helm (Elasticsearch + Logstash + Kibana) | Phase 1 audit sink |
+| IN-05 | P1 | T1 | [x] | Deploy ELK stack via Helm (Elasticsearch + Logstash + Kibana) | Phase 1 audit sink |
 | IN-06 | P1 | T1 | [x] | Write CI pipeline (lint, vet, test, build, Docker push) | .github/workflows/ci.yml: quality + build + health + integration jobs |
 | IN-07 | P2 | T2 | [ ] | Configure HPA for AgentKMS (CPU + RPS metrics) | — |
 | IN-08 | P2 | T2 | [ ] | Deploy Prometheus + Grafana (latency p99, error rate, audit volume dashboards) | — |
@@ -190,8 +190,8 @@
 | CX-03 | P1 | T2 | [ ] | Write key rotation runbook (schedule, steps, rollback procedure) | Required for PCI-DSS |
 | CX-04 | P2 | T2 | [ ] | Write GDPR data flow diagram (where key metadata lives, retention, erasure procedure) | — |
 | CX-05 | P2 | T2 | [ ] | Write Colorado AI Act transparency statement (how agent operations are attributed + audited) | — |
-| CX-06 | P1 | T1 | [ ] | API documentation (OpenAPI spec for all AgentKMS endpoints) | — |
-| CX-07 | P1 | T1 | [ ] | Write developer onboarding guide (enroll → first sign operation in < 15min) | Target: zero calls to platform team |
+| CX-06 | P1 | T1 | [x] | API documentation (OpenAPI spec for all AgentKMS endpoints) | — |
+| CX-07 | P1 | T1 | [x] | Write developer onboarding guide (enroll → first sign operation in < 15min) | Target: zero calls to platform team |
 
 ---
 

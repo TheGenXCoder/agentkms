@@ -50,7 +50,7 @@ func agentID(team, caller string) identity.Identity {
 		CallerID:  caller + "@" + team,
 		TeamID:    team,
 		Role:      identity.RoleAgent,
-		SessionID: "sess-abc123",
+		AgentSession: "sess-abc123",
 	}
 }
 

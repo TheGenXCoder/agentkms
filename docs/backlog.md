@@ -92,7 +92,7 @@
 | LV-02 | P0 | T1 | [x] | Implement LLM key storage in backend (provider keys stored as secrets, scoped per team) | Supports: anthropic, openai, google, azure, bedrock, mistral, groq |
 | LV-03 | P0 | T1 | [x] | Implement credential scoping (vended key tied to session identity and expiry) | Revocation cascades: revoke session → vended keys invalidated |
 | LV-04 | P1 | T1 | [x] | Implement credential refresh endpoint (`POST /credentials/llm/{provider}/refresh`) | Called by Pi extension when key is < 10min from expiry |
-| LV-05 | P1 | T2 | [ ] | Implement master LLM key rotation schedule | Rotates master keys; all new vended keys use new version |
+| LV-05 | P1 | T2 | [x] | Implement master LLM key rotation schedule | Rotates master keys; all new vended keys use new version |
 | LV-06 | P2 | T2 | [ ] | Implement credential audit trail (every vend, every use-associated-session logged) | Ties LLM usage back to agent session identity for compliance |
 
 ---
@@ -173,8 +173,8 @@
 | IN-04 | P0 | T1 | [x] | Configure OpenBao Transit + PKI secrets engines | transit/: agentkms-signing (ES256), agentkms-encrypt (AES256GCM), platform-signing; pki/: AgentKMS Intermediate CA + agentkms role; kv/: LLM creds; k8s auth role for agentkms SA |
 | IN-05 | P1 | T1 | [x] | Deploy ELK stack via Helm (Elasticsearch + Logstash + Kibana) | Phase 1 audit sink |
 | IN-06 | P1 | T1 | [x] | Write CI pipeline (lint, vet, test, build, Docker push) | .github/workflows/ci.yml: quality + build + health + integration jobs |
-| IN-07 | P2 | T2 | [ ] | Configure HPA for AgentKMS (CPU + RPS metrics) | — |
-| IN-08 | P2 | T2 | [ ] | Deploy Prometheus + Grafana (latency p99, error rate, audit volume dashboards) | — |
+| IN-07 | P2 | T2 | [x] | Configure HPA for AgentKMS (CPU + RPS metrics) | — |
+| IN-08 | P2 | T2 | [x] | Deploy Prometheus + Grafana (latency p99, error rate, audit volume dashboards) | — |
 | IN-09 | P2 | T3 | [ ] | EKS deployment with IRSA for AWS KMS access | — |
 | IN-10 | P2 | T3 | [ ] | AWS KMS multi-region key setup + Route 53 failover | — |
 | IN-11 | P3 | T3 | [ ] | FedRAMP control mapping document (evidence collection for each control) | Required for government sales |
@@ -186,8 +186,8 @@
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
 | CX-01 | P1 | T1 | [x] | Write compliance control mapping (architecture.md §8 → testable evidence) | Investor + auditor artifact |
-| CX-02 | P1 | T2 | [ ] | Write security runbook (incident response for: cert compromise, token leak, audit failure) | Required for SOC 2 |
-| CX-03 | P1 | T2 | [ ] | Write key rotation runbook (schedule, steps, rollback procedure) | Required for PCI-DSS |
+| CX-02 | P1 | T2 | [x] | Write security runbook (incident response for: cert compromise, token leak, audit failure) | Required for SOC 2 |
+| CX-03 | P1 | T2 | [x] | Write key rotation runbook (schedule, steps, rollback procedure) | Required for PCI-DSS |
 | CX-04 | P2 | T2 | [ ] | Write GDPR data flow diagram (where key metadata lives, retention, erasure procedure) | — |
 | CX-05 | P2 | T2 | [ ] | Write Colorado AI Act transparency statement (how agent operations are attributed + audited) | — |
 | CX-06 | P1 | T1 | [x] | API documentation (OpenAPI spec for all AgentKMS endpoints) | — |

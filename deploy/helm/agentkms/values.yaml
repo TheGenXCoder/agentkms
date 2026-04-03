@@ -74,6 +74,14 @@ securityContext:
   capabilities:
     drop: [ALL]
 
+# ── Horizontal Pod Autoscaler (IN-07) ──────────────────────────────────────────
+hpa:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetRPS: 500  # Requires Prometheus Adapter / Custom Metrics API
+
 # ── Affinity / topology (T2: enable pod anti-affinity) ───────────────────────
 affinity: {}
 tolerations: []

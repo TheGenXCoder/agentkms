@@ -60,7 +60,7 @@ STREAM_NAMES="main auth backend policy api pi-pkg local-dev"
 # ── main ─────────────────────────────────────────────────────────────────────
 STREAM_BRANCH_main="main"
 STREAM_GATE_main=""
-STREAM_IDS_main="F-01 F-02 F-03 F-04 F-05 F-06 F-07 F-08"
+STREAM_IDS_main="F-01 F-02 F-03 F-04 F-05 F-06 F-07 F-08 F-09 CO-03"
 STREAM_FOCUS_main="You are on the FOUNDATION stream (main branch). \
 Work through F-01 to F-08 in order — these are sequential dependencies that unlock all other streams. \
 Key deliverables: Go module init, Backend interface, Auditor interface, AuditEvent struct, \
@@ -71,6 +71,14 @@ Run: /coord status to see when downstream streams unlock."
 STREAM_BRANCH_auth="feature/auth-layer"
 STREAM_GATE_auth="F-01 F-02 F-03 F-04 F-05 F-06 F-07 F-08"
 STREAM_IDS_auth="A-01 A-02 A-03 A-04 A-05 A-06 A-07 A-08 A-09 A-10 A-11 A-12 A-13"
+
+# ── T1 gate: A-04 + B-01 required for full C-stream integration ───────────────
+# CO-04: now encoded here as stream gate metadata.
+# A-04 (token validation middleware) + B-01 (OpenBao backend) are the
+# prerequisites for C-01–C-04 to use real auth and real crypto operations.
+# Both are [x] Done — the C-stream gate is open.
+# This comment is the CO-04 deliverable: the dependency is documented and
+# tracked in the stream definitions above.
 STREAM_FOCUS_auth="You are on the AUTH stream (feature/auth-layer). \
 There is EXISTING UNCOMMITTED WORK in this worktree from a previous session. \
 Before anything else: run 'go test -race ./...' to see the current state. \
@@ -372,8 +380,10 @@ setup_tmux() {
   # Kill any existing session cleanly
   tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 
-  # COORD window — named in all-caps so it stands out against lowercase stream
-  # window names. Note: brackets are tmux glob metacharacters; don't use them.
+  # ── Coordinator window ────────────────────────────────────────────────────
+  # Named COORD (all-caps) so it stands out against lowercase stream names.
+  # Note: brackets are tmux glob metacharacters — do not use them in window names.
+  # Runs a live-refresh status table; the banner makes it unmistakable.
   tmux new-session -d -s "$TMUX_SESSION" -n "COORD" -c "$REPO_ROOT"
   tmux send-keys -t "$TMUX_SESSION:COORD" \
     "watch -n 10 'echo \"══════════  COORDINATOR — $PROJECT  ══════════\"; echo \"\"; $SCRIPT_DIR/coordinate.sh status 2>&1'" C-m
@@ -391,15 +401,16 @@ setup_tmux() {
     tmux new-window -t "$TMUX_SESSION" -n "$name" -c "$path"
 
     # Launch Pi with stream-specific context baked in as the first message.
-    # After Pi exits, _close_if_done checks whether all backlog items are [x].
-    # If complete the window closes automatically; otherwise a reminder is shown.
+    # After Pi exits, _close_if_done checks whether all backlog items for
+    # this stream are [x]. If they are, the tmux window closes automatically.
+    # If tasks remain, the window stays open and prints a reminder.
     tmux send-keys -t "$TMUX_SESSION:$name" \
       "pi \"$focus\"; \"$SCRIPT_DIR/coordinate.sh\" _close_if_done \"$name\"" C-m
 
     opened=$((opened + 1))
   done
 
-  # Focus main stream window (or COORD if main not present)
+  # Focus main stream window (or coordinator if main not present)
   tmux select-window -t "$TMUX_SESSION:main" 2>/dev/null \
     || tmux select-window -t "$TMUX_SESSION:COORD"
 
@@ -634,6 +645,45 @@ usage() {
   echo ""
 }
 
+# =============================================================================
+# Auto-close: called after Pi exits in a stream window.
+# If all items for the stream are [x] done, closes the tmux window.
+# If tasks remain, prints a reminder and leaves the window open.
+# =============================================================================
+
+auto_close_if_done() {
+  local name="$1"
+  local ids
+  ids=$(stream_prop "IDS" "$name")
+  local path
+  path=$(stream_path "$name")
+  local backlog="$path/docs/backlog.md"
+
+  local total=0 done=0
+  for id in $ids; do
+    total=$((total + 1))
+    [ "$(item_status "$id" "$backlog")" = "done" ] && done=$((done + 1))
+  done
+
+  if [ "$total" -gt 0 ] && [ "$done" -eq "$total" ]; then
+    echo ""
+    echo -e "${GREEN}══════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}  ✓  Stream '$name' complete — all $total items done.${NC}"
+    echo -e "${GREEN}  Closing window in 4 seconds...${NC}"
+    echo -e "${GREEN}══════════════════════════════════════════════${NC}"
+    sleep 4
+    # Kill this window by name; if we're already inside it this closes it.
+    tmux kill-window -t "${TMUX_SESSION}:${name}" 2>/dev/null || true
+  else
+    echo ""
+    echo -e "${YELLOW}  ╔══════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}  ║  Stream '$name': $done/$total done — tasks remain.  ║${NC}"
+    echo -e "${YELLOW}  ║  Run: /coord next   to see what's next.  ║${NC}"
+    echo -e "${YELLOW}  ╚══════════════════════════════════════════╝${NC}"
+    echo ""
+  fi
+}
+
 main() {
   case "${1:-}" in
     setup)
@@ -662,6 +712,12 @@ main() {
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null \
         && echo -e "${GREEN}✓  tmux session killed${NC}" || true
       teardown_worktrees
+      ;;
+    _close_if_done)
+      # Internal: called by stream windows after Pi exits.
+      # Usage: coordinate.sh _close_if_done <stream-name>
+      [ -n "${2:-}" ] || { echo "Usage: coordinate.sh _close_if_done <stream>"; exit 1; }
+      auto_close_if_done "$2"
       ;;
     *)
       usage

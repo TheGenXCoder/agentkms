@@ -1,0 +1,32 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agentkms.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agentkms.labels" . | nindent 4 }}
+rules:
+  # No K8s API access required — agentkms talks only to OpenBao.
+  # This empty role exists so RBAC auditors can verify the service account
+  # has no K8s permissions beyond what's needed for the Vault Agent to
+  # authenticate (which is handled by the projected service account token,
+  # not any API rules).
+  []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agentkms.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agentkms.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "agentkms.fullname" . }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

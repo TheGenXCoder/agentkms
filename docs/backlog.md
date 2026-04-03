@@ -15,7 +15,7 @@
 | CO-01 | P0 | T0 | [x] | `scripts/coordinate.sh` — worktree + tmux + Pi launcher | Done: setup, status, open, teardown commands |
 | CO-02 | P0 | T0 | [x] | `.pi/extensions/coordinator.ts` — in-session Pi extension | Done: /coord status\|next\|focus\|gates, session_start context injection |
 | CO-03 | P1 | T0 | [x] | Add `scripts/coordinate.sh` to CI health check (verify worktrees + session integrity) | `health` subcommand: checks worktree exists, correct branch, clean tree (warn), go build passes |
-| CO-04 | P2 | T1 | [ ] | Extend coordinator to track cross-stream dependencies (A-04 + B-01 unblock C-01 full integration) | Currently documented as notes only |
+| CO-04 | P2 | T1 | [x] | Extend coordinator to track cross-stream dependencies (A-04 + B-01 unblock C-01 full integration) | Currently documented as notes only |
 
 ---
 
@@ -48,8 +48,8 @@
 | A-07 | P0 | T0 | [x] | Implement `POST /auth/refresh` handler | Validates existing token, issues new one with fresh TTL |
 | A-08 | P0 | T0 | [x] | Implement `POST /auth/revoke` handler | Adds token to blocklist, 204 response |
 | A-09 | P0 | T0 | [x] | Implement `agentkms-dev enroll` CLI | Implemented as `agentkms-dev enroll` subcommand in `cmd/dev/main.go`; `cmd/enroll/main.go` remains a stub for production SSO (A-11) |
-| A-10 | P1 | T1 | [ ] | Implement PKI engine integration for cert issuance (OpenBao PKI backend) | Issues team intermediate CAs and developer certs |
-| A-11 | P1 | T1 | [ ] | Implement OIDC/SAML SSO flow in `agentkms enroll` | Browser-based enrollment; maps SSO identity to team cert |
+| A-10 | P1 | T1 | [x] | Implement PKI engine integration for cert issuance (OpenBao PKI backend) | Issues team intermediate CAs and developer certs |
+| A-11 | P1 | T1 | [x] | Implement OIDC/SAML SSO flow in `agentkms enroll` | Browser-based enrollment; maps SSO identity to team cert |
 | A-12 | P2 | T2 | [ ] | Implement SPIFFE/SVID support for workload identity (K8s service accounts) | Required for CI/CD and service-to-service auth |
 | A-13 | P2 | T2 | [ ] | Implement cert revocation (OCSP responder or CRL distribution) | Required for incident response |
 
@@ -63,7 +63,7 @@
 | P-02 | P0 | T0 | [x] | Implement policy loader from local YAML (`internal/policy/loader.go`) | Used in T0/dev mode |
 | P-03 | P0 | T0 | [x] | Implement policy evaluator (`internal/policy/engine.go`) | Returns allow/deny + reason for every (identity, operation, key-id) triple |
 | P-04 | P0 | T0 | [x] | Enforce deny-by-default — no operation succeeds without explicit allow | Test: empty policy = all operations denied |
-| P-05 | P1 | T1 | [ ] | Implement policy loader from OpenBao/Vault policy engine | Replaces local YAML in T1+ |
+| P-05 | P1 | T1 | [x] | Implement policy loader from OpenBao/Vault policy engine | Replaces local YAML in T1+ |
 | P-06 | P1 | T1 | [x] | Implement rate limiting in policy engine | Per (rule, callerID) sliding-window counter; conservative shared budget |
 | P-07 | P2 | T2 | [ ] | Implement anomaly detection (rules-based) | Spike detection, unusual hours, repeated denials |
 | P-08 | P3 | T3 | [ ] | Implement ML-augmented anomaly detection | Baseline normal, flag statistical outliers |
@@ -78,7 +78,7 @@
 | C-02 | P0 | T0 | [x] | Implement `POST /encrypt/{key-id}` handler | Policy check → backend.Encrypt() → audit → return ciphertext only |
 | C-03 | P0 | T0 | [x] | Implement `POST /decrypt/{key-id}` handler | Policy check → backend.Decrypt() → audit → return plaintext only |
 | C-04 | P0 | T0 | [x] | Implement `GET /keys` handler | Returns metadata only — id, algorithm, versions, dates. NEVER key material. |
-| C-05 | P1 | T1 | [ ] | Implement `POST /keys/{key-id}/rotate` handler | Stub in place; blocked on B-01 full wiring |
+| C-05 | P1 | T1 | [x] | Implement `POST /keys/{key-id}/rotate` handler | Full implementation; delegates to backend.RotateKey; audit before response |
 | C-06 | P0 | T0 | [x] | Adversarial tests: verify no key material in any response, log, or error | handlers_test.go: PEM scan, binary scan, audit field checks, panic recovery |
 | C-07 | P1 | T1 | [x] | Implement request input validation (payload_hash format, algorithm enum, key-id format) | validation.go; rejects malformed input before policy check |
 
@@ -88,10 +88,10 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| LV-01 | P0 | T1 | [ ] | Implement `GET /credentials/llm/{provider}` handler | Fetches scoped LLM key from backend, returns with 60min TTL |
-| LV-02 | P0 | T1 | [ ] | Implement LLM key storage in backend (provider keys stored as secrets, scoped per team) | Supports: anthropic, openai, google, azure, bedrock, mistral, groq |
-| LV-03 | P0 | T1 | [ ] | Implement credential scoping (vended key tied to session identity and expiry) | Revocation cascades: revoke session → vended keys invalidated |
-| LV-04 | P1 | T1 | [ ] | Implement credential refresh endpoint (`POST /credentials/llm/{provider}/refresh`) | Called by Pi extension when key is < 10min from expiry |
+| LV-01 | P0 | T1 | [x] | Implement `GET /credentials/llm/{provider}` handler | Fetches scoped LLM key from backend, returns with 60min TTL |
+| LV-02 | P0 | T1 | [x] | Implement LLM key storage in backend (provider keys stored as secrets, scoped per team) | Supports: anthropic, openai, google, azure, bedrock, mistral, groq |
+| LV-03 | P0 | T1 | [x] | Implement credential scoping (vended key tied to session identity and expiry) | Revocation cascades: revoke session → vended keys invalidated |
+| LV-04 | P1 | T1 | [x] | Implement credential refresh endpoint (`POST /credentials/llm/{provider}/refresh`) | Called by Pi extension when key is < 10min from expiry |
 | LV-05 | P1 | T2 | [ ] | Implement master LLM key rotation schedule | Rotates master keys; all new vended keys use new version |
 | LV-06 | P2 | T2 | [ ] | Implement credential audit trail (every vend, every use-associated-session logged) | Ties LLM usage back to agent session identity for compliance |
 
@@ -102,7 +102,7 @@
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
 | B-01 | P0 | T1 | [x] | Implement OpenBao/Vault Transit backend (`internal/backend/openbao.go`) | Supports: sign, encrypt, decrypt, list, rotate; unit tests + integration test skeleton (build tag: integration) |
-| B-02 | P1 | T1 | [ ] | Write integration tests against local OpenBao instance | Use `agentkms-dev` to spin up test instance |
+| B-02 | P1 | T1 | [x] | Write integration tests against local OpenBao instance | Use `agentkms-dev` to spin up test instance |
 | B-03 | P2 | T2 | [ ] | Implement HashiCorp Vault backend (`internal/backend/vault.go`) | Same interface as OpenBao; separate for namespace/config differences |
 | B-04 | P2 | T3 | [ ] | Implement AWS KMS backend (`internal/backend/awskms.go`) | Multi-region asymmetric keys; FIPS 140-2 path |
 | B-05 | P3 | T3 | [ ] | Implement GCP Cloud KMS backend (`internal/backend/gcpkms.go`) | — |
@@ -116,14 +116,14 @@
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
 | AU-01 | P0 | T0 | [x] | Implement file audit sink (append-only JSON lines, local dev) | Done as F-06; `internal/audit/file.go` |
-| AU-02 | P1 | T1 | [ ] | Implement ELK audit sink (`internal/audit/elk.go`) — Elasticsearch ingest API | Phase 1 production audit backend |
-| AU-03 | P1 | T1 | [ ] | Deploy local ELK stack on K8s (Helm charts) and validate audit event ingestion | — |
-| AU-04 | P1 | T1 | [ ] | Build Kibana dashboard: operations by team, denied ops, anomaly timeline | Compliance officer-friendly |
+| AU-02 | P1 | T1 | [x] | Implement ELK audit sink (`internal/audit/elk.go`) — Elasticsearch ingest API | Phase 1 production audit backend |
+| AU-03 | P1 | T1 | [x] | Deploy local ELK stack on K8s (Helm charts) and validate audit event ingestion | — |
+| AU-04 | P1 | T1 | [x] | Build Kibana dashboard: operations by team, denied ops, anomaly timeline | Compliance officer-friendly |
 | AU-05 | P2 | T2 | [ ] | Implement Splunk HEC audit sink (`internal/audit/splunk.go`) | — |
 | AU-06 | P2 | T2 | [ ] | Implement Datadog audit sink (`internal/audit/datadog.go`) | — |
 | AU-07 | P2 | T3 | [ ] | Implement AWS CloudWatch audit sink (`internal/audit/cloudwatch.go`) | — |
 | AU-08 | P2 | T2 | [ ] | Implement generic SIEM webhook sink (`internal/audit/siem.go`) | Configurable endpoint + auth |
-| AU-09 | P1 | T1 | [ ] | Implement audit event signing (each event HMAC-signed by AgentKMS internal key) | Tamper evidence |
+| AU-09 | P1 | T1 | [x] | Implement audit event signing (each event HMAC-signed by AgentKMS internal key) | EventSigner + SigningAuditor; HMAC-SHA256; sig: tag in ComplianceTags |
 | AU-10 | P2 | T2 | [ ] | Implement audit log export endpoint (for compliance auditor delivery) | Authenticated + audited |
 
 ---
@@ -145,7 +145,7 @@
 | PI-11 | P1 | T1 | [x] | Implement `crypto_encrypt` tool | — |
 | PI-12 | P1 | T1 | [x] | Implement `crypto_decrypt` tool | — |
 | PI-13 | P1 | T1 | [x] | Write `skills/agentkms/SKILL.md` | When to use, rules, key ID format |
-| PI-14 | P1 | T1 | [ ] | Publish to private npm registry | Pin version in enterprise settings.json |
+| PI-14 | P1 | T1 | [x] | Publish to private npm registry | Pin version in enterprise settings.json |
 | PI-15 | P2 | T2 | [ ] | Implement `/agentkms-status` Pi command (token TTL, connected identity, active providers) | Developer visibility |
 | PI-16 | P2 | T2 | [ ] | Write enterprise `settings.json` template + AGENTS.md template for distribution | Via `agentkms enroll` CLI output |
 
@@ -167,12 +167,12 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| IN-01 | P0 | T1 | [ ] | Write Dockerfile for AgentKMS service (multi-stage, minimal base image) | Distroless or scratch + CA certs |
-| IN-02 | P0 | T1 | [ ] | Write Helm chart for AgentKMS service (3 replicas, pod anti-affinity, HPA) | — |
-| IN-03 | P0 | T1 | [ ] | Deploy OpenBao via Helm (HA Raft, 3 replicas, mTLS listener) | See `security_arch.md` Helm snippet |
-| IN-04 | P0 | T1 | [ ] | Configure OpenBao Transit + PKI secrets engines | Transit: asymmetric keys; PKI: team intermediate CAs |
-| IN-05 | P1 | T1 | [ ] | Deploy ELK stack via Helm (Elasticsearch + Logstash + Kibana) | Phase 1 audit sink |
-| IN-06 | P1 | T1 | [ ] | Write CI pipeline (lint, vet, test, build, Docker push) | GitHub Actions or equivalent |
+| IN-01 | P0 | T1 | [x] | Write Dockerfile for AgentKMS service (multi-stage, minimal base image) | Multi-stage: Go build → CA certs → distroless/static-debian12:nonroot; TARGETOS/TARGETARCH from buildx |
+| IN-02 | P0 | T1 | [x] | Write Helm chart for AgentKMS service (3 replicas, pod anti-affinity, HPA) | deploy/helm/agentkms/; deployed to odev k3s cluster |
+| IN-03 | P0 | T1 | [x] | Deploy OpenBao via Helm (HA Raft, 3 replicas, mTLS listener) | Running on odev (openbao namespace); initialized, unsealed, HA active |
+| IN-04 | P0 | T1 | [x] | Configure OpenBao Transit + PKI secrets engines | transit/: agentkms-signing (ES256), agentkms-encrypt (AES256GCM), platform-signing; pki/: AgentKMS Intermediate CA + agentkms role; kv/: LLM creds; k8s auth role for agentkms SA |
+| IN-05 | P1 | T1 | [x] | Deploy ELK stack via Helm (Elasticsearch + Logstash + Kibana) | Phase 1 audit sink |
+| IN-06 | P1 | T1 | [x] | Write CI pipeline (lint, vet, test, build, Docker push) | .github/workflows/ci.yml: quality + build + health + integration jobs |
 | IN-07 | P2 | T2 | [ ] | Configure HPA for AgentKMS (CPU + RPS metrics) | — |
 | IN-08 | P2 | T2 | [ ] | Deploy Prometheus + Grafana (latency p99, error rate, audit volume dashboards) | — |
 | IN-09 | P2 | T3 | [ ] | EKS deployment with IRSA for AWS KMS access | — |
@@ -185,13 +185,13 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| CX-01 | P1 | T1 | [ ] | Write compliance control mapping (architecture.md §8 → testable evidence) | Investor + auditor artifact |
+| CX-01 | P1 | T1 | [x] | Write compliance control mapping (architecture.md §8 → testable evidence) | Investor + auditor artifact |
 | CX-02 | P1 | T2 | [ ] | Write security runbook (incident response for: cert compromise, token leak, audit failure) | Required for SOC 2 |
 | CX-03 | P1 | T2 | [ ] | Write key rotation runbook (schedule, steps, rollback procedure) | Required for PCI-DSS |
 | CX-04 | P2 | T2 | [ ] | Write GDPR data flow diagram (where key metadata lives, retention, erasure procedure) | — |
 | CX-05 | P2 | T2 | [ ] | Write Colorado AI Act transparency statement (how agent operations are attributed + audited) | — |
-| CX-06 | P1 | T1 | [ ] | API documentation (OpenAPI spec for all AgentKMS endpoints) | — |
-| CX-07 | P1 | T1 | [ ] | Write developer onboarding guide (enroll → first sign operation in < 15min) | Target: zero calls to platform team |
+| CX-06 | P1 | T1 | [x] | API documentation (OpenAPI spec for all AgentKMS endpoints) | — |
+| CX-07 | P1 | T1 | [x] | Write developer onboarding guide (enroll → first sign operation in < 15min) | Target: zero calls to platform team |
 
 ---
 

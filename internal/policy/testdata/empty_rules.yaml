@@ -1,0 +1,4 @@
+version: "1"
+# No rules. Every operation is denied by default.
+# This is a valid policy — it enforces deny-by-default for all principals.
+rules: []

@@ -1,0 +1,80 @@
+# =============================================================================
+# AgentKMS Helm Chart — Default Values
+# =============================================================================
+
+image:
+  repository: 10.2.10.152:30500/agentkms/server
+  tag: latest
+  pullPolicy: Always
+
+replicaCount: 1   # T1 POC — scale to 3 for T2 production
+
+service:
+  type: ClusterIP
+  port: 8200
+
+# Resource limits — sized for T1 POC single node
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# ── OpenBao / Vault backend ───────────────────────────────────────────────────
+openbao:
+  # Address of the OpenBao service inside the cluster.
+  address: "http://openbao.openbao.svc.cluster.local:8200"
+  # Mount path for the Transit secrets engine.
+  transitMount: "transit"
+  # Mount path for the KV secrets engine (v2).
+  kvMount: "kv"
+  # Mount path for the PKI secrets engine.
+  pkiMount: "pki"
+
+# ── Authentication via Vault Agent sidecar ────────────────────────────────────
+vaultAgent:
+  enabled: true
+  # Kubernetes auth role — must match the role created in OpenBao.
+  role: agentkms
+  # Auth path for Kubernetes authentication.
+  authPath: auth/kubernetes
+
+# ── Service configuration ─────────────────────────────────────────────────────
+config:
+  # Environment tier for audit events.
+  environment: "dev"
+  # Log level: debug, info, warn, error.
+  logLevel: "info"
+  # mTLS: disable for initial T1 POC (enable once cert-manager integration done)
+  mtls:
+    enabled: false
+
+# ── RBAC ──────────────────────────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: agentkms
+
+rbac:
+  create: true
+
+# ── Pod security ──────────────────────────────────────────────────────────────
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+# ── Affinity / topology (T2: enable pod anti-affinity) ───────────────────────
+affinity: {}
+tolerations: []
+nodeSelector: {}

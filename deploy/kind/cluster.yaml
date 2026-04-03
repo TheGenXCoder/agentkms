@@ -1,0 +1,36 @@
+# kind cluster configuration for AgentKMS T1 POC
+#
+# Single-node cluster (3 control-plane + 2 worker) suitable for local POC.
+# For T2 production, use a proper multi-node HA cluster with AZ spread.
+#
+# Usage:
+#   kind create cluster --name agentkms --config deploy/kind/cluster.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: agentkms
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      # AgentKMS service (mTLS)
+      - containerPort: 30200
+        hostPort: 8200
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+      # OpenBao UI (dev access only — not exposed in production)
+      - containerPort: 30820
+        hostPort: 8820
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+      # Kibana (audit dashboard)
+      - containerPort: 30561
+        hostPort: 5601
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+  - role: worker
+  - role: worker

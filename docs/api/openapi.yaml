@@ -1,0 +1,609 @@
+openapi: "3.1.0"
+info:
+  title: AgentKMS API
+  version: "0.1.0"
+  description: |
+    AgentKMS — Enterprise Cryptographic Proxy Service.
+
+    **Security model:** All endpoints require a valid session token
+    (obtained via `POST /auth/session`) presented as a Bearer token
+    in the `Authorization` header. `/auth/session` itself requires
+    mutual TLS (mTLS) with a certificate issued by the team Intermediate CA.
+
+    **Key invariant:** No endpoint ever returns private key material,
+    symmetric key bytes, or LLM provider API keys in any field other
+    than the single `api_key` field of `GET /credentials/llm/{provider}`.
+
+  contact:
+    name: AgentKMS Team
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://agentkms.internal:8200
+    description: Production (mTLS required)
+  - url: http://127.0.0.1:8200
+    description: Local dev (agentkms-dev server)
+
+security:
+  - BearerToken: []
+
+components:
+  securitySchemes:
+    BearerToken:
+      type: http
+      scheme: bearer
+      description: Session token issued by POST /auth/session
+
+  schemas:
+    Error:
+      type: object
+      required: [error, code]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message (safe to display; no key material)
+        code:
+          type: string
+          enum:
+            - invalid_request
+            - key_not_found
+            - policy_denied
+            - algorithm_mismatch
+            - operation_not_supported
+            - internal_error
+            - not_implemented
+
+    SessionResponse:
+      type: object
+      required: [token, token_type, expires_in, session_id]
+      properties:
+        token:
+          type: string
+          description: Bearer token for subsequent requests. Treat as sensitive.
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          description: Seconds until token expires (always 900 = 15 minutes).
+        session_id:
+          type: string
+          description: JTI of this token; used as AgentSession in audit events.
+
+    KeyMeta:
+      type: object
+      description: Key metadata. Never contains key material.
+      required: [key_id, algorithm, version, created_at, team_id]
+      properties:
+        key_id:
+          type: string
+          example: "payments/signing-key"
+        algorithm:
+          type: string
+          enum: [ES256, RS256, EdDSA, AES256GCM]
+        version:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        rotated_at:
+          type: string
+          format: date-time
+          nullable: true
+        team_id:
+          type: string
+
+    SignRequest:
+      type: object
+      required: [payload_hash, algorithm]
+      properties:
+        payload_hash:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+          description: |
+            SHA-256 of the payload to sign, formatted as "sha256:<64 hex chars>".
+            NEVER send the raw payload — only its hash.
+          example: "sha256:a3f4b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3"
+        algorithm:
+          type: string
+          enum: [ES256, RS256, EdDSA]
+
+    SignResponse:
+      type: object
+      required: [signature, key_version]
+      properties:
+        signature:
+          type: string
+          format: byte
+          description: Base64-encoded signature bytes.
+        key_version:
+          type: integer
+          description: Key version that produced this signature. Record alongside the signature.
+
+    EncryptRequest:
+      type: object
+      required: [plaintext]
+      properties:
+        plaintext:
+          type: string
+          format: byte
+          description: Base64-encoded plaintext to encrypt.
+
+    EncryptResponse:
+      type: object
+      required: [ciphertext, key_version]
+      properties:
+        ciphertext:
+          type: string
+          format: byte
+          description: Base64-encoded ciphertext. Opaque; pass unmodified to /decrypt.
+        key_version:
+          type: integer
+
+    DecryptRequest:
+      type: object
+      required: [ciphertext]
+      properties:
+        ciphertext:
+          type: string
+          format: byte
+          description: Base64-encoded ciphertext from /encrypt.
+
+    DecryptResponse:
+      type: object
+      required: [plaintext]
+      properties:
+        plaintext:
+          type: string
+          format: byte
+          description: Base64-encoded recovered plaintext.
+
+    RotateKeyResponse:
+      type: object
+      required: [key_id, algorithm, version, created_at, team_id]
+      properties:
+        key_id:
+          type: string
+        algorithm:
+          type: string
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        rotated_at:
+          type: string
+          format: date-time
+        team_id:
+          type: string
+
+    CredentialResponse:
+      type: object
+      required: [provider, api_key, expires_at, ttl_seconds]
+      properties:
+        provider:
+          type: string
+          example: "anthropic"
+        api_key:
+          type: string
+          description: |
+            LLM provider API key. SECURITY: treat as sensitive material.
+            Hold in memory only; never log, store to disk, or include in
+            any further audit event. Expires at expires_at.
+        expires_at:
+          type: string
+          format: date-time
+        ttl_seconds:
+          type: integer
+          description: Seconds until expiry (always 3600 = 60 minutes).
+
+paths:
+  # ── Authentication ──────────────────────────────────────────────────────────
+
+  /auth/session:
+    post:
+      summary: Exchange mTLS certificate for a session token
+      description: |
+        No request body. Authentication is via mTLS: the client certificate
+        must be signed by a trusted team Intermediate CA. Returns a session
+        token with 15-minute TTL.
+      security: []  # mTLS only — no Bearer token
+      tags: [auth]
+      responses:
+        "200":
+          description: Session token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "401":
+          description: Client certificate missing or invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/refresh:
+    post:
+      summary: Refresh an expiring session token
+      description: |
+        Issues a new token with a fresh 15-minute TTL. Revokes the old token.
+        The caller must switch to the new token immediately.
+      tags: [auth]
+      responses:
+        "200":
+          description: New session token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "401":
+          description: Token invalid or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/revoke:
+    post:
+      summary: Revoke the current session token
+      description: |
+        Immediately adds the token to the server-side revocation blocklist.
+        Always returns 204 regardless of success to prevent oracle attacks.
+      tags: [auth]
+      responses:
+        "204":
+          description: Token revoked (or already revoked)
+
+  # ── Cryptographic operations ────────────────────────────────────────────────
+
+  /sign/{key_id}:
+    post:
+      summary: Sign a payload hash
+      description: |
+        Signs the payload hash with the specified key. Returns only the
+        signature and key version — never the private key.
+
+        `key_id` is a path (e.g. `payments/signing-key`). URL-encode any
+        special characters.
+      tags: [crypto]
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "agentkms-signing"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignRequest"
+      responses:
+        "200":
+          description: Signature
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignResponse"
+        "400":
+          description: Invalid input (malformed hash, unknown algorithm)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Operation denied by policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Key not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /encrypt/{key_id}:
+    post:
+      summary: Encrypt plaintext
+      description: |
+        Encrypts plaintext with the specified key. The ciphertext format is
+        opaque; pass it unmodified to `/decrypt/{key_id}`.
+
+        The encryption algorithm is determined by the key's configuration,
+        not the caller.
+      tags: [crypto]
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EncryptRequest"
+      responses:
+        "200":
+          description: Ciphertext
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EncryptResponse"
+        "400":
+          description: Invalid input or wrong key type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Policy denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /decrypt/{key_id}:
+    post:
+      summary: Decrypt ciphertext
+      description: |
+        Decrypts ciphertext produced by `/encrypt/{key_id}`. The key version
+        is embedded in the ciphertext; historical key versions are retained
+        after rotation to support decryption of old data.
+      tags: [crypto]
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecryptRequest"
+      responses:
+        "200":
+          description: Plaintext
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecryptResponse"
+        "400":
+          description: Malformed ciphertext or wrong key type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Policy denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Key management ───────────────────────────────────────────────────────────
+
+  /keys:
+    get:
+      summary: List key metadata
+      description: |
+        Returns metadata for keys visible to the caller. Never returns key material.
+
+        Optional query parameters:
+        - `prefix`: restrict to keys whose ID starts with this string
+        - `team_id`: restrict to keys owned by this team
+      tags: [keys]
+      parameters:
+        - name: prefix
+          in: query
+          schema:
+            type: string
+          example: "payments/"
+        - name: team_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Key metadata list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/KeyMeta"
+
+  /rotate/{key_id}:
+    post:
+      summary: Rotate a key
+      description: |
+        Creates a new key version, making it active for all subsequent Sign
+        and Encrypt operations. Historical versions are retained so that
+        data encrypted before rotation remains decryptable.
+      tags: [keys]
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated key metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotateKeyResponse"
+        "403":
+          description: Policy denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Key not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── LLM Credential vending ─────────────────────────────────────────────────
+
+  /credentials/llm:
+    get:
+      summary: List supported LLM providers
+      description: Returns the list of providers for which credentials can be vended.
+      tags: [credentials]
+      responses:
+        "200":
+          description: Provider list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  providers:
+                    type: array
+                    items:
+                      type: string
+                    example: ["anthropic", "openai", "google", "azure", "bedrock", "mistral", "groq"]
+
+  /credentials/llm/{provider}:
+    get:
+      summary: Vend a short-lived LLM credential
+      description: |
+        Returns a short-lived (60-minute) LLM API key for the specified provider.
+        The key is stored in OpenBao KV; AgentKMS retrieves it and returns it
+        with a TTL. The Pi extension stores the key in-memory only.
+
+        **Security:** The `api_key` field is the only place in the entire
+        AgentKMS API surface where a live credential appears. It must be
+        treated as sensitive material: never logged, never stored, never
+        included in any further audit event.
+      tags: [credentials]
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [anthropic, openai, google, azure, bedrock, mistral, groq]
+      responses:
+        "200":
+          description: LLM credential with TTL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialResponse"
+        "400":
+          description: Unsupported provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Policy denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No credential configured for provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Credential vending not configured on this server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /credentials/llm/{provider}/refresh:
+    post:
+      summary: Refresh an expiring LLM credential
+      description: |
+        Functionally equivalent to GET /credentials/llm/{provider}.
+        Called by the Pi extension when the current credential is within
+        10 minutes of expiry.
+      tags: [credentials]
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Fresh LLM credential
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialResponse"
+        "404":
+          description: No credential configured for provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Health ─────────────────────────────────────────────────────────────────
+
+  /healthz:
+    get:
+      summary: Liveness probe
+      security: []
+      tags: [health]
+      responses:
+        "200":
+          description: Server is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+
+  /readyz:
+    get:
+      summary: Readiness probe
+      security: []
+      tags: [health]
+      responses:
+        "200":
+          description: Server is ready to serve traffic
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ready]
+
+tags:
+  - name: auth
+    description: Session token lifecycle (mTLS bootstrap, refresh, revoke)
+  - name: crypto
+    description: Cryptographic operations (sign, encrypt, decrypt)
+  - name: keys
+    description: Key metadata and rotation
+  - name: credentials
+    description: LLM provider credential vending
+  - name: health
+    description: Kubernetes liveness and readiness probes

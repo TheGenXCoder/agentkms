@@ -146,8 +146,8 @@
 | PI-12 | P1 | T1 | [x] | Implement `crypto_decrypt` tool | — |
 | PI-13 | P1 | T1 | [x] | Write `skills/agentkms/SKILL.md` | When to use, rules, key ID format |
 | PI-14 | P1 | T1 | [x] | Publish to private npm registry | Pin version in enterprise settings.json |
-| PI-15 | P2 | T2 | [ ] | Implement `/agentkms-status` Pi command (token TTL, connected identity, active providers) | Developer visibility |
-| PI-16 | P2 | T2 | [ ] | Write enterprise `settings.json` template + AGENTS.md template for distribution | Via `agentkms enroll` CLI output |
+| PI-15 | P2 | T2 | [x] | Implement `/agentkms-status` Pi command (token TTL, connected identity, active providers) | Developer visibility |
+| PI-16 | P2 | T2 | [x] | Write enterprise `settings.json` template + AGENTS.md template for distribution | Via `agentkms enroll` CLI output |
 
 ---
 
@@ -188,8 +188,8 @@
 | CX-01 | P1 | T1 | [x] | Write compliance control mapping (architecture.md §8 → testable evidence) | Investor + auditor artifact |
 | CX-02 | P1 | T2 | [x] | Write security runbook (incident response for: cert compromise, token leak, audit failure) | Required for SOC 2 |
 | CX-03 | P1 | T2 | [x] | Write key rotation runbook (schedule, steps, rollback procedure) | Required for PCI-DSS |
-| CX-04 | P2 | T2 | [ ] | Write GDPR data flow diagram (where key metadata lives, retention, erasure procedure) | — |
-| CX-05 | P2 | T2 | [ ] | Write Colorado AI Act transparency statement (how agent operations are attributed + audited) | — |
+| CX-04 | P2 | T2 | [x] | Write GDPR data flow diagram (where key metadata lives, retention, erasure procedure) | — |
+| CX-05 | P2 | T2 | [x] | Write Colorado AI Act transparency statement (how agent operations are attributed + audited) | — |
 | CX-06 | P1 | T1 | [x] | API documentation (OpenAPI spec for all AgentKMS endpoints) | — |
 | CX-07 | P1 | T1 | [x] | Write developer onboarding guide (enroll → first sign operation in < 15min) | Target: zero calls to platform team |
 

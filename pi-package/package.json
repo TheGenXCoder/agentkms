@@ -1,0 +1,22 @@
+{
+  "name": "@org/agentkms",
+  "version": "0.1.0",
+  "description": "AgentKMS Pi extension — enterprise cryptographic proxy client. Zero crypto logic: all crypto happens in the AgentKMS Go service. This package handles mTLS auth, LLM credential injection, and crypto tool registration.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "UNLICENSED",
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
+}

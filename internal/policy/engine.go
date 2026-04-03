@@ -41,10 +41,12 @@ import (
 	"github.com/agentkms/agentkms/pkg/identity"
 )
 
-// EngineI is the interface that API handlers use to evaluate policy.
+// EngineI is the interface that API handlers use to evaluate and manage policy.
 // It accepts a context and string operation, returning (Decision, error).
 type EngineI interface {
 	Evaluate(ctx context.Context, id identity.Identity, operation string, keyID string) (Decision, error)
+	GetPolicy() Policy
+	Reload(p Policy) error
 }
 
 // DenyAllEngine denies every operation. Safe default before policy is loaded.
@@ -54,12 +56,18 @@ func (DenyAllEngine) Evaluate(_ context.Context, _ identity.Identity, _, _ strin
 	return Decision{Allow: false, DenyReason: "policy: no policy configured — all operations denied"}, nil
 }
 
+func (DenyAllEngine) GetPolicy() Policy { return Policy{Version: "1"} }
+func (DenyAllEngine) Reload(_ Policy) error { return fmt.Errorf("policy: DenyAllEngine does not support Reload") }
+
 // AllowAllEngine permits every operation. For tests only — never production.
 type AllowAllEngine struct{}
 
 func (AllowAllEngine) Evaluate(_ context.Context, _ identity.Identity, _, _ string) (Decision, error) {
 	return Decision{Allow: true}, nil
 }
+
+func (AllowAllEngine) GetPolicy() Policy { return Policy{Version: "1"} }
+func (AllowAllEngine) Reload(_ Policy) error { return fmt.Errorf("policy: AllowAllEngine does not support Reload") }
 
 // AsEngineI wraps *Engine as an EngineI for injection into api.NewServer.
 func AsEngineI(e *Engine) EngineI { return &engineIAdapter{e: e} }
@@ -71,6 +79,14 @@ func (a *engineIAdapter) Evaluate(ctx context.Context, id identity.Identity, ope
 		return Decision{}, err
 	}
 	return a.e.Evaluate(id, Operation(operation), keyID), nil
+}
+
+func (a *engineIAdapter) GetPolicy() Policy {
+	return a.e.GetPolicy()
+}
+
+func (a *engineIAdapter) Reload(p Policy) error {
+	return a.e.Reload(p)
 }
 
 // denyByDefaultReason is the DenyReason returned when no rule matched.
@@ -207,6 +223,13 @@ func New(p Policy) *Engine {
 		rateLimits: newRateLimitState(),
 		anomalies:  newAnomalyState(),
 	}
+}
+
+// GetPolicy returns a copy of the engine's current policy.
+func (e *Engine) GetPolicy() Policy {
+	e.policyMu.RLock()
+	defer e.policyMu.RUnlock()
+	return copyPolicy(e.policy)
 }
 
 // Reload atomically replaces the engine's policy with p.

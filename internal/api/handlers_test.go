@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -18,6 +20,7 @@ import (
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/policy"
 	"github.com/agentkms/agentkms/pkg/identity"
+	"github.com/agentkms/agentkms/pkg/tlsutil"
 )
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
@@ -683,5 +686,477 @@ func TestAuditEvent_DeniedOperation_RecordsDenyReason(t *testing.T) {
 	}
 	if ev.DenyReason == "" {
 		t.Error("deny_reason must be non-empty for denied operations")
+	}
+}
+
+// ── Auth: /auth/session happy path ────────────────────────────────────────────
+
+// makeFakeTLSState builds a tls.ConnectionState with a real verified client
+// certificate.  This lets us exercise handleAuthSession with a valid cert
+// without needing a real TCP connection.
+func makeFakeTLSState(t *testing.T, callerID, teamID, role string) *tls.ConnectionState {
+	t.Helper()
+	caCertPEM, caKeyPEM, err := tlsutil.GenerateDevCA()
+	if err != nil {
+		t.Fatalf("GenerateDevCA: %v", err)
+	}
+	clientCertPEM, _, err := tlsutil.IssueClientCert(
+		caCertPEM, caKeyPEM,
+		callerID, teamID, role,
+		"spiffe://agentkms.local/dev/developer/"+callerID,
+	)
+	if err != nil {
+		t.Fatalf("IssueClientCert: %v", err)
+	}
+	cert, err := tlsutil.DecodeCertPEM(clientCertPEM)
+	if err != nil {
+		t.Fatalf("DecodeCertPEM: %v", err)
+	}
+	return &tls.ConnectionState{
+		// VerifiedChains is what auth.IdentityFromTLS reads.
+		// PeerCertificates deliberately differs to confirm we read VerifiedChains.
+		VerifiedChains:  [][]*x509.Certificate{{cert}},
+		PeerCertificates: []*x509.Certificate{},
+	}
+}
+
+func TestHandleAuthSession_ValidCert_ReturnsToken(t *testing.T) {
+	srv, _, _ := testServer(t)
+	tlsState := makeFakeTLSState(t, "alice@dev", "dev-team", "developer")
+
+	req := httptest.NewRequest("POST", "/auth/session", nil)
+	req.TLS = tlsState
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp sessionResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.Token == "" {
+		t.Fatal("token must not be empty")
+	}
+	if resp.ExpiresAt == "" {
+		t.Fatal("expires_at must not be empty")
+	}
+	if resp.SessionID == "" {
+		t.Fatal("session_id must not be empty")
+	}
+}
+
+func TestHandleAuthSession_AuditEvent_RecordsCallerAndOutcome(t *testing.T) {
+	b := backend.NewDevBackend()
+	ts, _ := auth.NewTokenStore()
+	pf := &policy.PolicyFile{Version: 1, Rules: []policy.Rule{}}
+	cap := &captureAuditor{}
+	srv := NewServer(Config{
+		Backend:     b,
+		Auditor:     cap,
+		Tokens:      ts,
+		Policy:      policy.NewEngine(pf),
+		Environment: "dev",
+	})
+
+	tlsState := makeFakeTLSState(t, "bob@dev", "dev-team", "developer")
+	req := httptest.NewRequest("POST", "/auth/session", nil)
+	req.TLS = tlsState
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(cap.events) == 0 {
+		t.Fatal("no audit events logged")
+	}
+	ev := cap.events[0]
+	if ev.Operation != audit.OperationAuth {
+		t.Errorf("operation: want %q, got %q", audit.OperationAuth, ev.Operation)
+	}
+	if ev.CallerID != "bob@dev" {
+		t.Errorf("caller_id: want %q, got %q", "bob@dev", ev.CallerID)
+	}
+	if ev.Outcome != audit.OutcomeSuccess {
+		t.Errorf("outcome: want %q, got %q", audit.OutcomeSuccess, ev.Outcome)
+	}
+}
+
+// ── Auth: /auth/refresh ───────────────────────────────────────────────────────
+
+func TestHandleAuthRefresh_HappyPath(t *testing.T) {
+	srv, ts, _ := testServer(t)
+	original := testToken(t, ts)
+
+	w := doRequest(srv, "POST", "/auth/refresh", "", original)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp refreshResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.Token == "" {
+		t.Fatal("refreshed token must not be empty")
+	}
+	if resp.Token == original {
+		t.Fatal("refreshed token must differ from the original")
+	}
+	if resp.ExpiresAt == "" {
+		t.Fatal("expires_at must not be empty")
+	}
+}
+
+func TestHandleAuthRefresh_RefreshedTokenIsValid(t *testing.T) {
+	srv, ts, _ := testServer(t)
+	original := testToken(t, ts)
+
+	wRefresh := doRequest(srv, "POST", "/auth/refresh", "", original)
+	if wRefresh.Code != http.StatusOK {
+		t.Fatalf("refresh: want 200, got %d", wRefresh.Code)
+	}
+	var resp refreshResponse
+	json.Unmarshal(wRefresh.Body.Bytes(), &resp) //nolint:errcheck
+
+	// Use the new token to call a protected endpoint.
+	wKeys := doRequest(srv, "GET", "/keys", "", resp.Token)
+	if wKeys.Code != http.StatusOK {
+		t.Fatalf("refreshed token should be valid: want 200, got %d: %s",
+			wKeys.Code, wKeys.Body.String())
+	}
+}
+
+func TestHandleAuthRefresh_MissingToken_401(t *testing.T) {
+	srv, _, _ := testServer(t)
+	w := doRequest(srv, "POST", "/auth/refresh", "", "")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", w.Code)
+	}
+}
+
+// ── Auth: /auth/revoke ────────────────────────────────────────────────────────
+
+func TestHandleAuthRevoke_HappyPath_Returns204(t *testing.T) {
+	srv, ts, _ := testServer(t)
+	token := testToken(t, ts)
+
+	w := doRequest(srv, "POST", "/auth/revoke", "", token)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("want 204, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleAuthRevoke_RevokedTokenRejected(t *testing.T) {
+	srv, ts, _ := testServer(t)
+	token := testToken(t, ts)
+
+	// Revoke the token.
+	wRevoke := doRequest(srv, "POST", "/auth/revoke", "", token)
+	if wRevoke.Code != http.StatusNoContent {
+		t.Fatalf("revoke: want 204, got %d", wRevoke.Code)
+	}
+
+	// Token must now be rejected on protected endpoints.
+	wKeys := doRequest(srv, "GET", "/keys", "", token)
+	if wKeys.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked token: want 401, got %d: %s", wKeys.Code, wKeys.Body.String())
+	}
+}
+
+func TestHandleAuthRevoke_AuditEvent_RecordsSuccess(t *testing.T) {
+	b := backend.NewDevBackend()
+	ts, _ := auth.NewTokenStore()
+	pf := &policy.PolicyFile{Version: 1, Rules: []policy.Rule{}}
+	cap := &captureAuditor{}
+	srv := NewServer(Config{
+		Backend:     b,
+		Auditor:     cap,
+		Tokens:      ts,
+		Policy:      policy.NewEngine(pf),
+		Environment: "dev",
+	})
+
+	id := &identity.Identity{CallerID: "bert@dev", TeamID: "dev-team"}
+	tokenStr, _, _ := ts.Issue(id)
+
+	w := doRequest(srv, "POST", "/auth/revoke", "", tokenStr)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("want 204, got %d", w.Code)
+	}
+	// Find the revoke audit event (may be preceded by other events).
+	var revokeEv *audit.AuditEvent
+	for i := range cap.events {
+		if cap.events[i].Operation == audit.OperationRevoke {
+			revokeEv = &cap.events[i]
+			break
+		}
+	}
+	if revokeEv == nil {
+		t.Fatal("no revoke audit event found")
+	}
+	if revokeEv.Outcome != audit.OutcomeSuccess {
+		t.Errorf("revoke audit: outcome want %q, got %q", audit.OutcomeSuccess, revokeEv.Outcome)
+	}
+	if revokeEv.CallerID != "bert@dev" {
+		t.Errorf("revoke audit: caller_id want %q, got %q", "bert@dev", revokeEv.CallerID)
+	}
+}
+
+// ── POST /keys/rotate/{key-id...} ────────────────────────────────────────────
+
+func TestHandleRotateKey_HappyPath(t *testing.T) {
+	srv, ts, _ := testServer(t)
+	token := testToken(t, ts)
+
+	w := doRequest(srv, "POST", "/keys/rotate/test/signing-key", "", token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("rotate_key: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp keyMetaResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.KeyID != "test/signing-key" {
+		t.Errorf("key_id: want %q, got %q", "test/signing-key", resp.KeyID)
+	}
+	if resp.Version < 2 {
+		t.Errorf("version must be >= 2 after rotation, got %d", resp.Version)
+	}
+}
+
+func TestHandleRotateKey_KeyNotFound_404(t *testing.T) {
+	srv, ts, _ := testServer(t)
+	token := testToken(t, ts)
+
+	w := doRequest(srv, "POST", "/keys/rotate/no/such/key", "", token)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("rotate_key missing key: want 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleRotateKey_PolicyDeny_403(t *testing.T) {
+	b := backend.NewDevBackend()
+	_ = b.CreateKey("secure/key", backend.AlgorithmES256, "dev-team")
+	ts, _ := auth.NewTokenStore()
+	pf := &policy.PolicyFile{Version: 1, Rules: []policy.Rule{}} // deny all
+	srv := NewServer(Config{
+		Backend:     b,
+		Auditor:     &nopAuditor{},
+		Tokens:      ts,
+		Policy:      policy.NewEngine(pf),
+		Environment: "dev",
+	})
+	id := &identity.Identity{CallerID: "bert@dev", TeamID: "dev-team"}
+	tokenStr, _, _ := ts.Issue(id)
+
+	w := doRequest(srv, "POST", "/keys/rotate/secure/key", "", tokenStr)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("rotate_key policy deny: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleRotateKey_AuditEvent_RecordsNewVersion(t *testing.T) {
+	b := backend.NewDevBackend()
+	_ = b.CreateKey("audit/rotate-key", backend.AlgorithmES256, "dev-team")
+	ts, _ := auth.NewTokenStore()
+	pf := &policy.PolicyFile{
+		Version: 1,
+		Rules: []policy.Rule{{
+			ID:          "allow-all",
+			Identities:  []string{"*"},
+			Teams:       []string{"*"},
+			Operations:  []string{"*"},
+			KeyPrefixes: []string{""},
+			Effect:      policy.EffectAllow,
+		}},
+	}
+	cap := &captureAuditor{}
+	srv := NewServer(Config{
+		Backend:     b,
+		Auditor:     cap,
+		Tokens:      ts,
+		Policy:      policy.NewEngine(pf),
+		Environment: "dev",
+	})
+	id := &identity.Identity{CallerID: "bert@dev", TeamID: "dev-team"}
+	tokenStr, _, _ := ts.Issue(id)
+
+	w := doRequest(srv, "POST", "/keys/rotate/audit/rotate-key", "", tokenStr)
+	if w.Code != http.StatusOK {
+		t.Fatalf("rotate_key: %d %s", w.Code, w.Body.String())
+	}
+	var rotateEv *audit.AuditEvent
+	for i := range cap.events {
+		if cap.events[i].Operation == audit.OperationRotateKey {
+			rotateEv = &cap.events[i]
+			break
+		}
+	}
+	if rotateEv == nil {
+		t.Fatal("no rotate_key audit event")
+	}
+	if rotateEv.Outcome != audit.OutcomeSuccess {
+		t.Errorf("outcome: want success, got %q", rotateEv.Outcome)
+	}
+	if rotateEv.KeyVersion < 2 {
+		t.Errorf("audit key_version must be >= 2 after rotation, got %d", rotateEv.KeyVersion)
+	}
+}
+
+// ── POST /decrypt adversarial cases ──────────────────────────────────────────
+
+func TestHandleDecrypt_PolicyDeny_403(t *testing.T) {
+	b := backend.NewDevBackend()
+	_ = b.CreateKey("secret/enc-key", backend.AlgorithmAES256GCM, "dev-team")
+	ts, _ := auth.NewTokenStore()
+	pf := &policy.PolicyFile{Version: 1, Rules: []policy.Rule{}} // deny all
+	srv := NewServer(Config{
+		Backend:     b,
+		Auditor:     &nopAuditor{},
+		Tokens:      ts,
+		Policy:      policy.NewEngine(pf),
+		Environment: "dev",
+	})
+	id := &identity.Identity{CallerID: "bert@dev", TeamID: "dev-team"}
+	tokenStr, _, _ := ts.Issue(id)
+
+	body := `{"ciphertext":"AAAA"}`
+	w := doRequest(srv, "POST", "/decrypt/secret/enc-key", body, tokenStr)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("decrypt policy deny: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleDecrypt_EmptyCiphertext_400(t *testing.T) {
+	srv, ts, _ := testServer(t)
+	token := testToken(t, ts)
+
+	body := `{"ciphertext":""}`
+	w := doRequest(srv, "POST", "/decrypt/test/enc-key", body, token)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("empty ciphertext: want 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleDecrypt_InvalidBase64_400(t *testing.T) {
+	srv, ts, _ := testServer(t)
+	token := testToken(t, ts)
+
+	body := `{"ciphertext":"not-valid-base64!!!"}`
+	w := doRequest(srv, "POST", "/decrypt/test/enc-key", body, token)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid base64: want 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleDecrypt_KeyNotFound_404(t *testing.T) {
+	srv, ts, _ := testServer(t)
+	token := testToken(t, ts)
+
+	// The dev backend checks ciphertext length (min 32 bytes) before the key
+	// lookup, so we need a plausible-sized blob to exercise the key-not-found
+	// path.  32 zero bytes satisfies the length check.
+	ciphertext := make([]byte, 32)
+	body := fmt.Sprintf(`{"ciphertext":%q}`, base64.StdEncoding.EncodeToString(ciphertext))
+	w := doRequest(srv, "POST", "/decrypt/no/such/key", body, token)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("missing key: want 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAdversarial_DecryptResponse_NoPlaintextInAuditEvent(t *testing.T) {
+	// Verify that the plaintext never appears in the audit event —
+	// only the ciphertext hash is recorded.
+	b := backend.NewDevBackend()
+	_ = b.CreateKey("audit/enc2", backend.AlgorithmAES256GCM, "dev-team")
+	ts, _ := auth.NewTokenStore()
+	pf := &policy.PolicyFile{
+		Version: 1,
+		Rules: []policy.Rule{{
+			ID:          "allow-all",
+			Identities:  []string{"*"},
+			Teams:       []string{"*"},
+			Operations:  []string{"*"},
+			KeyPrefixes: []string{""},
+			Effect:      policy.EffectAllow,
+		}},
+	}
+	cap := &captureAuditor{}
+	srv := NewServer(Config{
+		Backend:     b,
+		Auditor:     cap,
+		Tokens:      ts,
+		Policy:      policy.NewEngine(pf),
+		Environment: "dev",
+	})
+
+	id := &identity.Identity{CallerID: "bert@dev", TeamID: "dev-team"}
+	tokenStr, _, _ := ts.Issue(id)
+
+	// First encrypt something.
+	sensitive := []byte("SUPER_SECRET_DO_NOT_LOG")
+	encBody := fmt.Sprintf(`{"plaintext":%q}`, base64.StdEncoding.EncodeToString(sensitive))
+	wEnc := doRequest(srv, "POST", "/encrypt/audit/enc2", encBody, tokenStr)
+	if wEnc.Code != http.StatusOK {
+		t.Fatalf("encrypt: %d %s", wEnc.Code, wEnc.Body.String())
+	}
+	var encResp encryptResponse
+	json.Unmarshal(wEnc.Body.Bytes(), &encResp) //nolint:errcheck
+
+	// Reset captured events to isolate the decrypt audit event.
+	cap.events = nil
+
+	// Now decrypt.
+	decBody := fmt.Sprintf(`{"ciphertext":%q}`, encResp.Ciphertext)
+	wDec := doRequest(srv, "POST", "/decrypt/audit/enc2", decBody, tokenStr)
+	if wDec.Code != http.StatusOK {
+		t.Fatalf("decrypt: %d %s", wDec.Code, wDec.Body.String())
+	}
+
+	if len(cap.events) == 0 {
+		t.Fatal("no audit events for decrypt")
+	}
+	ev := cap.events[0]
+	evJSON, _ := json.Marshal(ev)
+
+	// ADVERSARIAL: plaintext must not appear in the audit event.
+	if bytes.Contains(evJSON, sensitive) {
+		t.Fatal("ADVERSARIAL: decrypt audit event contains plaintext")
+	}
+	// PayloadHash must use sha256: prefix (records ciphertext hash, not plaintext).
+	if !strings.HasPrefix(ev.PayloadHash, "sha256:") {
+		t.Errorf("decrypt audit PayloadHash must start with sha256:, got %q", ev.PayloadHash)
+	}
+}
+
+// ── Token connection binding at API layer ─────────────────────────────────────
+
+// TestAdversarial_RequireToken_WrongMTLSCallerID verifies that the middleware
+// rejects a token presented on a different mTLS identity's connection.
+// This is the connection-binding property: a token issued to alice cannot be
+// used on bob's mTLS connection.
+func TestAdversarial_RequireToken_WrongMTLSCallerID(t *testing.T) {
+	srv, ts, _ := testServer(t)
+
+	// Issue token for alice.
+	alice := &identity.Identity{CallerID: "alice@dev", TeamID: "dev-team"}
+	aliceToken, _, err := ts.Issue(alice)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	// Build a request that simulates bob's mTLS connection.
+	bobTLS := makeFakeTLSState(t, "bob@dev", "dev-team", "developer")
+	req := httptest.NewRequest("GET", "/keys", nil)
+	req.Header.Set("Authorization", "Bearer "+aliceToken)
+	req.TLS = bobTLS
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	// alice's token must be rejected on bob's connection.
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("cross-identity token replay: want 401, got %d: %s", w.Code, w.Body.String())
 	}
 }

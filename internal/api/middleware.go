@@ -5,9 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/agentkms/agentkms/internal/audit"
 	"github.com/agentkms/agentkms/internal/auth"
-	"github.com/agentkms/agentkms/pkg/identity"
 )
 
 // contextKey is an unexported type for context keys in this package.
@@ -25,43 +23,6 @@ const (
 func tokenFromContext(ctx context.Context) *auth.Token {
 	tok, _ := ctx.Value(contextKeyToken).(*auth.Token)
 	return tok
-}
-
-// identityFromContext returns the Identity stored in ctx by requireToken.
-// Returns nil if no identity is present.
-func identityFromContext(ctx context.Context) *identity.Identity {
-	id, _ := ctx.Value(contextKeyIdentity).(*identity.Identity)
-	return id
-}
-
-// requireMTLS is middleware that validates the mTLS connection without
-// requiring a token. It ensures the client has presented a valid certificate
-// that chains to the server's trusted CA, but doesn't check for a token.
-//
-// This is useful for endpoints like health checks that should require mTLS
-// but don't need a token (supporting infrastructure monitoring).
-//
-// Returns 401 Unauthorized if the request doesn't have a valid mTLS connection.
-func (s *Server) requireMTLS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Get mTLS caller identity from the connection
-		mtlsCallerID := auth.MTLSCallerID(r.TLS)
-		if mtlsCallerID == "" {
-			// No valid mTLS client certificate — log the denial and reject.
-			// audit.New() handles EventID and Timestamp generation.
-			ev, _ := audit.New()
-			ev.Operation = "health.access"
-			ev.Outcome = audit.OutcomeDenied
-			ev.CallerID = "NO_MTLS_CERT"
-			ev.SourceIP = r.RemoteAddr
-			s.logAudit(r, ev)
-			writeError(w, http.StatusUnauthorized, "Unauthorized")
-			return
-		}
-
-		// Valid mTLS connection, proceed to handler
-		next.ServeHTTP(w, r)
-	})
 }
 
 // requireToken is middleware that validates the Bearer session token on every

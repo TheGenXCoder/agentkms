@@ -52,6 +52,7 @@ const runtimeKeys = new Map<string, LLMCredential>();
 
 /** Initialised HTTP client. null if no identity was found on disk. */
 let client: AgentKMSClient | null = null;
+let refreshPromise: Promise<AgentKMSSessionToken> | null = null;
 
 // ── TTL Thresholds ────────────────────────────────────────────────────────
 
@@ -248,7 +249,10 @@ export default function (pi: ExtensionAPI) {
     // Proactively refresh session token if within 5 min of expiry.
     if (sessionToken.expiresAt - Date.now() < TOKEN_REFRESH_THRESHOLD_MS) {
       try {
-        sessionToken = await client.refreshToken(sessionToken);
+        if (!refreshPromise) {
+          refreshPromise = client.refreshToken(sessionToken).finally(() => { refreshPromise = null; });
+        }
+        sessionToken = await refreshPromise;
       } catch {
         // Non-fatal — current token may still be valid for this request.
         // It expires naturally if refresh fails repeatedly.
@@ -298,7 +302,21 @@ export default function (pi: ExtensionAPI) {
     const isRead  = isToolCallEventType("read",  event);
     const isWrite = isToolCallEventType("write", event);
     const isEdit  = isToolCallEventType("edit",  event);
-    if (!isRead && !isWrite && !isEdit) return;
+    const isBash  = isToolCallEventType("bash",  event);
+    
+    if (!isRead && !isWrite && !isEdit && !isBash) return;
+
+    if (isBash) {
+      const command = (event.input as { command?: string }).command ?? "";
+      if (BLOCKED_PATH_PATTERNS.some(pattern => command.includes(pattern))) {
+        ctx.ui.notify(
+          `AgentKMS: blocked bash command referencing sensitive path: ${command}`,
+          "warning",
+        );
+        return { block: true, reason: `AgentKMS: bash command blocked — sensitive path referenced` };
+      }
+      return;
+    }
 
     // Cast to { path?: string } — after the guards above we know this event
     // is a Read, Write, or Edit tool call, all of which have a `path` field

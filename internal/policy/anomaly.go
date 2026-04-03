@@ -14,6 +14,7 @@ package policy
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -27,6 +28,7 @@ const (
 	AnomalySpike          AnomalyType = "spike"
 	AnomalyRepeatedDenial AnomalyType = "repeated_denial"
 	AnomalyUnusualHours   AnomalyType = "unusual_hours"
+	AnomalyStatistical    AnomalyType = "statistical_outlier"
 )
 
 // AnomalyRecord is the result of an anomaly check.
@@ -44,12 +46,47 @@ type anomalyState struct {
 
 	// callerID -> count of consecutive denials.
 	denials map[string]int
+
+	// P-08: Statistical baselining.
+	// callerID -> stats for per-minute request counts.
+	velocityStats map[string]*runningStats
+
+	// callerID -> hour (0-23) -> count of requests.
+	hourlyProfile map[string][]int
+}
+
+// runningStats implements Welford's algorithm for online mean and variance.
+type runningStats struct {
+	n    int
+	mean float64
+	m2   float64
+}
+
+func (s *runningStats) Update(x float64) {
+	s.n++
+	delta := x - s.mean
+	s.mean += delta / float64(s.n)
+	delta2 := x - s.mean
+	s.m2 += delta * delta2
+}
+
+func (s *runningStats) Variance() float64 {
+	if s.n < 2 {
+		return 0
+	}
+	return s.m2 / float64(s.n-1)
+}
+
+func (s *runningStats) Mean() float64 {
+	return s.mean
 }
 
 func newAnomalyState() *anomalyState {
 	return &anomalyState{
-		activity: make(map[string][]time.Time),
-		denials:  make(map[string]int),
+		activity:      make(map[string][]time.Time),
+		denials:       make(map[string]int),
+		velocityStats: make(map[string]*runningStats),
+		hourlyProfile: make(map[string][]int),
 	}
 }
 
@@ -61,7 +98,7 @@ func (as *anomalyState) Detect(id identity.Identity, decision Decision, now time
 
 	var anomalies []AnomalyRecord
 
-	// 1. Repeated Denial detection.
+	// 1. Repeated Denial detection (P-07 rules-based).
 	if !decision.Allow {
 		as.denials[id.CallerID]++
 		if as.denials[id.CallerID] >= 5 {
@@ -75,9 +112,7 @@ func (as *anomalyState) Detect(id identity.Identity, decision Decision, now time
 		as.denials[id.CallerID] = 0
 	}
 
-	// 2. Spike detection (allowed requests only, or all requests?).
-	// Architecture doc §4.5: "Spike in operation volume from a single identity".
-	// We'll track all requests to detect probing spikes too.
+	// 2. Spike detection & Statistical Velocity (P-08).
 	activity := as.activity[id.CallerID]
 	activity = append(activity, now)
 
@@ -93,17 +128,39 @@ func (as *anomalyState) Detect(id identity.Identity, decision Decision, now time
 	activity = activity[start:]
 	as.activity[id.CallerID] = activity
 
-	// Rule: > 100 requests per minute is a spike.
-	if len(activity) > 100 {
+	// Rule: > 100 requests per minute is a hard spike (P-07).
+	count := len(activity)
+	if count > 100 {
 		anomalies = append(anomalies, AnomalyRecord{
 			Type:    AnomalySpike,
-			Message: fmt.Sprintf("caller %q operation spike: %d requests in last minute", id.CallerID, len(activity)),
+			Message: fmt.Sprintf("caller %q operation spike: %d requests in last minute", id.CallerID, count),
 		})
 	}
 
-	// 3. Unusual Hours.
-	// Rules-based: we'll define 00:00-06:00 UTC as "unusual hours" for
-	// developers (but not services/agents, which are 24/7).
+	// P-08: Statistical baselining of token velocity.
+	stats := as.velocityStats[id.CallerID]
+	if stats == nil {
+		stats = &runningStats{}
+		as.velocityStats[id.CallerID] = stats
+	}
+
+	// Update stats for the current per-minute count.
+	stats.Update(float64(count))
+
+	// After we have enough data (n > 50), flag if current count > mean + 3*stddev.
+	if stats.n > 50 {
+		mean := stats.Mean()
+		stdDev := math.Sqrt(stats.Variance())
+		if count > 10 && float64(count) > mean+(3.0*stdDev) {
+			anomalies = append(anomalies, AnomalyRecord{
+				Type:    AnomalyStatistical,
+				Message: fmt.Sprintf("statistical outlier: caller %q velocity %d is > 3 stddev above mean %.2f", id.CallerID, count, mean),
+			})
+		}
+	}
+
+	// 3. Unusual Hours & Statistical Hours (P-08).
+	// Hardcoded unusual hours (P-07).
 	if id.Role == identity.RoleDeveloper {
 		hour := now.UTC().Hour()
 		if hour >= 0 && hour < 6 {
@@ -111,6 +168,30 @@ func (as *anomalyState) Detect(id identity.Identity, decision Decision, now time
 				Type:    AnomalyUnusualHours,
 				Message: fmt.Sprintf("developer %q operating at unusual hour: %02d:00 UTC", id.CallerID, hour),
 			})
+		}
+
+		// P-08: Statistical Hourly Profiling.
+		profile := as.hourlyProfile[id.CallerID]
+		if profile == nil {
+			profile = make([]int, 24)
+			as.hourlyProfile[id.CallerID] = profile
+		}
+		profile[hour]++
+
+		// If this hour's activity is significantly higher than usual (e.g. > 5x average)
+		// after we have some baseline (total requests > 100).
+		total := 0
+		for _, c := range profile {
+			total += c
+		}
+		if total > 100 {
+			avg := float64(total) / 24.0
+			if float64(profile[hour]) > avg*5.0 && profile[hour] > 20 {
+				anomalies = append(anomalies, AnomalyRecord{
+					Type:    AnomalyStatistical,
+					Message: fmt.Sprintf("statistical outlier: caller %q activity in hour %02d is %dx higher than baseline", id.CallerID, hour, int(float64(profile[hour])/avg)),
+				})
+			}
 		}
 	}
 

@@ -66,7 +66,7 @@
 | P-05 | P1 | T1 | [x] | Implement policy loader from OpenBao/Vault policy engine | Replaces local YAML in T1+ |
 | P-06 | P1 | T1 | [x] | Implement rate limiting in policy engine | Per (rule, callerID) sliding-window counter; conservative shared budget |
 | P-07 | P2 | T2 | [x] | Implement anomaly detection (rules-based) | Spike detection, unusual hours, repeated denials |
-| P-08 | P3 | T3 | [ ] | Implement ML-augmented anomaly detection | Baseline normal, flag statistical outliers |
+| P-08 | P3 | T3 | [x] | Implement ML-augmented anomaly detection | Baseline normal, flag statistical outliers |
 
 ---
 
@@ -203,7 +203,7 @@
 | FX-02 | P2 | T3 | [ ] | Sub-agent identity scoping (agent spawns sub-agent with reduced key scope) | Needed for multi-agent orchestration |
 | FX-03 | P2 | T3 | [ ] | Key ceremony tooling for HSM-backed root keys | Investor-grade provenance for root CA |
 | FX-04 | P3 | T3 | [ ] | Personal key offline support (local sync of personal key material to dev backend) | Requires careful threat modelling |
-| FX-05 | P3 | T3 | [ ] | Automated SOC 2 evidence collection (exports audit records mapped to controls) | Reduces auditor prep from weeks to hours |
+| FX-05 | P3 | T3 | [x] | Automated SOC 2 evidence collection (exports audit records mapped to controls) | Reduces auditor prep from weeks to hours |
 | FX-06 | P3 | T3 | [ ] | Web UI for key management, audit browsing, team policy editing | Non-developer enterprise admin UX |
 
 ---

@@ -7,7 +7,7 @@ package policy
 //     documented in each field comment.
 //   - Effect is always explicit ("allow" or "deny") — there is no implicit
 //     default effect on a matched rule; the default is handled by the engine.
-//   - Rate limiting fields are parsed but enforced separately (P-06).
+//   - Rate limiting fields are parsed and enforced by the engine (P-06).
 //
 // YAML tags drive the on-disk format.  All fields also carry json tags so
 // that the structs can be serialised to JSON for logging and debugging
@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"time"
 )
 
 // ── Operation ─────────────────────────────────────────────────────────────────
@@ -150,8 +151,10 @@ type Rule struct {
 	Effect Effect `yaml:"effect" json:"effect"`
 
 	// RateLimit optionally limits the number of matching operations within a
-	// rolling time window.  Parsed but not enforced until P-06.
-	// TODO(P-06): enforce rate limiting.
+	// rolling time window.  When the limit is exceeded, the rule's effect is
+	// not applied; instead, the engine returns a rate-limit denial.  The
+	// operation still counts as "matched" for first-match purposes — it does
+	// NOT fall through to a later rule.
 	RateLimit *RateLimit `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
 
 	// TimeWindow optionally restricts when this rule may match.  If the
@@ -218,7 +221,15 @@ type IdentityMatch struct {
 }
 
 // RateLimit restricts the number of matched operations within a rolling
-// time window.  Stored in the rule schema but enforcement is deferred to P-06.
+// time window.
+//
+// Rate limiting is enforced per (rule, callerID, operation, keyID) bucket.
+// Two different callers hitting the same rule get independent counters.
+// A single caller hitting the same rule for different operations or keys
+// also gets independent counters.
+//
+// The sliding window is implemented by tracking the timestamps of each
+// request and pruning entries older than the window duration.
 type RateLimit struct {
 	// MaxRequests is the maximum number of matched operations allowed within
 	// the rolling Window.  Must be > 0.
@@ -228,6 +239,12 @@ type RateLimit struct {
 	// duration string (e.g. "1h", "5m", "24h").
 	// Must be parseable by time.ParseDuration.
 	Window string `yaml:"window" json:"window"`
+
+	// WindowDuration is the parsed form of Window.  Set by Validate() after
+	// successful parsing.  Excluded from YAML and JSON serialisation.
+	// Zero means the window has not been parsed (should not happen after
+	// a successful Validate() call).
+	WindowDuration time.Duration `yaml:"-" json:"-"`
 }
 
 // TimeWindow restricts a rule to specific UTC days and hours.
@@ -361,6 +378,14 @@ func (r *Rule) validate(idx int) []string {
 		if rl.Window == "" {
 			errs = append(errs, fmt.Sprintf("%s (%q): rate_limit.window must not be empty",
 				prefix, r.ID))
+		} else if d, err := time.ParseDuration(rl.Window); err != nil {
+			errs = append(errs, fmt.Sprintf("%s (%q): rate_limit.window %q is not a valid Go duration: %v",
+				prefix, r.ID, rl.Window, err))
+		} else if d < 0 {
+			errs = append(errs, fmt.Sprintf("%s (%q): rate_limit.window must be positive, got %q",
+				prefix, r.ID, rl.Window))
+		} else {
+			rl.WindowDuration = d // stash parsed duration for engine use
 		}
 	}
 

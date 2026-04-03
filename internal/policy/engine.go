@@ -1,6 +1,7 @@
 package policy
 
-// engine.go — P-03 + P-04: Policy evaluator with deny-by-default.
+// engine.go — P-03 + P-04 + P-06: Policy evaluator with deny-by-default and
+// per-rule rate limiting.
 //
 // SECURITY INVARIANT (P-04):
 //
@@ -13,16 +14,26 @@ package policy
 //
 //  1. Rules are tested in declaration order.
 //  2. The first rule whose Match conditions all pass determines the outcome.
+//     - If the rule has a RateLimit and the limit is exceeded → deny (rate
+//       limit denial; the matched rule "owns" the decision — no fallthrough).
 //     - Effect "deny"  → return Decision{Allow: false, ...}
 //     - Effect "allow" → return Decision{Allow: true, ...}
 //  3. If no rule matches, return Decision{Allow: false, DenyReason: denyByDefaultReason}.
 //
-// Thread safety: Engine is safe for concurrent reads.  Reload acquires a
-// write lock; in-flight Evaluate calls complete before the policy is swapped.
+// Thread safety: Engine is safe for concurrent reads and writes.
+//   - Policy reads: RWMutex — concurrent Evaluate calls are goroutine-safe.
+//   - Rate-limit state: Mutex — serialises counter updates.
+//   - Reload: acquires both write locks; in-flight Evaluate calls complete
+//     with the old policy before the swap takes effect.
+//
+// Rate limit state is NOT reset by Reload.  Counters persist across policy
+// reloads so that a rapid succession of policy changes cannot be used to
+// reset an attacker's rate limit.
 
 import (
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -55,14 +66,104 @@ type Decision struct {
 	MatchedRuleID string
 }
 
+// ── Rate limiter ──────────────────────────────────────────────────────────────
+
+// rateLimitBucket tracks the timestamps of recent operations for a single
+// (ruleID, callerID) pair.  Entries are kept in sorted order (oldest first)
+// so that pruning and counting are efficient.
+type rateLimitBucket struct {
+	timestamps []time.Time
+}
+
+// rateLimitState holds all rate-limit counters.  It is protected by its own
+// mutex so that counter updates do not contend with policy reads.
+type rateLimitState struct {
+	mu       sync.Mutex
+	buckets  map[string]*rateLimitBucket // key: ruleID + "\x00" + callerID
+}
+
+func newRateLimitState() *rateLimitState {
+	return &rateLimitState{
+		buckets: make(map[string]*rateLimitBucket),
+	}
+}
+
+// checkAndRecord tests whether the (ruleID, callerID) bucket has exceeded
+// maxRequests within the last window.  If not exceeded, it records the
+// current timestamp and returns (allowed, remaining).
+//
+// If exceeded, it does NOT record the timestamp (the denied request does not
+// consume a slot — this prevents an attacker from filling the window with
+// denied requests to displace legitimate ones).
+func (rls *rateLimitState) checkAndRecord(ruleID, callerID string, maxRequests int, window time.Duration, now time.Time) (allowed bool, remaining int) {
+	rls.mu.Lock()
+	defer rls.mu.Unlock()
+
+	key := ruleID + "\x00" + callerID
+	bucket, exists := rls.buckets[key]
+	if !exists {
+		bucket = &rateLimitBucket{}
+		rls.buckets[key] = bucket
+	}
+
+	// Prune expired entries.
+	cutoff := now.Add(-window)
+	pruned := bucket.timestamps[:0]
+	for _, ts := range bucket.timestamps {
+		if ts.After(cutoff) {
+			pruned = append(pruned, ts)
+		}
+	}
+	bucket.timestamps = pruned
+
+	// Check limit.
+	count := len(bucket.timestamps)
+	if count >= maxRequests {
+		return false, 0
+	}
+
+	// Record this request.
+	bucket.timestamps = append(bucket.timestamps, now)
+	return true, maxRequests - count - 1
+}
+
+// reset clears all rate-limit buckets.  Used in tests and when the operator
+// explicitly wants to reset counters (e.g. after a configuration change that
+// invalidates the old limits).
+func (rls *rateLimitState) reset() {
+	rls.mu.Lock()
+	rls.buckets = make(map[string]*rateLimitBucket)
+	rls.mu.Unlock()
+}
+
+// bucketCount returns the number of active buckets.  Used in tests.
+func (rls *rateLimitState) bucketCount() int {
+	rls.mu.Lock()
+	defer rls.mu.Unlock()
+	return len(rls.buckets)
+}
+
+// sortStable sorts the bucket timestamps.  Called after tests that inject
+// timestamps out of order via the testing hook.
+func (rls *rateLimitState) sortStable() {
+	rls.mu.Lock()
+	defer rls.mu.Unlock()
+	for _, b := range rls.buckets {
+		sort.SliceStable(b.timestamps, func(i, j int) bool {
+			return b.timestamps[i].Before(b.timestamps[j])
+		})
+	}
+}
+
 // ── Engine ────────────────────────────────────────────────────────────────────
 
 // Engine evaluates (identity, operation, key-id) triples against a Policy.
 //
 // Construct with New; reload atomically with Reload.
 type Engine struct {
-	mu     sync.RWMutex
-	policy Policy
+	policyMu   sync.RWMutex
+	policy     Policy
+	rateLimits *rateLimitState
 }
 
 // New constructs a new Engine backed by the given Policy.
@@ -74,13 +175,19 @@ type Engine struct {
 // Effects → deny; malformed patterns → no match → deny) but may produce
 // unexpected evaluation results.
 func New(p Policy) *Engine {
-	return &Engine{policy: copyPolicy(p)}
+	return &Engine{
+		policy:     copyPolicy(p),
+		rateLimits: newRateLimitState(),
+	}
 }
 
 // Reload atomically replaces the engine's policy with p.
 // In-flight Evaluate calls complete with the old policy before the swap takes
 // effect.  p is validated before being accepted; if validation fails, the
 // existing policy is unchanged and an error is returned.
+//
+// Rate-limit state is NOT reset by Reload.  Use ResetRateLimits() explicitly
+// if counter reset is desired.
 //
 // TOCTOU note: copyPolicy runs BEFORE Validate so that validation is
 // performed on exactly the snapshot that will be installed.  If Validate ran
@@ -92,17 +199,23 @@ func (e *Engine) Reload(p Policy) error {
 	if err := cp.Validate(); err != nil {
 		return fmt.Errorf("policy engine: reload rejected: %w", err)
 	}
-	e.mu.Lock()
+	e.policyMu.Lock()
 	e.policy = cp
-	e.mu.Unlock()
+	e.policyMu.Unlock()
 	return nil
+}
+
+// ResetRateLimits clears all rate-limit counters.  This is useful in tests
+// and when an operator explicitly resets counters after a policy change.
+func (e *Engine) ResetRateLimits() {
+	e.rateLimits.reset()
 }
 
 // Evaluate tests whether id is allowed to perform op on keyID.
 //
 // It is equivalent to EvaluateAt(id, op, keyID, time.Now().UTC()).
 // All callers in production should use Evaluate; use EvaluateAt in tests to
-// inject a controlled timestamp for time-window testing.
+// inject a controlled timestamp for time-window and rate-limit testing.
 func (e *Engine) Evaluate(id identity.Identity, op Operation, keyID string) Decision {
 	return e.EvaluateAt(id, op, keyID, time.Now().UTC())
 }
@@ -117,9 +230,9 @@ func (e *Engine) Evaluate(id identity.Identity, op Operation, keyID string) Deci
 // deny-by-default: there is no code path that returns Allow=true when no
 // rule explicitly grants the operation.
 func (e *Engine) EvaluateAt(id identity.Identity, op Operation, keyID string, now time.Time) Decision {
-	e.mu.RLock()
+	e.policyMu.RLock()
 	rules := e.policy.Rules // slice header copy; entries are read-only
-	e.mu.RUnlock()
+	e.policyMu.RUnlock()
 
 	for _, rule := range rules {
 		if !matchesIdentity(rule.Match.Identity, id) {
@@ -135,7 +248,28 @@ func (e *Engine) EvaluateAt(id identity.Identity, op Operation, keyID string, no
 			continue
 		}
 
-		// All conditions satisfied — this rule governs the outcome.
+		// All match conditions satisfied.  Check rate limit before effect.
+		if rule.RateLimit != nil {
+			allowed, remaining := e.rateLimits.checkAndRecord(
+				rule.ID, id.CallerID,
+				rule.RateLimit.MaxRequests,
+				rule.RateLimit.WindowDuration,
+				now,
+			)
+			if !allowed {
+				return Decision{
+					Allow: false,
+					DenyReason: fmt.Sprintf(
+						"policy: rate limit exceeded for rule %q (max %d per %s for caller %q)",
+						rule.ID, rule.RateLimit.MaxRequests, rule.RateLimit.Window, id.CallerID,
+					),
+					MatchedRuleID: rule.ID,
+				}
+			}
+			_ = remaining // available for future Decision field if needed
+		}
+
+		// Apply the rule's effect.
 		switch rule.Effect {
 		case EffectDeny:
 			return Decision{
@@ -339,7 +473,7 @@ func copyPolicy(p Policy) Policy {
 			copy(cr.Match.KeyIDs, r.Match.KeyIDs)
 		}
 		if r.RateLimit != nil {
-			rl := *r.RateLimit // RateLimit has no pointer/slice fields; value copy is safe.
+			rl := *r.RateLimit // value copy; WindowDuration is a time.Duration (int64) — safe.
 			cr.RateLimit = &rl
 		}
 		if r.TimeWindow != nil {

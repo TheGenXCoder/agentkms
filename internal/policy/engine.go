@@ -96,6 +96,12 @@ type Decision struct {
 	// Empty when the decision is the deny-by-default fallback (no rule matched).
 	// Included in audit events so operators can trace a denial to its source rule.
 	MatchedRuleID string
+
+	// Anomalies is the list of detected anomalies associated with this
+	// decision.  Anomalies do not necessarily cause an Allow=false decision
+	// (unless the policy explicitly says so); they are intended to be
+	// logged to the audit system for further review.
+	Anomalies []AnomalyRecord
 }
 
 // ── Rate limiter ──────────────────────────────────────────────────────────────
@@ -184,6 +190,7 @@ type Engine struct {
 	policyMu   sync.RWMutex
 	policy     Policy
 	rateLimits *rateLimitState
+	anomalies  *anomalyState
 }
 
 // New constructs a new Engine backed by the given Policy.
@@ -198,6 +205,7 @@ func New(p Policy) *Engine {
 	return &Engine{
 		policy:     copyPolicy(p),
 		rateLimits: newRateLimitState(),
+		anomalies:  newAnomalyState(),
 	}
 }
 
@@ -254,6 +262,9 @@ func (e *Engine) EvaluateAt(id identity.Identity, op Operation, keyID string, no
 	rules := e.policy.Rules // slice header copy; entries are read-only
 	e.policyMu.RUnlock()
 
+	var decision Decision
+	var matched bool
+
 	for _, rule := range rules {
 		if !matchesIdentity(rule.Match.Identity, id) {
 			continue
@@ -277,7 +288,7 @@ func (e *Engine) EvaluateAt(id identity.Identity, op Operation, keyID string, no
 				now,
 			)
 			if !allowed {
-				return Decision{
+				decision = Decision{
 					Allow: false,
 					DenyReason: fmt.Sprintf(
 						"policy: rate limit exceeded for rule %q (max %d per %s for caller %q)",
@@ -285,6 +296,8 @@ func (e *Engine) EvaluateAt(id identity.Identity, op Operation, keyID string, no
 					),
 					MatchedRuleID: rule.ID,
 				}
+				matched = true
+				break
 			}
 			_ = remaining // available for future Decision field if needed
 		}
@@ -292,33 +305,48 @@ func (e *Engine) EvaluateAt(id identity.Identity, op Operation, keyID string, no
 		// Apply the rule's effect.
 		switch rule.Effect {
 		case EffectDeny:
-			return Decision{
+			decision = Decision{
 				Allow:         false,
 				DenyReason:    fmt.Sprintf("policy: denied by rule %q: %s", rule.ID, rule.Description),
 				MatchedRuleID: rule.ID,
 			}
+			matched = true
 		case EffectAllow:
-			return Decision{
+			decision = Decision{
 				Allow:         true,
 				MatchedRuleID: rule.ID,
 			}
+			matched = true
 		default:
 			// Unreachable: Validate() rejects unknown effects.
 			// Treat as deny to fail safe.
-			return Decision{
+			decision = Decision{
 				Allow:         false,
 				DenyReason:    fmt.Sprintf("policy: rule %q has unrecognised effect %q (treating as deny)", rule.ID, rule.Effect),
 				MatchedRuleID: rule.ID,
 			}
+			matched = true
+		}
+		break
+	}
+
+	if !matched {
+		// No rule matched.  Deny by default.
+		decision = Decision{
+			Allow:      false,
+			DenyReason: denyByDefaultReason,
 		}
 	}
 
-	// No rule matched.  Deny by default.
-	// DO NOT add any condition here that could return Allow=true.
-	return Decision{
-		Allow:      false,
-		DenyReason: denyByDefaultReason,
-	}
+	// ── Anomaly Detection (P-07) ───────────────────────────────────────────────────
+
+	// Detect anomalies based on the decision and caller history.
+	// Anomalies do not change the Allow/Deny decision here — they are purely
+	// informational/logging context for the audit system.
+	anomalies := e.anomalies.Detect(id, decision, now)
+	decision.Anomalies = anomalies
+
+	return decision
 }
 
 // ── Match helpers ─────────────────────────────────────────────────────────────

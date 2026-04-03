@@ -1,314 +1,472 @@
-// Package main implements the agentkms-dev enroll CLI.
+// Package main is the agentkms production enrollment CLI — A-09/A-11.
 //
-// enroll generates a local dev PKI (CA + developer cert + server cert) and
-// writes the files to ~/.agentkms/dev/.  The same CA is used by the dev server
-// and the Pi extension client to establish mTLS.
+// Enrollment flow:
 //
-// Usage:
+//  1. Parse flags: --team, --caller-id, --vault-addr, --pki-mount, --role
+//  2. Obtain a bootstrap token (one of):
+//     a. --bootstrap-token flag (operator-issued, single-use)
+//     b. --oidc-issuer flag: start OIDC flow → exchange code for identity →
+//        call AgentKMS /auth/bootstrap to get a short-lived enroll token
+//  3. Call PKIClient.IssueCert with the bootstrap token
+//  4. Write cert + key to ~/.agentkms/client.{crt,key}
+//     Key file mode 0600; never logged
+//  5. Write CA cert to ~/.agentkms/ca.crt
+//  6. Print summary (serial, expiry, paths) — no key material in stdout
 //
-//	agentkms-dev enroll [flags]
-//	  --name  string   Developer identity name (default: OS username)
-//	  --team  string   Team name (default: "dev")
-//	  --dir   string   Output directory (default: ~/.agentkms/dev)
-//	  --force          Overwrite existing certificates without prompting
-//
-// Files written (all in --dir):
-//
-//	ca.crt        — Dev CA certificate (PEM, safe to share)
-//	ca.key        — Dev CA private key  (PEM, mode 0600, KEEP SECRET)
-//	client.crt    — Developer certificate (PEM)
-//	client.key    — Developer private key  (PEM, mode 0600)
-//	server.crt    — Local dev server certificate (PEM)
-//	server.key    — Local dev server private key  (PEM, mode 0600)
-//	config.json   — Dev server config (URL, team, identity)
-//
-// SECURITY NOTE: ca.key and client.key are private keys.  They are written
-// with mode 0600.  Never commit them to version control, log them, or include
-// them in error messages.
-//
-// A-09.
+// For local dev enrollment, use: agentkms-dev enroll
+// This CLI handles production enrollment only.
 package main
 
 import (
-	"crypto/x509"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
-	"os/user"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
-	"github.com/agentkms/agentkms/pkg/tlsutil"
+	"github.com/agentkms/agentkms/internal/auth"
 )
-
-const (
-	// defaultListenAddr is the address the dev server listens on.
-	defaultListenAddr = "127.0.0.1:8443"
-
-	// caValidity is how long the dev CA certificate is valid.
-	// 365 days is sufficient for local dev; production PKI is managed
-	// by the backend (OpenBao PKI engine).
-	caValidity = 365 * 24 * time.Hour
-
-	// certValidity is how long leaf certificates (developer, server) are valid.
-	// 90 days; re-run enroll to renew.
-	certValidity = 90 * 24 * time.Hour
-)
-
-// devConfig is written to config.json in the output directory.
-// The Pi extension and dev server read this file to discover service URLs
-// and the developer identity.
-type devConfig struct {
-	// ServerURL is the mTLS base URL of the local dev server.
-	ServerURL string `json:"server_url"`
-
-	// TeamID is the team identifier used for this dev identity.
-	TeamID string `json:"team_id"`
-
-	// CallerID is the developer's identity (encoded in the client cert CN).
-	CallerID string `json:"caller_id"`
-
-	// CACertPath is the path to the dev CA certificate.
-	CACertPath string `json:"ca_cert_path"`
-
-	// ClientCertPath is the path to the developer certificate.
-	ClientCertPath string `json:"client_cert_path"`
-
-	// ClientKeyPath is the path to the developer private key.
-	// SECURITY: this path is stored here for convenience; the file itself
-	// must remain 0600.
-	ClientKeyPath string `json:"client_key_path"`
-
-	// EnrolledAt is the UTC timestamp of the enrollment.
-	EnrolledAt string `json:"enrolled_at"`
-}
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "enroll: %v\n", err)
+		fmt.Fprintf(os.Stderr, "agentkms enroll: %v\n", err)
 		os.Exit(1)
 	}
 }
 
 func run() error {
-	// ── Flags ─────────────────────────────────────────────────────────────
+	fs := flag.NewFlagSet("enroll", flag.ExitOnError)
+
 	var (
-		nameFlag  string
-		teamFlag  string
-		dirFlag   string
-		forceFlag bool
+		teamID         = fs.String("team", "", "Team identifier (required)")
+		callerID       = fs.String("caller-id", "", "Caller identity (e.g. user@team); defaults to $USER@team")
+		vaultAddr      = fs.String("vault-addr", envOr("AGENTKMS_VAULT_ADDR", ""), "OpenBao/Vault address (required)")
+		pkiMount       = fs.String("pki-mount", "pki", "PKI secrets engine mount path")
+		role           = fs.String("role", "agentkms", "PKI role for cert issuance")
+		bootstrapToken = fs.String("bootstrap-token", envOr("AGENTKMS_BOOTSTRAP_TOKEN", ""), "Single-use bootstrap token (operator-issued)")
+		oidcIssuer     = fs.String("oidc-issuer", envOr("AGENTKMS_OIDC_ISSUER", ""), "OIDC issuer URL (for browser-based enrollment)")
+		oidcClientID   = fs.String("oidc-client-id", envOr("AGENTKMS_OIDC_CLIENT_ID", "agentkms-enroll"), "OIDC client ID")
+		ttl            = fs.String("ttl", "720h", "Certificate TTL (default 30 days)")
+		outputDir      = fs.String("output-dir", defaultOutputDir(), "Directory to write cert, key, and CA cert")
+		force          = fs.Bool("force", false, "Overwrite existing certificates")
 	)
 
-	flag.StringVar(&nameFlag, "name", "", "developer identity name (default: OS username)")
-	flag.StringVar(&teamFlag, "team", "dev", "team name")
-	flag.StringVar(&dirFlag, "dir", "", "output directory (default: ~/.agentkms/dev)")
-	flag.BoolVar(&forceFlag, "force", false, "overwrite existing certificates")
-	flag.Parse()
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `agentkms enroll — Issue a developer certificate from AgentKMS PKI
 
-	// ── Resolve defaults ──────────────────────────────────────────────────
-	name, err := resolveName(nameFlag)
-	if err != nil {
+Usage:
+  agentkms enroll --team=<team> --vault-addr=<url> [--bootstrap-token=<tok>]
+  agentkms enroll --team=<team> --vault-addr=<url> --oidc-issuer=<url>
+
+Authentication:
+  --bootstrap-token  Single-use token provided by your platform admin.
+  --oidc-issuer      Opens a browser for SSO login; requires OIDC to be
+                     configured on the AgentKMS server.
+
+Examples:
+  # With a bootstrap token (admin provides this out-of-band):
+  agentkms enroll \
+    --team=platform-team \
+    --vault-addr=https://openbao.internal:8200 \
+    --bootstrap-token=hvs.BOOTSTRAP_TOKEN
+
+  # With OIDC/SSO:
+  agentkms enroll \
+    --team=platform-team \
+    --vault-addr=https://openbao.internal:8200 \
+    --oidc-issuer=https://sso.internal
+
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
 	}
 
-	dir, err := resolveDir(dirFlag)
-	if err != nil {
-		return err
+	// ── Validate required flags ────────────────────────────────────────────────
+	if *teamID == "" {
+		return fmt.Errorf("--team is required")
+	}
+	if *vaultAddr == "" {
+		return fmt.Errorf("--vault-addr is required (or set AGENTKMS_VAULT_ADDR)")
+	}
+	if *bootstrapToken == "" && *oidcIssuer == "" {
+		return fmt.Errorf("one of --bootstrap-token or --oidc-issuer is required")
 	}
 
-	callerID := name + "@" + teamFlag
-
-	// ── Check for existing certs ──────────────────────────────────────────
-	caCertPath := filepath.Join(dir, "ca.crt")
-	if _, err := os.Stat(caCertPath); err == nil && !forceFlag {
-		return fmt.Errorf(
-			"certificates already exist in %s\n"+
-				"Run with --force to overwrite, or delete the directory manually.\n"+
-				"WARNING: overwriting rotates the CA — existing sessions will break.",
-			dir,
-		)
-	}
-
-	// ── Create output directory ───────────────────────────────────────────
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("creating output directory %q: %w", dir, err)
-	}
-
-	fmt.Printf("AgentKMS Dev Enrollment\n")
-	fmt.Printf("  Identity : %s\n", callerID)
-	fmt.Printf("  Team     : %s\n", teamFlag)
-	fmt.Printf("  Directory: %s\n\n", dir)
-
-	// ── Generate dev CA ───────────────────────────────────────────────────
-	fmt.Printf("Generating dev CA...")
-	ca, err := tlsutil.GenerateSelfSignedCA(tlsutil.CAOptions{
-		CN:       "AgentKMS Dev CA",
-		Org:      "agentkms-dev",
-		Validity: caValidity,
-	})
-	if err != nil {
-		return fmt.Errorf("generating dev CA: %w", err)
-	}
-	fmt.Println(" done")
-
-	// ── Generate developer (client) certificate ───────────────────────────
-	fmt.Printf("Generating developer certificate (%s)...", callerID)
-	spiffeID := fmt.Sprintf("spiffe://agentkms.org/team/%s/identity/%s", teamFlag, name)
-	clientCert, err := tlsutil.GenerateLeafCert(ca, tlsutil.LeafOptions{
-		CN:           callerID,
-		Org:          teamFlag,
-		OrgUnit:      "developer",
-		SPIFFEID:     spiffeID,
-		ExtKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		Validity:     certValidity,
-	})
-	if err != nil {
-		return fmt.Errorf("generating developer certificate: %w", err)
-	}
-	fmt.Println(" done")
-
-	// ── Generate server certificate for the local dev server ──────────────
-	fmt.Printf("Generating dev server certificate (localhost)...")
-	serverCert, err := tlsutil.GenerateLeafCert(ca, tlsutil.LeafOptions{
-		CN:      "agentkms-dev-server",
-		Org:     "agentkms-dev",
-		OrgUnit: "service",
-		DNSNames: []string{
-			"localhost",
-			"agentkms-dev.local",
-		},
-		IPAddresses: []net.IP{
-			net.ParseIP("127.0.0.1"),
-			net.ParseIP("::1"),
-		},
-		ExtKeyUsages: []x509.ExtKeyUsage{
-			x509.ExtKeyUsageServerAuth,
-			x509.ExtKeyUsageClientAuth, // also usable as client in service-to-service
-		},
-		Validity: certValidity,
-	})
-	if err != nil {
-		return fmt.Errorf("generating server certificate: %w", err)
-	}
-	fmt.Println(" done")
-
-	// ── Write files ───────────────────────────────────────────────────────
-	files := []struct {
-		name    string
-		data    []byte
-		mode    os.FileMode
-		private bool
-	}{
-		// CA certificate: public — readable by anyone.
-		{"ca.crt", ca.CertPEM, 0644, false},
-		// CA private key: SECRET — only the owner must read this.
-		// SECURITY: mode 0600; never logged, never in API responses.
-		{"ca.key", ca.KeyPEM, 0600, true},
-		// Developer cert: public.
-		{"client.crt", clientCert.CertPEM, 0644, false},
-		// Developer private key: SECRET.
-		{"client.key", clientCert.KeyPEM, 0600, true},
-		// Server cert: public.
-		{"server.crt", serverCert.CertPEM, 0644, false},
-		// Server private key: SECRET.
-		{"server.key", serverCert.KeyPEM, 0600, true},
-	}
-
-	fmt.Println()
-	for _, f := range files {
-		path := filepath.Join(dir, f.name)
-		label := "writing"
-		if f.private {
-			label = "writing (private)"
+	// Set caller ID from $USER if not provided.
+	if *callerID == "" {
+		user := os.Getenv("USER")
+		if user == "" {
+			user = os.Getenv("USERNAME") // Windows
 		}
-		fmt.Printf("  %-30s %s\n", label, path)
-		if err := writeFile(path, f.data, f.mode); err != nil {
-			return fmt.Errorf("writing %s: %w", f.name, err)
+		if user == "" {
+			return fmt.Errorf("--caller-id is required (could not detect from $USER)")
+		}
+		*callerID = user + "@" + *teamID
+	}
+
+	// ── Check for existing certs ───────────────────────────────────────────────
+	certPath := filepath.Join(*outputDir, "client.crt")
+	if !*force {
+		if _, err := os.Stat(certPath); err == nil {
+			return fmt.Errorf("certificate already exists at %s; use --force to overwrite", certPath)
 		}
 	}
 
-	// ── Write config.json ─────────────────────────────────────────────────
-	cfg := devConfig{
-		ServerURL:      "https://" + defaultListenAddr,
-		TeamID:         teamFlag,
-		CallerID:       callerID,
-		CACertPath:     filepath.Join(dir, "ca.crt"),
-		ClientCertPath: filepath.Join(dir, "client.crt"),
-		ClientKeyPath:  filepath.Join(dir, "client.key"),
-		EnrolledAt:     time.Now().UTC().Format(time.RFC3339),
-	}
-	cfgBytes, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshalling config: %w", err)
-	}
-	cfgPath := filepath.Join(dir, "config.json")
-	fmt.Printf("  %-30s %s\n", "writing config", cfgPath)
-	if err := writeFile(cfgPath, append(cfgBytes, '\n'), 0644); err != nil {
-		return fmt.Errorf("writing config.json: %w", err)
+	// ── Obtain bootstrap token ─────────────────────────────────────────────────
+	token := *bootstrapToken
+	if token == "" {
+		fmt.Fprintf(os.Stderr, "Starting OIDC enrollment via %s...\n", *oidcIssuer)
+		var err error
+		token, err = obtainOIDCBootstrapToken(*oidcIssuer, *oidcClientID, *vaultAddr)
+		if err != nil {
+			return fmt.Errorf("OIDC enrollment: %w", err)
+		}
 	}
 
-	// ── Success ───────────────────────────────────────────────────────────
-	fmt.Printf("\nEnrollment complete.\n\n")
-	fmt.Printf("Next steps:\n")
-	fmt.Printf("  1. Start the dev server:\n")
-	fmt.Printf("       agentkms-dev server\n\n")
-	fmt.Printf("  2. The Pi extension will auto-discover certs from %s\n", dir)
-	fmt.Printf("     Or set AGENTKMS_DIR=%s to use a custom path.\n\n", dir)
-	fmt.Printf("  3. In Pi, you should see:\n")
-	fmt.Printf("       AgentKMS: authenticated ✓  (identity: %s)\n\n", callerID)
-	fmt.Printf("REMINDER: %s/ca.key and %s/client.key are private keys.\n", dir, dir)
-	fmt.Printf("  Keep them out of version control and backups.\n")
+	// ── Issue certificate ──────────────────────────────────────────────────────
+	pkiClient := auth.NewPKIClient(auth.PKIConfig{
+		Address:        *vaultAddr,
+		BootstrapToken: token,
+		PKIMount:       *pkiMount,
+		Role:           *role,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	spiffeID := fmt.Sprintf("spiffe://agentkms.org/team/%s/identity/%s", *teamID, *callerID)
+
+	fmt.Fprintf(os.Stderr, "Requesting certificate for %s (team: %s)...\n", *callerID, *teamID)
+	bundle, err := pkiClient.IssueCert(ctx, *callerID, *teamID, spiffeID, *ttl)
+	if err != nil {
+		if errors.Is(err, auth.ErrPKIIssueFailed) {
+			return fmt.Errorf("PKI rejected certificate request: %w", err)
+		}
+		return fmt.Errorf("cert issuance failed: %w", err)
+	}
+
+	// ── Write files ────────────────────────────────────────────────────────────
+	if err := os.MkdirAll(*outputDir, 0700); err != nil {
+		return fmt.Errorf("creating output directory: %w", err)
+	}
+
+	keyPath := filepath.Join(*outputDir, "client.key")
+	caPath := filepath.Join(*outputDir, "ca.crt")
+
+	// Write private key first (most sensitive — fail early if we can't write).
+	// SECURITY: mode 0600 — only owner can read.
+	// SECURITY: the key string is written directly; it is NOT logged.
+	if err := os.WriteFile(keyPath, []byte(bundle.PrivateKeyPEM), 0600); err != nil {
+		return fmt.Errorf("writing private key: %w", err)
+	}
+
+	if err := os.WriteFile(certPath, []byte(bundle.CertificatePEM), 0644); err != nil {
+		os.Remove(keyPath) //nolint:errcheck // best-effort cleanup
+		return fmt.Errorf("writing certificate: %w", err)
+	}
+
+	if bundle.CAPEM != "" {
+		if err := os.WriteFile(caPath, []byte(bundle.CAPEM), 0644); err != nil {
+			return fmt.Errorf("writing CA cert: %w", err)
+		}
+	}
+
+	// ── Summary (no key material) ──────────────────────────────────────────────
+	fmt.Printf("\n✓ Enrollment complete\n\n")
+	fmt.Printf("  Identity:    %s\n", *callerID)
+	fmt.Printf("  Team:        %s\n", *teamID)
+	fmt.Printf("  Serial:      %s\n", bundle.SerialNumber)
+	fmt.Printf("  Expires:     %s\n", bundle.ExpiresAt.Format("2006-01-02 15:04 UTC"))
+	fmt.Printf("\n  Certificate: %s\n", certPath)
+	fmt.Printf("  Private key: %s\n", keyPath)
+	fmt.Printf("  CA cert:     %s\n", caPath)
+	fmt.Printf("\nPi will auto-discover these paths. Run 'pi' to start.\n\n")
 
 	return nil
+}
+
+// ── OIDC enrollment flow ──────────────────────────────────────────────────────
+
+// obtainOIDCBootstrapToken performs the OIDC authorization code flow and
+// exchanges the resulting identity for a bootstrap enrollment token.
+//
+// Flow:
+//  1. Fetch OIDC discovery document to get authorization_endpoint + token_endpoint
+//  2. Start a local HTTP listener on a random port for the callback
+//  3. Build authorization URL with state + PKCE
+//  4. Open browser
+//  5. Receive authorization code from callback
+//  6. Exchange code for ID token
+//  7. POST ID token to AgentKMS /auth/bootstrap → receive enrollment token
+//
+// SECURITY: the ID token and enrollment token are held in memory only.
+// They are not logged or written to disk.
+func obtainOIDCBootstrapToken(issuer, clientID, agentKMSAddr string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// ── 1. OIDC discovery ──────────────────────────────────────────────────────
+	disc, err := fetchOIDCDiscovery(ctx, issuer)
+	if err != nil {
+		return "", fmt.Errorf("OIDC discovery: %w", err)
+	}
+
+	// ── 2. Local callback listener ─────────────────────────────────────────────
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", fmt.Errorf("starting callback listener: %w", err)
+	}
+	defer ln.Close()
+
+	callbackURL := fmt.Sprintf("http://%s/callback", ln.Addr())
+
+	// ── 3. Build authorization URL + PKCE ─────────────────────────────────────
+	state, err := randomHex(16)
+	if err != nil {
+		return "", err
+	}
+	codeVerifier, err := randomHex(32)
+	if err != nil {
+		return "", err
+	}
+	// PKCE code challenge method: "plain" (code_challenge = code_verifier).
+	// TODO(#3): upgrade to S256 before production — "plain" method means
+	// an attacker who intercepts the authorization URL could replay the code.
+	// S256: code_challenge = base64url(sha256(code_verifier)).
+	// This is acceptable for T1 POC (loopback callback, short-lived state).
+	// Do NOT ship "plain" to production.
+	authURL := disc.AuthorizationEndpoint +
+		"?response_type=code" +
+		"&client_id=" + url.QueryEscape(clientID) +
+		"&redirect_uri=" + url.QueryEscape(callbackURL) +
+		"&scope=openid+email+profile" +
+		"&state=" + state +
+		"&code_challenge=" + codeVerifier +
+		"&code_challenge_method=plain"
+
+	// ── 4. Open browser ────────────────────────────────────────────────────────
+	fmt.Fprintf(os.Stderr, "\nOpening browser for SSO login...\n")
+	fmt.Fprintf(os.Stderr, "If it doesn't open automatically, visit:\n  %s\n\n", authURL)
+	openBrowser(authURL)
+
+	// ── 5. Receive authorization code ─────────────────────────────────────────
+	codeCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+
+	srv := &http.Server{ReadTimeout: 5 * time.Minute}
+	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/callback" {
+			http.NotFound(w, r)
+			return
+		}
+		q := r.URL.Query()
+		if got := q.Get("state"); got != state {
+			http.Error(w, "state mismatch", http.StatusBadRequest)
+			errCh <- fmt.Errorf("OIDC state mismatch")
+			return
+		}
+		code := q.Get("code")
+		if code == "" {
+			http.Error(w, "missing code", http.StatusBadRequest)
+			errCh <- fmt.Errorf("OIDC: no code in callback")
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, "<html><body><h1>✓ Enrollment in progress</h1><p>You can close this tab.</p></body></html>")
+		codeCh <- code
+	})
+
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	var code string
+	select {
+	case code = <-codeCh:
+		srv.Shutdown(context.Background()) //nolint:errcheck
+	case err := <-errCh:
+		srv.Shutdown(context.Background()) //nolint:errcheck
+		return "", err
+	case <-ctx.Done():
+		srv.Shutdown(context.Background()) //nolint:errcheck
+		return "", fmt.Errorf("OIDC: timed out waiting for browser callback")
+	}
+
+	// ── 6. Exchange code for ID token ──────────────────────────────────────────
+	idToken, err := exchangeCodeForIDToken(ctx, disc.TokenEndpoint, clientID, code, codeVerifier, callbackURL)
+	if err != nil {
+		return "", fmt.Errorf("token exchange: %w", err)
+	}
+
+	// ── 7. Exchange ID token for AgentKMS enrollment token ─────────────────────
+	enrollToken, err := agentKMSBootstrap(ctx, agentKMSAddr, idToken)
+	if err != nil {
+		return "", fmt.Errorf("AgentKMS bootstrap: %w", err)
+	}
+	return enrollToken, nil
+}
+
+// oidcDiscovery holds the fields we need from the OIDC discovery document.
+type oidcDiscovery struct {
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+}
+
+func fetchOIDCDiscovery(ctx context.Context, issuer string) (*oidcDiscovery, error) {
+	well := strings.TrimRight(issuer, "/") + "/.well-known/openid-configuration"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, well, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", well, err)
+	}
+	defer resp.Body.Close()
+	var d oidcDiscovery
+	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+		return nil, fmt.Errorf("parse discovery: %w", err)
+	}
+	return &d, nil
+}
+
+func exchangeCodeForIDToken(ctx context.Context, tokenEndpoint, clientID, code, verifier, redirectURI string) (string, error) {
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {clientID},
+		"code":          {code},
+		"code_verifier": {verifier},
+		"redirect_uri":  {redirectURI},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint,
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("POST %s: %w", tokenEndpoint, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+
+	if resp.StatusCode != http.StatusOK {
+		// Do not include body in error — it may contain a partial token.
+		return "", fmt.Errorf("token endpoint returned HTTP %d", resp.StatusCode)
+	}
+
+	var result struct {
+		IDToken string `json:"id_token"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("parse token response: %w", err)
+	}
+	if result.IDToken == "" {
+		return "", fmt.Errorf("no id_token in token response")
+	}
+	return result.IDToken, nil
+}
+
+// agentKMSBootstrap exchanges an OIDC ID token for a short-lived AgentKMS
+// enrollment token via POST /auth/bootstrap.
+//
+// This endpoint does not exist yet (tracked in backlog as part of A-11 full
+// implementation). For now, returns an error with a helpful message.
+func agentKMSBootstrap(ctx context.Context, agentKMSAddr, idToken string) (string, error) {
+	enrollURL := strings.TrimRight(agentKMSAddr, "/") + "/auth/bootstrap"
+	body := fmt.Sprintf(`{"id_token":%q}`, idToken)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, enrollURL,
+		strings.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("POST %s: %w", enrollURL, err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("/auth/bootstrap not yet implemented on this server " +
+			"(backlog A-11 T1 — use --bootstrap-token for now)")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("bootstrap endpoint returned HTTP %d", resp.StatusCode)
+	}
+
+	var result struct {
+		EnrollToken string `json:"enroll_token"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("parse bootstrap response: %w", err)
+	}
+	if result.EnrollToken == "" {
+		return "", fmt.Errorf("no enroll_token in bootstrap response")
+	}
+	// SECURITY: token returned to caller in memory only; never logged.
+	return result.EnrollToken, nil
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// resolveName determines the developer identity name from the flag or OS user.
-func resolveName(flag string) (string, error) {
-	if flag != "" {
-		return flag, nil
-	}
-	u, err := user.Current()
-	if err != nil {
-		return "", fmt.Errorf("determining OS username (use --name to override): %w", err)
-	}
-	if u.Username == "" {
-		return "", fmt.Errorf("OS username is empty; use --name to set developer identity")
-	}
-	return u.Username, nil
-}
-
-// resolveDir determines the output directory from the flag or the default
-// (~/.agentkms/dev).
-func resolveDir(flag string) (string, error) {
-	if flag != "" {
-		return flag, nil
-	}
+func defaultOutputDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("determining home directory (use --dir to override): %w", err)
+		return ".agentkms"
 	}
-	return filepath.Join(home, ".agentkms", "dev"), nil
+	return filepath.Join(home, ".agentkms")
 }
 
-// writeFile writes data to path with the given permissions.
-// If the file exists, it is overwritten.
-//
-// SECURITY: private key files (*.key) must be written with mode 0600.
-// This is enforced at the call site — callers must pass the correct mode.
-func writeFile(path string, data []byte, mode os.FileMode) error {
-	// Write to a temp file first, then rename atomically.
-	// This prevents partial writes from leaving a corrupt file.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, mode); err != nil {
-		return fmt.Errorf("writing temp file %q: %w", tmp, err)
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp) // best effort cleanup
-		return fmt.Errorf("renaming %q to %q: %w", tmp, path, err)
+	return fallback
+}
+
+func randomHex(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generating random bytes: %w", err)
 	}
-	return nil
+	return hex.EncodeToString(b), nil
+}
+
+func openBrowser(url string) {
+	var cmd string
+	var args []string
+	switch runtime.GOOS {
+	case "darwin":
+		cmd, args = "open", []string{url}
+	case "linux":
+		cmd, args = "xdg-open", []string{url}
+	case "windows":
+		cmd, args = "cmd", []string{"/c", "start", url}
+	default:
+		return // unsupported; user must open manually
+	}
+	exec.Command(cmd, args...).Start() //nolint:errcheck
 }

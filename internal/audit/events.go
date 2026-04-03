@@ -36,6 +36,8 @@ const (
 	OperationBlockedRead    = "blocked_read"
 	OperationPanicRecovery  = "panic_recovery"
 	OperationKeyCreate      = "key_create"
+	OperationRevokeCert     = "revoke_cert"
+	OperationGetCRL         = "get_crl"
 )
 
 // ── Outcome constants ─────────────────────────────────────────────────────────

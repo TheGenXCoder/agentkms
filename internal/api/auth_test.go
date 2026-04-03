@@ -254,18 +254,47 @@ func TestSession_AuditEventWritten(t *testing.T) {
 	}
 }
 
-func TestSession_FailedAuth_AuditIsErrorOutcome(t *testing.T) {
+func TestSession_RevokedCert_Returns401(t *testing.T) {
 	_, handler, auditor := newTestStack(t)
+	cert := makeTestCert(t, "revoked@platform-team")
 
-	// No cert → identity extraction fails.
-	doSession(t, handler, nil)
+	// Setup revocation checker
+	checker := auth.NewCertRevocationChecker()
+	// Create a dummy CRL with this cert's serial number
+	crlDER, err := tlsutil.GenerateCRL(authTestCA, []x509.RevocationListEntry{
+		{
+			SerialNumber:   cert.Cert.SerialNumber,
+			RevocationTime: time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("GenerateCRL: %v", err)
+	}
+	if err := checker.UpdateFromCRL(crlDER); err != nil {
+		t.Fatalf("UpdateFromCRL: %v", err)
+	}
 
+	handler.SetPKI(nil, checker) // nil PKI client for this test
+
+	w := doSession(t, handler, cert.Cert)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 for revoked cert", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "revoked") {
+		t.Errorf("body = %q, want mention of revocation", w.Body.String())
+	}
+
+	// Verify audit log
 	if len(auditor.events) == 0 {
-		t.Fatal("no audit events written for failed session")
+		t.Fatal("no audit events written for revoked cert")
 	}
 	ev := auditor.events[0]
-	if ev.Outcome != audit.OutcomeError {
-		t.Errorf("failed session audit.Outcome = %q, want %q", ev.Outcome, audit.OutcomeError)
+	if ev.Operation != audit.OperationAuth {
+		t.Errorf("audit.Operation = %q, want %q", ev.Operation, audit.OperationAuth)
+	}
+	if ev.DenyReason != "client certificate revoked" {
+		t.Errorf("audit.DenyReason = %q, want 'client certificate revoked'", ev.DenyReason)
 	}
 }
 

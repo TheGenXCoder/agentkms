@@ -16,6 +16,11 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	_, _ = w.Write(body)
 }
 
+// decodeJSON decodes a JSON request body into the given destination.
+func decodeJSON(r *http.Request, dest any) error {
+	return json.NewDecoder(r.Body).Decode(dest)
+}
+
 // sourceIP is an alias for extractRemoteIP. Used by auth.go.
 func sourceIP(r *http.Request) string { return extractRemoteIP(r) }
 

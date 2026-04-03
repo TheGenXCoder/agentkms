@@ -151,6 +151,13 @@ func run() error {
 	mux.Handle("POST /auth/revoke",
 		auth.RequireToken(tokenSvc)(http.HandlerFunc(authHandler.Revoke)))
 
+	// POST /auth/certificate/revoke — admin-only.
+	mux.Handle("POST /auth/certificate/revoke",
+		auth.RequireToken(tokenSvc)(http.HandlerFunc(authHandler.RevokeCertificate)))
+
+	// GET /auth/certificate/crl — public.
+	mux.HandleFunc("GET /auth/certificate/crl", authHandler.CRL)
+
 	// Health check — no auth (used by monitoring and load balancer probes).
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

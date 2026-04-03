@@ -173,6 +173,24 @@ func GenerateLeafCert(ca *CertBundle, opts LeafOptions) (*CertBundle, error) {
 	return encodeBundle(tmpl, ca.Cert, leafPriv, ca.PrivKey)
 }
 
+// GenerateCRL creates a DER-encoded CRL signed by the provided CA.
+func GenerateCRL(ca *CertBundle, revoked []x509.RevocationListEntry) ([]byte, error) {
+	now := time.Now().UTC()
+	tmpl := &x509.RevocationList{
+		Number:                     big.NewInt(1),
+		ThisUpdate:                 now,
+		NextUpdate:                 now.Add(24 * time.Hour),
+		RevokedCertificateEntries: revoked,
+	}
+
+	crlDER, err := x509.CreateRevocationList(rand.Reader, tmpl, ca.Cert, ca.PrivKey)
+	if err != nil {
+		return nil, fmt.Errorf("tlsutil: creating CRL: %w", err)
+	}
+
+	return crlDER, nil
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 // encodeBundle signs tmpl (using signerKey against parent) and encodes

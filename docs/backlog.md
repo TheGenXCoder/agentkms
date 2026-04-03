@@ -50,8 +50,8 @@
 | A-09 | P0 | T0 | [x] | Implement `agentkms-dev enroll` CLI | Implemented as `agentkms-dev enroll` subcommand in `cmd/dev/main.go`; `cmd/enroll/main.go` remains a stub for production SSO (A-11) |
 | A-10 | P1 | T1 | [x] | Implement PKI engine integration for cert issuance (OpenBao PKI backend) | Issues team intermediate CAs and developer certs |
 | A-11 | P1 | T1 | [x] | Implement OIDC/SAML SSO flow in `agentkms enroll` | Browser-based enrollment; maps SSO identity to team cert |
-| A-12 | P2 | T2 | [ ] | Implement SPIFFE/SVID support for workload identity (K8s service accounts) | Required for CI/CD and service-to-service auth |
-| A-13 | P2 | T2 | [ ] | Implement cert revocation (OCSP responder or CRL distribution) | Required for incident response |
+| A-12 | P2 | T2 | [x] | Implement SPIFFE/SVID support for workload identity (K8s service accounts) | Required for CI/CD and service-to-service auth |
+| A-13 | P2 | T2 | [x] | Implement cert revocation (OCSP responder or CRL distribution) | Required for incident response |
 
 ---
 

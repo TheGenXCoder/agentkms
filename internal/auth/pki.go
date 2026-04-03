@@ -242,6 +242,81 @@ func (p *PKIClient) IssueCert(ctx context.Context, callerID, teamID, spiffeID, t
 	}, nil
 }
 
+// RevokeCert requests the revocation of a certificate by its serial number.
+//
+// serialNumber is the hex-encoded certificate serial number (e.g. "01:02:03:04").
+//
+// Returns nil on success, or an error if the revocation fails.
+// A-13.
+func (p *PKIClient) RevokeCert(ctx context.Context, serialNumber string) error {
+	if serialNumber == "" {
+		return fmt.Errorf("auth: PKIClient.RevokeCert: serialNumber is required")
+	}
+
+	reqBody := struct {
+		SerialNumber string `json:"serial_number"`
+	}{
+		SerialNumber: serialNumber,
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("auth: PKIClient.RevokeCert: marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/v1/%s/revoke",
+		strings.TrimRight(p.cfg.Address, "/"),
+		strings.Trim(p.cfg.PKIMount, "/"),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("auth: PKIClient.RevokeCert: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Vault-Token", p.cfg.BootstrapToken)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("auth: PKIClient.RevokeCert: HTTP: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		return fmt.Errorf("auth: PKIClient.RevokeCert: HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// FetchCRL retrieves the current Certificate Revocation List (CRL) from the
+// PKI engine in DER format.
+// A-13.
+func (p *PKIClient) FetchCRL(ctx context.Context) ([]byte, error) {
+	url := fmt.Sprintf("%s/v1/%s/cert/crl",
+		strings.TrimRight(p.cfg.Address, "/"),
+		strings.Trim(p.cfg.PKIMount, "/"),
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("auth: PKIClient.FetchCRL: %w", err)
+	}
+	req.Header.Set("X-Vault-Token", p.cfg.BootstrapToken)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("auth: PKIClient.FetchCRL: HTTP: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("auth: PKIClient.FetchCRL: HTTP %d", resp.StatusCode)
+	}
+
+	return io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024)) // 10MB limit for CRL
+}
+
 // FetchCACert retrieves the current CA certificate from the PKI engine.
 // Used to bootstrap trust when the client does not yet have the CA cert.
 func (p *PKIClient) FetchCACert(ctx context.Context) (string, error) {

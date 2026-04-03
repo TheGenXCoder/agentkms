@@ -160,9 +160,62 @@ func TestExtractIdentity_MissingCN(t *testing.T) {
 	}
 }
 
-func TestExtractIdentity_MissingOrg(t *testing.T) {
-	// Org is required (it carries TeamID).  GenerateLeafCert with empty Org
-	// produces a cert with no O field.
+func TestExtractIdentity_SPIFFEWorkloadMapping(t *testing.T) {
+	tests := []struct {
+		name     string
+		spiffeID string
+		wantTeam string
+		wantRole identity.Role
+	}{
+		{
+			name:     "AgentKMS Team SPIFFE",
+			spiffeID: "spiffe://agentkms.org/team/platform-team/identity/bert",
+			wantTeam: "platform-team",
+			wantRole: identity.RoleService, // No OU field, defaults to RoleService for SPIFFE
+		},
+		{
+			name:     "K8s Namespace SPIFFE",
+			spiffeID: "spiffe://cluster.local/ns/payments/sa/processor",
+			wantTeam: "k8s-payments",
+			wantRole: identity.RoleService,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// No Org field in LeafOptions to test SPIFFE mapping
+			bundle, err := tlsutil.GenerateLeafCert(testCA, tlsutil.LeafOptions{
+				CN:           "workload",
+				Org:          "", // Deliberately empty
+				SPIFFEID:     tt.spiffeID,
+				ExtKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+				Validity:     time.Hour,
+			})
+			if err != nil {
+				t.Fatalf("GenerateLeafCert: %v", err)
+			}
+
+			r := requestWithCert(t, bundle.Cert)
+			id, err := auth.ExtractIdentity(r)
+			if err != nil {
+				t.Fatalf("ExtractIdentity: %v", err)
+			}
+
+			if id.TeamID != tt.wantTeam {
+				t.Errorf("TeamID = %q, want %q", id.TeamID, tt.wantTeam)
+			}
+			if id.Role != tt.wantRole {
+				t.Errorf("Role = %q, want %q", id.Role, tt.wantRole)
+			}
+			if id.SPIFFEID != tt.spiffeID {
+				t.Errorf("SPIFFEID = %q, want %q", id.SPIFFEID, tt.spiffeID)
+			}
+		})
+	}
+}
+
+func TestExtractIdentity_MissingOrgAndSPIFFE(t *testing.T) {
+	// Build a cert with no Org and no SPIFFE SAN.
 	bundle, err := tlsutil.GenerateLeafCert(testCA, tlsutil.LeafOptions{
 		CN:           "bert@platform-team",
 		Org:          "", // deliberately omitted
@@ -176,7 +229,7 @@ func TestExtractIdentity_MissingOrg(t *testing.T) {
 	r := requestWithCert(t, bundle.Cert)
 	_, err = auth.ExtractIdentity(r)
 	if err == nil {
-		t.Fatal("expected error for cert with no Organisation field, got nil")
+		t.Fatal("expected error for cert with no Organisation field AND no SPIFFE ID, got nil")
 	}
 }
 

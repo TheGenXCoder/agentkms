@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"crypto/x509"
+	"fmt"
+	"math/big"
 	"sync"
 	"time"
 )
@@ -82,4 +85,52 @@ func (r *RevocationList) pruneExpired() {
 			delete(r.entries, jti)
 		}
 	}
+}
+
+// CertRevocationChecker maintains an in-memory list of revoked certificate
+// serial numbers, refreshed periodically from a CRL source.
+//
+// A-13.
+type CertRevocationChecker struct {
+	mu             sync.RWMutex
+	revokedSerials map[string]bool // hex serial → true
+}
+
+// NewCertRevocationChecker returns an empty CertRevocationChecker.
+func NewCertRevocationChecker() *CertRevocationChecker {
+	return &CertRevocationChecker{
+		revokedSerials: make(map[string]bool),
+	}
+}
+
+// UpdateFromCRL parses a DER-encoded CRL and updates the local revocation list.
+//
+// This method should be called periodically (e.g. every 5-15 minutes) to
+// stay current with the PKI engine's revocation state.
+func (c *CertRevocationChecker) UpdateFromCRL(crlDER []byte) error {
+	crl, err := x509.ParseRevocationList(crlDER)
+	if err != nil {
+		return fmt.Errorf("auth: parse CRL: %w", err)
+	}
+
+	newSerials := make(map[string]bool)
+	for _, entry := range crl.RevokedCertificateEntries {
+		newSerials[fmt.Sprintf("%x", entry.SerialNumber)] = true
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.revokedSerials = newSerials
+	return nil
+}
+
+// IsRevoked reports whether the given certificate serial number is present
+// in the current revocation list.
+func (c *CertRevocationChecker) IsRevoked(serial *big.Int) bool {
+	if serial == nil {
+		return false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.revokedSerials[fmt.Sprintf("%x", serial)]
 }

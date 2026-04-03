@@ -61,11 +61,44 @@ func identityFromCert(cert *x509.Certificate) (*identity.Identity, error) {
 		return nil, fmt.Errorf("auth: client certificate has no Common Name (CN) — cannot identify caller")
 	}
 
-	// Organisation is the team identifier.
-	if len(cert.Subject.Organization) == 0 || strings.TrimSpace(cert.Subject.Organization[0]) == "" {
-		return nil, fmt.Errorf("auth: client certificate has no Organisation (O) — cannot identify team")
+	// First SPIFFE URI SAN.
+	var spiffeID string
+	for _, u := range cert.URIs {
+		// Exact scheme match only — "spiffe", not "spiffefoo" or similar.
+		// url.Parse lowercases the scheme, so no case folding needed.
+		if u != nil && u.Scheme == "spiffe" {
+			spiffeID = u.String()
+			break
+		}
 	}
-	teamID := strings.TrimSpace(cert.Subject.Organization[0])
+
+	// Organisation is the team identifier.
+	var teamID string
+	if len(cert.Subject.Organization) > 0 && strings.TrimSpace(cert.Subject.Organization[0]) != "" {
+		teamID = strings.TrimSpace(cert.Subject.Organization[0])
+	} else if spiffeID != "" {
+		// For SPIFFE-only certificates (common in K8s/Spire), derive team from
+		// the SPIFFE ID.
+		// Pattern 1: spiffe://agentkms.org/team/{teamID}/...
+		// Pattern 2: spiffe://cluster.local/ns/{namespace}/sa/{serviceaccount}
+		if strings.HasPrefix(spiffeID, "spiffe://agentkms.org/team/") {
+			parts := strings.Split(strings.TrimPrefix(spiffeID, "spiffe://agentkms.org/team/"), "/")
+			if len(parts) > 0 && parts[0] != "" {
+				teamID = parts[0]
+			}
+		} else if strings.Contains(spiffeID, "/ns/") {
+			// Map K8s namespace to TeamID for workload identities.
+			idx := strings.Index(spiffeID, "/ns/")
+			parts := strings.Split(spiffeID[idx+4:], "/")
+			if len(parts) > 0 && parts[0] != "" {
+				teamID = "k8s-" + parts[0]
+			}
+		}
+	}
+
+	if teamID == "" {
+		return nil, fmt.Errorf("auth: client certificate has no Organisation (O) and no recognisable SPIFFE team mapping — cannot identify team")
+	}
 
 	// Organisational Unit maps to role.  Unrecognised values default to
 	// RoleDeveloper rather than failing, to allow certificate extensions without
@@ -80,17 +113,9 @@ func identityFromCert(cert *x509.Certificate) (*identity.Identity, error) {
 		case "agent":
 			role = identity.RoleAgent
 		}
-	}
-
-	// First SPIFFE URI SAN.
-	var spiffeID string
-	for _, u := range cert.URIs {
-		// Exact scheme match only — "spiffe", not "spiffefoo" or similar.
-		// url.Parse lowercases the scheme, so no case folding needed.
-		if u != nil && u.Scheme == "spiffe" {
-			spiffeID = u.String()
-			break
-		}
+	} else if spiffeID != "" {
+		// Workloads with SPIFFE IDs but no OU are treated as RoleService.
+		role = identity.RoleService
 	}
 
 	// SHA-256 fingerprint of the raw DER certificate bytes.

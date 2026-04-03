@@ -26,6 +26,7 @@ import (
 
 	"github.com/agentkms/agentkms/internal/api"
 	"github.com/agentkms/agentkms/internal/audit"
+	"github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/policy"
@@ -121,6 +122,10 @@ func main() {
 	auditor := audit.NewMultiAuditor(auditorSinks...)
 
 	slog.Info("audit sink ready", "path", *auditLog)
+
+	// ── Signal handling ────────────────────────────────────────────────────────
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
 
 	// ── Vault mTLS ─────────────────────────────────────────────────────────────
 	var vaultTLS *tls.Config
@@ -222,6 +227,61 @@ func main() {
 	}
 
 	// ── HTTP server ────────────────────────────────────────────────────────────
+	// ── Auth handler ──────────────────────────────────────────────────────────
+	rl := auth.NewRevocationList()
+	tokenSvc, err := auth.NewTokenService(rl)
+	if err != nil {
+		slog.Error("failed to create token service", "error", err)
+		os.Exit(1)
+	}
+	authHandler := api.NewAuthHandler(tokenSvc, auditor, *env)
+
+	// A-13: setup certificate revocation if Vault is available.
+	var certChecker *auth.CertRevocationChecker
+	if *vaultAddr != "" {
+		pkiCfg := auth.PKIConfig{
+			Address:        *vaultAddr,
+			BootstrapToken: vaultToken,
+			TLSConfig:      vaultTLS,
+		}
+		pkiClient := auth.NewPKIClient(pkiCfg)
+		certChecker = auth.NewCertRevocationChecker()
+		authHandler.SetPKI(pkiClient, certChecker)
+
+		// Periodic CRL update (A-13).
+		go func() {
+			update := func() {
+				// Use the signal-aware context for the fetch.
+				crlDER, err := pkiClient.FetchCRL(ctx)
+				if err != nil {
+					// Only log error if context wasn't cancelled.
+					if !errors.Is(err, context.Canceled) {
+						slog.Error("failed to fetch CRL", "error", err)
+					}
+				} else {
+					if err := certChecker.UpdateFromCRL(crlDER); err != nil {
+						slog.Error("failed to update CRL", "error", err)
+					} else {
+						slog.Info("CRL updated successfully")
+					}
+				}
+			}
+
+			update() // initial update
+
+			ticker := time.NewTicker(15 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					update()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
 	// ── Credential vender ─────────────────────────────────────────────────────
 	apiServer := api.NewServer(bknd, auditor, eng, *env)
 	if *vaultAddr != "" {
@@ -232,6 +292,11 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/", apiServer)
+	mux.HandleFunc("POST /auth/session", authHandler.Session)
+	mux.HandleFunc("POST /auth/refresh", authHandler.Refresh)
+	mux.HandleFunc("POST /auth/revoke", authHandler.Revoke)
+	mux.HandleFunc("POST /auth/certificate/revoke", authHandler.RevokeCertificate)
+	mux.HandleFunc("GET /auth/certificate/crl", authHandler.CRL)
 	mux.HandleFunc("/healthz", handleHealthz)
 	mux.HandleFunc("/readyz", handleReadyz)
 
@@ -252,10 +317,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// ── Signal handling + graceful shutdown ────────────────────────────────────
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-
 	errCh := make(chan error, 1)
 	go func() {
 		if *tlsCert != "" && *tlsKey != "" {
@@ -272,8 +333,8 @@ func main() {
 	}()
 
 	select {
-	case sig := <-sigCh:
-		slog.Info("received signal, shutting down", "signal", sig)
+	case <-ctx.Done():
+		slog.Info("received signal, shutting down", "signal", ctx.Err())
 	case err := <-errCh:
 		slog.Error("server error", "error", err)
 		os.Exit(1)

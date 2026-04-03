@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -21,6 +22,8 @@ import (
 // /auth/refresh and /auth/revoke are guarded by auth.RequireToken middleware.
 type AuthHandler struct {
 	tokens      *auth.TokenService
+	pki         *auth.PKIClient           // optional; for cert revocation
+	certChecker *auth.CertRevocationChecker // optional; for cert revocation
 	auditor     audit.Auditor
 	environment string // "dev", "staging", "production"
 }
@@ -33,6 +36,12 @@ func NewAuthHandler(tokens *auth.TokenService, auditor audit.Auditor, environmen
 		auditor:     auditor,
 		environment: environment,
 	}
+}
+
+// SetPKI wires in the PKI client and cert checker for certificate revocation support.
+func (h *AuthHandler) SetPKI(pki *auth.PKIClient, checker *auth.CertRevocationChecker) {
+	h.pki = pki
+	h.certChecker = checker
 }
 
 // ── POST /auth/session ────────────────────────────────────────────────────────
@@ -69,6 +78,20 @@ func (h *AuthHandler) Session(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A-13: check for certificate revocation if checker is configured.
+	if h.certChecker != nil {
+		// We need the raw certificate to get the serial number.
+		if len(r.TLS.VerifiedChains) > 0 && len(r.TLS.VerifiedChains[0]) > 0 {
+			cert := r.TLS.VerifiedChains[0][0]
+			if h.certChecker.IsRevoked(cert.SerialNumber) {
+				h.logAuditError(r.Context(), r, id.CallerID, id.TeamID,
+					audit.OperationAuth, "client certificate revoked")
+				writeJSONError(w, http.StatusUnauthorized, "client certificate revoked")
+				return
+			}
+		}
+	}
+
 	tokenStr, tok, err := h.tokens.Issue(id)
 	if err != nil {
 		// tok is nil when Issue returns an error (e.g. JTI generation fails).
@@ -94,6 +117,73 @@ func (h *AuthHandler) Session(w http.ResponseWriter, r *http.Request) {
 		ExpiresIn: int(auth.TokenTTL / time.Second),
 		SessionID: tok.JTI,
 	})
+}
+
+// ── Certificate Revocation (A-13) ─────────────────────────────────────────────
+
+// RevokeCertificate handles POST /auth/certificate/revoke.
+//
+// Admin-only endpoint to revoke a client certificate.
+func (h *AuthHandler) RevokeCertificate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if h.pki == nil {
+		writeJSONError(w, http.StatusNotImplemented, "PKI support not configured")
+		return
+	}
+
+	var req struct {
+		SerialNumber string `json:"serial_number"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.SerialNumber == "" {
+		writeJSONError(w, http.StatusBadRequest, "serial_number is required")
+		return
+	}
+
+	if err := h.pki.RevokeCert(r.Context(), req.SerialNumber); err != nil {
+		h.logAuditError(r.Context(), r, "", "", audit.OperationRevokeCert,
+			fmt.Sprintf("certificate revocation failed: %v", err))
+		writeJSONError(w, http.StatusInternalServerError, "failed to revoke certificate")
+		return
+	}
+
+	h.logAudit(r.Context(), r, "", "", "", audit.OperationRevokeCert, audit.OutcomeSuccess, "")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// CRL handles GET /auth/certificate/crl.
+//
+// Returns the current CRL from the PKI engine.
+func (h *AuthHandler) CRL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if h.pki == nil {
+		writeJSONError(w, http.StatusNotImplemented, "PKI support not configured")
+		return
+	}
+
+	crlDER, err := h.pki.FetchCRL(r.Context())
+	if err != nil {
+		h.logAuditError(r.Context(), r, "", "", audit.OperationGetCRL,
+			fmt.Sprintf("CRL fetch failed: %v", err))
+		writeJSONError(w, http.StatusInternalServerError, "failed to fetch CRL")
+		return
+	}
+
+	h.logAudit(r.Context(), r, "", "", "", audit.OperationGetCRL, audit.OutcomeSuccess, "")
+	w.Header().Set("Content-Type", "application/pkix-crl")
+	_, _ = w.Write(crlDER)
 }
 
 // ── POST /auth/refresh ────────────────────────────────────────────────────────

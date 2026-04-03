@@ -4,8 +4,19 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"regexp"
+	"strings"
 	"time"
 )
+
+// hexKeyPattern matches 64 or more consecutive hexadecimal characters.
+// 64 hex chars = 32 bytes = the minimum size for key material that
+// AgentKMS handles: AES-256 keys, SHA-256 digests, Ed25519 seeds, and
+// ECDSA P-256 scalars are all exactly 32 bytes in raw form.
+//
+// The pattern has no anchors so it matches anywhere inside a string —
+// a 64-char hex run embedded in a longer message is still flagged.
+var hexKeyPattern = regexp.MustCompile(`[0-9a-fA-F]{64,}`)
 
 // ── Operation constants ───────────────────────────────────────────────────────
 
@@ -150,6 +161,59 @@ func NewEventID() (string, error) {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
+
+// ── Validation ───────────────────────────────────────────────────────────────
+
+// Validate performs a runtime security check verifying that free-text fields
+// in the AuditEvent do not contain patterns associated with key material.
+//
+// Fields checked:
+//   - DenyReason: must not contain PEM block delimiters ("-----BEGIN" /
+//     "-----END") or a hex-encoded sequence of ≥ 32 bytes (64 hex chars).
+//
+// Why fail closed: if DenyReason contains a PEM-encoded private key or a
+// 32-byte hex blob, writing it to any audit sink (ELK, Splunk, CloudWatch)
+// constitutes a key-material leak — a catastrophic security violation.
+// A missed audit event is recoverable; a key leak is not.
+//
+// Callers (Auditor implementations) MUST call Validate before writing.
+// MultiAuditor.Log enforces this automatically.
+//
+// F-09.
+func (e AuditEvent) Validate() error {
+	if err := checkForKeyMaterial("DenyReason", e.DenyReason); err != nil {
+		return fmt.Errorf("audit: AuditEvent.Validate: %w", err)
+	}
+	return nil
+}
+
+// checkForKeyMaterial checks a single free-text field for key material
+// patterns. It is intentionally conservative: a false positive (blocking
+// a deny reason that happens to contain a long hex run) is far preferable
+// to a false negative (silently writing a private key to an audit sink).
+func checkForKeyMaterial(field, value string) error {
+	if value == "" {
+		return nil
+	}
+	// PEM block delimiters — the canonical markers for encoded key material.
+	if strings.Contains(value, "-----BEGIN") || strings.Contains(value, "-----END") {
+		return fmt.Errorf(
+			"field %q contains a PEM block delimiter — key material must not appear in audit events",
+			field,
+		)
+	}
+	// Hex blob of ≥ 32 bytes — matches raw key material formatted with
+	// fmt.Sprintf("%x", keyBytes) or hex.EncodeToString(keyBytes).
+	if hexKeyPattern.MatchString(value) {
+		return fmt.Errorf(
+			"field %q contains a hex sequence of ≥ 32 bytes — possible key material",
+			field,
+		)
+	}
+	return nil
+}
+
+// ── Event construction ────────────────────────────────────────────────────────
 
 // New returns a new AuditEvent with EventID and Timestamp pre-populated.
 // Callers should fill in the remaining fields before passing to Auditor.Log.

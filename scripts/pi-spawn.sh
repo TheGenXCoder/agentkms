@@ -45,21 +45,13 @@ select_model() {
 
   case "$tier" in
     worker)
-      echo "ollama/devstral:24b"
+      echo "google-antigravity/gemini-3-flash"
       ;;
     qa)
-      if [ "$hour" -ge 11 ] && [ "$hour" -lt 15 ]; then
-        echo "google-antigravity/claude-sonnet-4-6"
-      else
-        echo "anthropic/claude-sonnet-4-6"
-      fi
+      echo "google-antigravity/gemini-3.1-pro-high"
       ;;
     review)
-      if [ "$hour" -ge 11 ] && [ "$hour" -lt 15 ]; then
-        echo "google-antigravity/claude-opus-4-6-thinking"
-      else
-        echo "anthropic/claude-opus-4-6"
-      fi
+      echo "google-antigravity/gemini-3.1-pro-high"
       ;;
     *)
       echo >&2 "ERROR: Unknown tier: $tier (use worker|qa|review)"

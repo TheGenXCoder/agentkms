@@ -26,6 +26,7 @@ import (
 	"github.com/agentkms/agentkms/internal/api"
 	"github.com/agentkms/agentkms/internal/audit"
 	"github.com/agentkms/agentkms/internal/backend"
+	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/policy"
 )
 
@@ -36,6 +37,7 @@ const (
 	defaultAuditLog    = "/tmp/audit.log"
 	defaultEnvironment = "production"
 	shutdownTimeout    = 30 * time.Second
+	defaultELKAddr     = ""
 )
 
 func main() {
@@ -46,6 +48,8 @@ func main() {
 	vaultAddr  := flag.String("vault-addr", envOr("AGENTKMS_VAULT_ADDR", ""), "OpenBao/Vault address")
 	policyFile := flag.String("policy", envOr("AGENTKMS_POLICY", ""), "Policy YAML file (optional; empty = deny all)")
 	auditLog   := flag.String("audit-log", envOr("AGENTKMS_AUDIT_LOG", defaultAuditLog), "Audit log file path")
+	elkAddr    := flag.String("elk-addr", envOr("AGENTKMS_ELK_ADDR", defaultELKAddr), "Elasticsearch address (optional)")
+	elkIndex   := flag.String("elk-index", envOr("AGENTKMS_ELK_INDEX", "agentkms-audit"), "Elasticsearch index")
 	env        := flag.String("env", envOr("AGENTKMS_ENV", defaultEnvironment), "Deployment environment")
 	flag.Parse()
 
@@ -73,7 +77,28 @@ func main() {
 		os.Exit(1)
 	}
 	signingAuditor := audit.NewSigningAuditor(fileSink, signer)
-	auditor := audit.NewMultiAuditor(signingAuditor)
+
+	var auditorSinks []audit.Auditor
+	auditorSinks = append(auditorSinks, signingAuditor)
+
+	// Wire ELK sink if configured.
+	if *elkAddr != "" {
+		ctx := context.Background()
+		elkSink, err := audit.NewELKAuditSink(ctx, audit.ELKConfig{
+			Address:       *elkAddr,
+			Index:         *elkIndex,
+			BufferSize:    50,
+			FlushInterval: 5 * time.Second,
+		})
+		if err != nil {
+			slog.Error("failed to create ELK audit sink", "addr", *elkAddr, "error", err)
+			os.Exit(1)
+		}
+		auditorSinks = append(auditorSinks, audit.NewSigningAuditor(elkSink, signer))
+		slog.Info("ELK audit sink ready", "addr", *elkAddr, "index", *elkIndex)
+	}
+
+	auditor := audit.NewMultiAuditor(auditorSinks...)
 
 	slog.Info("audit sink ready", "path", *auditLog)
 
@@ -127,7 +152,16 @@ func main() {
 	}
 
 	// ── HTTP server ────────────────────────────────────────────────────────────
+	// ── Credential vender ─────────────────────────────────────────────────────
 	apiServer := api.NewServer(bknd, auditor, eng, *env)
+	if *vaultAddr != "" {
+		token, err := readToken(*tokenPath)
+		if err == nil {
+			kv := credentials.NewOpenBaoKV(*vaultAddr, token)
+			apiServer.SetVender(credentials.NewVender(kv, "kv"))
+			slog.Info("credential vender ready")
+		}
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/", apiServer)

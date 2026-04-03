@@ -111,18 +111,19 @@ func (m *MultiAuditor) Sinks() int {
 // In most configurations, only one sink (the primary storage, e.g. ELK or a
 // local file) will implement Exporter.  MultiAuditor returns the first
 // non-nil Export result it receives.
-func (m *MultiAuditor) Export(ctx context.Context, start, end time.Time) ([]AuditEvent, error) {
+func (m *MultiAuditor) Export(ctx context.Context, start, end time.Time) (<-chan AuditEvent, <-chan error) {
 	for _, sink := range m.sinks {
 		if exporter, ok := sink.(Exporter); ok {
-			events, err := exporter.Export(ctx, start, end)
-			if err != nil {
-				// Continue to next sink if one fails.
-				continue
-			}
-			if events != nil {
-				return events, nil
+			out, errc := exporter.Export(ctx, start, end)
+			if out != nil {
+				return out, errc
 			}
 		}
 	}
-	return nil, fmt.Errorf("audit: no configured sink supports export or no events found")
+	errc := make(chan error, 1)
+	errc <- fmt.Errorf("audit: no configured sink supports export")
+	close(errc)
+	out := make(chan AuditEvent)
+	close(out)
+	return out, errc
 }

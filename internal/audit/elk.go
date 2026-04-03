@@ -135,9 +135,8 @@ func (s *ELKAuditSink) Log(ctx context.Context, event AuditEvent) error {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.cfg.BufferSize <= 1 {
+		s.mu.Unlock()
 		return s.writeOne(ctx, event)
 	}
 
@@ -153,6 +152,7 @@ func (s *ELKAuditSink) Log(ctx context.Context, event AuditEvent) error {
 	if len(s.buf) >= s.cfg.BufferSize {
 		return s.flushLocked(ctx)
 	}
+	s.mu.Unlock()
 	return nil
 }
 
@@ -163,7 +163,6 @@ func (s *ELKAuditSink) Flush(ctx context.Context) error {
 		return fmt.Errorf("audit: ELKAuditSink: flush context cancelled: %w", err)
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	return s.flushLocked(ctx)
 }
 
@@ -208,17 +207,23 @@ func (s *ELKAuditSink) writeOne(ctx context.Context, event AuditEvent) error {
 	return nil
 }
 
-// flushLocked writes all buffered events via the ES Bulk API.
-// Caller must hold s.mu.
+// flushLocked swaps the buffer and flushes it to ES without holding the lock
+// during the HTTP call. Caller must hold s.mu, but this function will release
+// it before blocking.
 func (s *ELKAuditSink) flushLocked(ctx context.Context) error {
 	if len(s.buf) == 0 {
+		s.mu.Unlock()
 		return nil
 	}
 
+	// Swap buffer to avoid blocking Log() during slow HTTP calls.
+	batch := s.buf
+	s.buf = make([]AuditEvent, 0, s.cfg.BufferSize)
+	s.mu.Unlock()
+
 	// Build NDJSON bulk payload.
 	var bulk bytes.Buffer
-	for _, ev := range s.buf {
-		// Action meta line: index with doc ID = event ID.
+	for _, ev := range batch {
 		meta := fmt.Sprintf(`{"index":{"_index":%q,"_id":%q}}`, s.index, ev.EventID)
 		bulk.WriteString(meta)
 		bulk.WriteByte('\n')
@@ -241,6 +246,7 @@ func (s *ELKAuditSink) flushLocked(ctx context.Context) error {
 
 	resp, err := s.client.Do(req)
 	if err != nil {
+		// Log and discard, do not re-buffer best-effort batch.
 		return fmt.Errorf("audit: ELKAuditSink: bulk HTTP: %w", err)
 	}
 	defer resp.Body.Close()
@@ -267,7 +273,6 @@ func (s *ELKAuditSink) flushLocked(ctx context.Context) error {
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(respBody, &bulkResp); err != nil {
-		// Can't parse response — treat as failure, don't clear buffer.
 		return fmt.Errorf("audit: ELKAuditSink: parse bulk response: %w", err)
 	}
 	if bulkResp.Errors {
@@ -277,19 +282,16 @@ func (s *ELKAuditSink) flushLocked(ctx context.Context) error {
 				failed++
 			}
 		}
-		// Log but still clear — events were best-effort delivered.
-		// Individual item failures are typically mapping conflicts,
-		// not transient — retrying won't help.
 		fmt.Fprintf(os.Stderr, "audit: ELK: bulk write had %d/%d item failures\n",
 			failed, len(bulkResp.Items))
 	}
 
-	// Clear buffer only after successful write.
+	s.mu.Lock()
 	if s.dropped > 0 {
 		fmt.Fprintf(os.Stderr, "audit: ELK: %d events were dropped due to buffer overflow\n", s.dropped)
 		s.dropped = 0
 	}
-	s.buf = s.buf[:0]
+	s.mu.Unlock()
 	return nil
 }
 
@@ -311,15 +313,19 @@ func (s *ELKAuditSink) flushLoop(ctx context.Context, interval time.Duration) {
 	for {
 		select {
 		case <-ctx.Done():
+			finalCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			s.mu.Lock()
+			_ = s.flushLocked(finalCtx)
 			return
 		case <-ticker.C:
 			s.mu.Lock()
 			if err := s.flushLocked(ctx); err != nil {
-				// Log flush failure — operator visibility for HIGH-01.
+				s.mu.Lock()
 				fmt.Fprintf(os.Stderr, "audit: ELK: flush error: %v (buffer=%d, dropped=%d)\n",
 					err, len(s.buf), s.dropped)
+				s.mu.Unlock()
 			}
-			s.mu.Unlock()
 		}
 	}
 }

@@ -134,34 +134,48 @@ func (s *FileAuditSink) Close() error {
 //
 // SECURITY: this is only safe if the local file is protected by OS permissions
 // (0600).  In Tier 0/1, this is the canonical source of audit events.
-func (s *FileAuditSink) Export(ctx context.Context, start, end time.Time) ([]AuditEvent, error) {
-	// We open a separate read-only handle so we don't interfere with the
-	// append-only write handle and don't need to hold the mutex for the
-	// entire read duration.
-	f, err := os.Open(s.path)
-	if err != nil {
-		return nil, fmt.Errorf("audit: file sink export: %w", err)
-	}
-	defer f.Close()
+func (s *FileAuditSink) Export(ctx context.Context, start, end time.Time) (<-chan AuditEvent, <-chan error) {
+	out := make(chan AuditEvent, 100)
+	errc := make(chan error, 1)
 
-	var events []AuditEvent
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+	go func() {
+		defer close(out)
+		defer close(errc)
+
+		// We open a separate read-only handle so we don't interfere with the
+		// append-only write handle and don't need to hold the mutex for the
+		// entire read duration.
+		f, err := os.Open(s.path)
+		if err != nil {
+			errc <- fmt.Errorf("audit: file sink export: %w", err)
+			return
 		}
-		var ev AuditEvent
-		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
-			// Skip malformed lines — file might be being written to.
-			continue
+		defer f.Close()
+
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			if err := ctx.Err(); err != nil {
+				errc <- err
+				return
+			}
+			var ev AuditEvent
+			if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+				// Skip malformed lines — file might be being written to.
+				continue
+			}
+			if (ev.Timestamp.After(start) || ev.Timestamp.Equal(start)) &&
+				(ev.Timestamp.Before(end) || ev.Timestamp.Equal(end)) {
+				select {
+				case out <- ev:
+				case <-ctx.Done():
+					errc <- ctx.Err()
+					return
+				}
+			}
 		}
-		if (ev.Timestamp.After(start) || ev.Timestamp.Equal(start)) &&
-			(ev.Timestamp.Before(end) || ev.Timestamp.Equal(end)) {
-			events = append(events, ev)
+		if err := scanner.Err(); err != nil {
+			errc <- fmt.Errorf("audit: file sink export scanner: %w", err)
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("audit: file sink export scanner: %w", err)
-	}
-	return events, nil
+	}()
+	return out, errc
 }

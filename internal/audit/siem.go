@@ -88,9 +88,9 @@ func (s *SIEMAuditSink) Log(ctx context.Context, event AuditEvent) error {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if s.cfg.BufferSize <= 1 {
+		s.mu.Unlock()
 		return s.writeBatch(ctx, []AuditEvent{event})
 	}
 
@@ -102,25 +102,26 @@ func (s *SIEMAuditSink) Log(ctx context.Context, event AuditEvent) error {
 	if len(s.buf) >= s.cfg.BufferSize {
 		return s.flushLocked(ctx)
 	}
+	s.mu.Unlock()
 	return nil
 }
 
 // Flush writes all buffered events to the webhook.
 func (s *SIEMAuditSink) Flush(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	return s.flushLocked(ctx)
 }
 
 func (s *SIEMAuditSink) flushLocked(ctx context.Context) error {
 	if len(s.buf) == 0 {
+		s.mu.Unlock()
 		return nil
 	}
-	err := s.writeBatch(ctx, s.buf)
-	if err == nil {
-		s.buf = s.buf[:0]
-	}
-	return err
+	batch := s.buf
+	s.buf = make([]AuditEvent, 0, s.cfg.BufferSize)
+	s.mu.Unlock()
+
+	return s.writeBatch(ctx, batch)
 }
 
 func (s *SIEMAuditSink) writeBatch(ctx context.Context, events []AuditEvent) error {
@@ -162,6 +163,9 @@ func (s *SIEMAuditSink) flushLoop(ctx context.Context, interval time.Duration) {
 	for {
 		select {
 		case <-ctx.Done():
+			finalCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			s.Flush(finalCtx)
 			return
 		case <-ticker.C:
 			s.Flush(ctx)

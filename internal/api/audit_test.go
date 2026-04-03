@@ -20,17 +20,20 @@ type exportableAuditor struct {
 	capturingAuditor
 }
 
-func (a *exportableAuditor) Export(ctx context.Context, start, end time.Time) ([]audit.AuditEvent, error) {
+func (a *exportableAuditor) Export(ctx context.Context, start, end time.Time) (<-chan audit.AuditEvent, <-chan error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	var out []audit.AuditEvent
+	out := make(chan audit.AuditEvent, len(a.events))
+	errc := make(chan error, 1)
 	for _, ev := range a.events {
 		if (ev.Timestamp.After(start) || ev.Timestamp.Equal(start)) &&
 			(ev.Timestamp.Before(end) || ev.Timestamp.Equal(end)) {
-			out = append(out, ev)
+			out <- ev
 		}
 	}
-	return out, nil
+	close(out)
+	close(errc)
+	return out, errc
 }
 
 func TestHandleExportAuditLogs(t *testing.T) {

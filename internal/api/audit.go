@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/agentkms/agentkms/internal/audit"
@@ -53,21 +54,52 @@ func (s *Server) handleExportAuditLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Export.
-	events, err := exporter.Export(ctx, start, end)
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "export failed")
+	// 3. Start export stream.
+	out, errc := exporter.Export(ctx, start, end)
+	if out == nil {
+		s.writeError(w, http.StatusNotImplemented, errCodeInternal, "export failed")
 		return
 	}
 
-	// 4. Respond with NDJSON.
+	// 4. Set headers and stream NDJSON.
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Content-Disposition", `attachment; filename="audit-export.json"`)
+	// Use HTTP Trailers to signal integrity as recommended by Finding 7.
+	w.Header().Set("Trailer", "X-Export-Status")
 	w.WriteHeader(http.StatusOK)
 
 	enc := json.NewEncoder(w)
-	for _, ev := range events {
-		if err := enc.Encode(ev); err != nil {
+	success := false
+	defer func() {
+		if success {
+			w.Header().Set("X-Export-Status", "SUCCESS")
+		} else {
+			w.Header().Set("X-Export-Status", "INCOMPLETE")
+		}
+	}()
+
+	for {
+		select {
+		case ev, ok := <-out:
+			if !ok {
+				// Check for errors at the end of the stream.
+				if err := <-errc; err != nil {
+					// We already sent 200 OK, so we just abort the stream.
+					return
+				}
+				success = true
+				return
+			}
+			if err := enc.Encode(ev); err != nil {
+				return
+			}
+		case err := <-errc:
+			if err != nil {
+				// If we error before sending any events, we could try to send a 500,
+				// but we already sent the headers. Just abort.
+				return
+			}
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -91,9 +123,23 @@ func (s *Server) handleLogCredentialUse(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	id := identityFromContext(ctx)
 
+	// SECURITY: Add missing policy check (Finding 5)
+	decision, err := s.policy.Evaluate(ctx, id, "audit_write", "*")
+	if err != nil || !decision.Allow {
+		s.writeError(w, http.StatusForbidden, errCodePolicyDenied, "operation denied")
+		return
+	}
+
 	var req useRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, errCodeInvalidRequest, "invalid request body")
+		return
+	}
+
+	// SECURITY: Validate provider against regex to prevent log poisoning (Finding 6)
+	validProvider := regexp.MustCompile(`^[a-z0-9-]+$`)
+	if !validProvider.MatchString(req.Provider) {
+		s.writeError(w, http.StatusBadRequest, errCodeInvalidRequest, "invalid provider format")
 		return
 	}
 

@@ -39,8 +39,13 @@ func TestFileAuditSink_FlushExportClose(t *testing.T) {
 	// Test Export
 	start := now.Add(-1 * time.Hour)
 	end := now.Add(1 * time.Hour)
-	events, err := sink.Export(ctx, start, end)
-	if err != nil {
+	out, errc := sink.Export(ctx, start, end)
+	
+	var events []AuditEvent
+	for ev := range out {
+		events = append(events, ev)
+	}
+	if err := <-errc; err != nil {
 		t.Fatalf("Failed to export: %v", err)
 	}
 
@@ -76,8 +81,9 @@ func TestFileAuditSink_ExportCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Pre-cancel
 
-	_, err = sink.Export(ctx, time.Time{}, time.Now().Add(time.Hour))
-	if err == nil {
+	out, errc := sink.Export(ctx, time.Time{}, time.Now().Add(time.Hour))
+	for range out {} // drain
+	if err := <-errc; err == nil {
 		t.Fatal("Expected error due to cancelled context")
 	}
 }

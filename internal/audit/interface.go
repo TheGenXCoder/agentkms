@@ -83,10 +83,12 @@ type Auditor interface {
 // file.  In higher tiers, implementations may query ELK, Splunk, or other
 // external sinks.
 type Exporter interface {
-	// Export returns all audit events between start and end (inclusive).
+	// Export streams all audit events between start and end (inclusive)
+	// to the provided channel. Implementations must close the channel
+	// when complete or on error.
 	//
 	// SECURITY: Callers must verify the identity has the 'auditor' role
 	// before calling Export.  The returned events may contain sensitive
 	// metadata (IPs, caller IDs).
-	Export(ctx context.Context, start, end time.Time) ([]AuditEvent, error)
+	Export(ctx context.Context, start, end time.Time) (<-chan AuditEvent, <-chan error)
 }

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentKMS UI</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background: #f4f7f9; color: #333; }
+        nav { display: flex; gap: 20px; border-bottom: 2px solid #ddd; padding-bottom: 10px; margin-bottom: 20px; }
+        nav a { text-decoration: none; color: #007bff; font-weight: bold; cursor: pointer; }
+        nav a:hover { text-decoration: underline; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-top: 10px; }
+        th, td { text-align: left; padding: 12px 15px; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; color: #555; }
+        tr:hover { background: #f1f1f1; }
+        .status-success { color: #28a745; }
+        .status-error { color: #dc3545; }
+        .status-denied { color: #ffc107; }
+        textarea { width: 100%; height: 400px; font-family: monospace; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px; }
+        button:hover { background: #0056b3; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <h1>AgentKMS Key Management</h1>
+    <nav>
+        <a onclick="showTab('keys')">Keys</a>
+        <a onclick="showTab('audit')">Audit Logs</a>
+        <a onclick="showTab('policy')">Policy Editor</a>
+    </nav>
+
+    <div id="keys" class="tab-content active">
+        <div class="card">
+            <h2>Keys</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Key ID</th>
+                        <th>Algorithm</th>
+                        <th>Version</th>
+                        <th>Team ID</th>
+                        <th>Created At</th>
+                    </tr>
+                </thead>
+                <tbody id="keys-body">
+                    <tr><td colspan="5">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="audit" class="tab-content">
+        <div class="card">
+            <h2>Recent Audit Logs (last 1 hour)</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Operation</th>
+                        <th>Key ID</th>
+                        <th>Caller ID</th>
+                        <th>Outcome</th>
+                    </tr>
+                </thead>
+                <tbody id="audit-body">
+                    <tr><td colspan="5">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="policy" class="tab-content">
+        <div class="card">
+            <h2>Policy Editor (YAML)</h2>
+            <textarea id="policy-text"></textarea>
+            <br>
+            <button onclick="savePolicy()">Save Policy</button>
+            <p id="policy-status"></p>
+        </div>
+    </div>
+
+    <script>
+        function showTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            if (tabId === 'keys') fetchKeys();
+            if (tabId === 'audit') fetchAudit();
+            if (tabId === 'policy') fetchPolicy();
+        }
+
+        async function fetchKeys() {
+            const tbody = document.getElementById('keys-body');
+            try {
+                const response = await fetch('/ui/api/keys');
+                const keys = await response.json();
+                tbody.innerHTML = keys.map(k => `
+                    <tr>
+                        <td>${k.key_id}</td>
+                        <td>${k.algorithm}</td>
+                        <td>${k.version}</td>
+                        <td>${k.team_id}</td>
+                        <td>${new Date(k.created_at).toLocaleString()}</td>
+                    </tr>
+                `).join('') || '<tr><td colspan="5">No keys found.</td></tr>';
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="5" class="status-error">Error: ${e.message}</td></tr>`;
+            }
+        }
+
+        async function fetchAudit() {
+            const tbody = document.getElementById('audit-body');
+            try {
+                const response = await fetch('/ui/api/audit');
+                const logs = await response.json();
+                tbody.innerHTML = logs.map(l => `
+                    <tr>
+                        <td>${new Date(l.timestamp).toLocaleString()}</td>
+                        <td>${l.operation}</td>
+                        <td>${l.key_id || '-'}</td>
+                        <td>${l.caller_id}</td>
+                        <td class="status-${l.outcome}">${l.outcome}</td>
+                    </tr>
+                `).join('') || '<tr><td colspan="5">No audit logs found.</td></tr>';
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="5" class="status-error">Error: ${e.message}</td></tr>`;
+            }
+        }
+
+        async function fetchPolicy() {
+            const textarea = document.getElementById('policy-text');
+            try {
+                const response = await fetch('/ui/api/policy');
+                const yaml = await response.text();
+                textarea.value = yaml;
+            } catch (e) {
+                textarea.value = `Error loading policy: ${e.message}`;
+            }
+        }
+
+        async function savePolicy() {
+            const textarea = document.getElementById('policy-text');
+            const status = document.getElementById('policy-status');
+            status.innerText = 'Saving...';
+            try {
+                const response = await fetch('/ui/api/policy', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/x-yaml' },
+                    body: textarea.value
+                });
+                if (response.ok) {
+                    status.innerText = 'Policy saved successfully!';
+                    status.className = 'status-success';
+                } else {
+                    const text = await response.text();
+                    status.innerText = `Error: ${text}`;
+                    status.className = 'status-error';
+                }
+            } catch (e) {
+                status.innerText = `Error: ${e.message}`;
+                status.className = 'status-error';
+            }
+        }
+
+        // Initial load
+        fetchKeys();
+    </script>
+</body>
+</html>

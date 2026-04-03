@@ -30,6 +30,7 @@ import (
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/policy"
+	"github.com/agentkms/agentkms/internal/ui"
 	"github.com/agentkms/agentkms/pkg/tlsutil"
 )
 
@@ -311,6 +312,15 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/", apiServer)
+
+	// ── UI registration ───────────────────────────────────────────────────────
+	uiHandlers := &ui.Handlers{
+		Backend: bknd,
+		Auditor: auditor,
+		Policy:  eng,
+		Env:     *env,
+	}
+	ui.RegisterHandlers(mux, uiHandlers)
 	mux.HandleFunc("POST /auth/session", authHandler.Session)
 	mux.HandleFunc("POST /auth/refresh", authHandler.Refresh)
 	mux.HandleFunc("POST /auth/revoke", authHandler.Revoke)

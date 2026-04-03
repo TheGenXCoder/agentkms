@@ -34,6 +34,7 @@ const (
 	OperationListKeys       = "list_keys"
 	OperationRotateKey      = "rotate_key"
 	OperationBlockedRead    = "blocked_read"
+	OperationPanicRecovery  = "panic_recovery"
 )
 
 // ── Outcome constants ─────────────────────────────────────────────────────────

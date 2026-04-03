@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentkms.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agentkms.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "agentkms.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Force pod restart when the configmap changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "agentkms.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+
+      {{- if .Values.vaultAgent.enabled }}
+      initContainers:
+        - name: vault-agent-init
+          image: hashicorp/vault:latest
+          command:
+            - vault
+            - agent
+            - -config=/vault/config/agent.hcl
+            - -exit-after-auth
+          env:
+            - name: VAULT_ADDR
+              value: {{ .Values.openbao.address | quote }}
+          volumeMounts:
+            - name: vault-agent-config
+              mountPath: /vault/config
+            - name: vault-token
+              mountPath: /vault/secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+      {{- end }}
+
+      containers:
+        - name: agentkms
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: api
+              containerPort: 8200
+              protocol: TCP
+          env:
+            - name: AGENTKMS_VAULT_ADDR
+              value: {{ .Values.openbao.address | quote }}
+            - name: AGENTKMS_VAULT_TOKEN_PATH
+              value: "/vault/secrets/token"
+            - name: AGENTKMS_ENV
+              value: {{ .Values.config.environment | quote }}
+            - name: AGENTKMS_LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+          volumeMounts:
+            - name: vault-token
+              mountPath: /vault/secrets
+              readOnly: true
+            - name: config
+              mountPath: /etc/agentkms
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: api
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: api
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+      volumes:
+        - name: vault-token
+          emptyDir:
+            medium: Memory   # token lives only in memory, never on disk
+        - name: config
+          configMap:
+            name: {{ include "agentkms.fullname" . }}-config
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.vaultAgent.enabled }}
+        - name: vault-agent-config
+          configMap:
+            name: {{ include "agentkms.fullname" . }}-vault-agent
+        {{- end }}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

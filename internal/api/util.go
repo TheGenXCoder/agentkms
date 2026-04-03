@@ -2,18 +2,13 @@ package api
 
 import (
 	"encoding/json"
-	"net"
 	"net/http"
 )
 
-// writeJSONError writes an HTTP error response with a JSON body.
+// writeJSONError writes a simple {"error": "<msg>"} JSON response.
+// Used by the auth handler and auth middleware.
 //
-// The response body is always {"error": "<msg>"} and the Content-Type is
-// always application/json.
-//
-// SECURITY: msg must not contain key material, token content, stack traces,
-// or internal error details that could help an attacker.  Pass a generic
-// human-readable message; log the real error via the Auditor.
+// SECURITY: msg must not contain key material, tokens, or internal details.
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -21,31 +16,10 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	_, _ = w.Write(body)
 }
 
-// writeJSON encodes v as JSON and writes it to w with the given HTTP status.
-// Sets Content-Type: application/json.
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
+// sourceIP is an alias for extractRemoteIP. Used by auth.go.
+func sourceIP(r *http.Request) string { return extractRemoteIP(r) }
 
-// sourceIP extracts the client's IP address from the request, stripping the
-// port number.  If the RemoteAddr cannot be parsed, returns the raw string.
-//
-// NOTE: In production behind a load balancer or proxy, the real IP may be
-// in X-Forwarded-For.  That header is intentionally NOT read here; in mTLS
-// setups the RemoteAddr is always the direct peer.  If a proxy is added
-// in front of AgentKMS, revisit this function and add appropriate trust logic.
-func sourceIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
-// userAgent returns the User-Agent header value, trimmed to a safe maximum
-// length to prevent log inflation.
+// userAgent returns the User-Agent header trimmed to a safe maximum length.
 func userAgent(r *http.Request) string {
 	ua := r.UserAgent()
 	const maxLen = 256

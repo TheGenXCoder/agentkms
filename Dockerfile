@@ -38,7 +38,11 @@ RUN go mod download && go mod verify
 # leakage in stack traces and debug symbols).
 # -ldflags "-s -w" strips the symbol table and DWARF info (smaller binary).
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+# TARGETOS/TARGETARCH are set automatically by docker buildx from --platform.
+# Falling back to linux/amd64 when building without --platform (e.g. on odev).
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build \
       -trimpath \
       -ldflags="-s -w" \

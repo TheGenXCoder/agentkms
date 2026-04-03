@@ -329,16 +329,26 @@ func TestAdversarial_Sign_ES256_NoPrivateKeyInSignature(t *testing.T) {
 		t.Fatal("ADVERSARIAL: Sign result.Signature contains private key scalar D")
 	}
 
-	// Serialise the entire SignResult to JSON and re-check.
-	encoded, err := json.Marshal(result)
+	// JSON round-trip check: unmarshal the JSON back into a SignResult and
+	// re-examine the Signature field.  This is the correct way to check
+	// []byte fields in JSON — json.Marshal base64-encodes them, so
+	// bytes.Contains(jsonBlob, rawKeyBytes) would trivially pass even if
+	// the key appeared in the signature (the raw bytes are absent; only
+	// their base64 encoding is present).  Unmarshalling recovers the raw
+	// bytes so we can apply the same check as above.
+	encodedJSON, err := json.Marshal(result)
 	if err != nil {
 		t.Fatalf("json.Marshal(SignResult): %v", err)
 	}
-	if bytes.Contains(encoded, privDER) {
-		t.Fatal("ADVERSARIAL: JSON-encoded SignResult contains private key DER")
+	var roundTripped SignResult
+	if err := json.Unmarshal(encodedJSON, &roundTripped); err != nil {
+		t.Fatalf("json.Unmarshal(SignResult): %v", err)
 	}
-	if bytes.Contains(encoded, privD) {
-		t.Fatal("ADVERSARIAL: JSON-encoded SignResult contains private key scalar D")
+	if bytes.Contains(roundTripped.Signature, privDER) {
+		t.Fatal("ADVERSARIAL: JSON round-tripped SignResult.Signature contains private key DER")
+	}
+	if bytes.Contains(roundTripped.Signature, privD) {
+		t.Fatal("ADVERSARIAL: JSON round-tripped SignResult.Signature contains private key scalar D")
 	}
 }
 
@@ -432,13 +442,19 @@ func TestAdversarial_Encrypt_NoAESKeyInCiphertext(t *testing.T) {
 		t.Fatal("ADVERSARIAL: Ciphertext contains AES key material")
 	}
 
-	// JSON-encode the EncryptResult and check again.
-	encoded, err := json.Marshal(result)
+	// JSON round-trip check: unmarshal and re-examine Ciphertext bytes.
+	// bytes.Contains(rawJSON, aesKey) would always pass for []byte fields
+	// since JSON encodes them as base64.  Unmarshal to recover the raw bytes.
+	encodedJSON, err := json.Marshal(result)
 	if err != nil {
 		t.Fatalf("json.Marshal(EncryptResult): %v", err)
 	}
-	if bytes.Contains(encoded, aesKey) {
-		t.Fatal("ADVERSARIAL: JSON-encoded EncryptResult contains AES key material")
+	var roundTripped EncryptResult
+	if err := json.Unmarshal(encodedJSON, &roundTripped); err != nil {
+		t.Fatalf("json.Unmarshal(EncryptResult): %v", err)
+	}
+	if bytes.Contains(roundTripped.Ciphertext, aesKey) {
+		t.Fatal("ADVERSARIAL: JSON round-tripped EncryptResult.Ciphertext contains AES key material")
 	}
 }
 
@@ -521,6 +537,10 @@ func TestAdversarial_ListKeys_NoKeyMaterial(t *testing.T) {
 	b.mu.RUnlock()
 
 	// Serialise all KeyMeta to JSON and check none of the key bytes appear.
+	// KeyMeta has no []byte fields (all fields are string, Algorithm, int,
+	// time.Time, *time.Time) so bytes.Contains(jsonBlob, rawKeyBytes) is the
+	// correct check — any key material in a string field appears literally in
+	// the JSON, not base64-encoded.
 	for _, meta := range metas {
 		encoded, err := json.Marshal(meta)
 		if err != nil {
@@ -1094,6 +1114,9 @@ func TestAdversarial_RotateKey_NoKeyMaterialInResult(t *testing.T) {
 	entry.mu.RUnlock()
 
 	// JSON-encode the returned KeyMeta and check none of the key bytes appear.
+	// KeyMeta has no []byte fields, so bytes.Contains(jsonBlob, rawKeyBytes)
+	// is the correct check: any key material in a string field would appear
+	// literally in the JSON output.
 	encoded, err := json.Marshal(meta)
 	if err != nil {
 		t.Fatalf("json.Marshal(KeyMeta): %v", err)
@@ -1185,15 +1208,23 @@ func TestAdversarial_Sign_EdDSA_NoPrivateKeyInJSONResult(t *testing.T) {
 		t.Fatalf("Sign: %v", err)
 	}
 
-	encoded, err := json.Marshal(result)
+	// JSON round-trip: unmarshal to recover raw Signature bytes, then check.
+	// Do not use bytes.Contains(rawJSON, keyBytes) for []byte fields — JSON
+	// base64-encodes them, so raw key bytes never appear in the JSON blob
+	// regardless of whether the signature contains them.
+	encodedJSON, err := json.Marshal(result)
 	if err != nil {
 		t.Fatalf("json.Marshal(SignResult): %v", err)
 	}
-	if bytes.Contains(encoded, privAll) {
-		t.Fatal("ADVERSARIAL: JSON-encoded EdDSA SignResult contains full private key bytes")
+	var roundTripped SignResult
+	if err := json.Unmarshal(encodedJSON, &roundTripped); err != nil {
+		t.Fatalf("json.Unmarshal(SignResult): %v", err)
 	}
-	if bytes.Contains(encoded, privSeed) {
-		t.Fatal("ADVERSARIAL: JSON-encoded EdDSA SignResult contains private key seed")
+	if bytes.Contains(roundTripped.Signature, privAll) {
+		t.Fatal("ADVERSARIAL: JSON round-tripped EdDSA SignResult.Signature contains full private key bytes")
+	}
+	if bytes.Contains(roundTripped.Signature, privSeed) {
+		t.Fatal("ADVERSARIAL: JSON round-tripped EdDSA SignResult.Signature contains private key seed")
 	}
 }
 

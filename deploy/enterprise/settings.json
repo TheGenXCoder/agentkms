@@ -1,0 +1,15 @@
+{
+  "_comment": "Enterprise AgentKMS Pi package distribution template.",
+  "_comment2": "Distribute this file via MDM, dotfiles repo, or agentkms enroll CLI.",
+  "_comment3": "Replace 10.2.10.152:30487 with your internal npm registry address.",
+  "packages": [
+    {
+      "source": "npm:@org/agentkms@0.1.0",
+      "extensions": ["extensions/index.ts"],
+      "skills": ["skills/agentkms"]
+    }
+  ],
+  "npmRegistry": {
+    "@org": "http://10.2.10.152:30487/"
+  }
+}

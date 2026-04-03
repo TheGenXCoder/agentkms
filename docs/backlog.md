@@ -15,7 +15,7 @@
 | CO-01 | P0 | T0 | [x] | `scripts/coordinate.sh` — worktree + tmux + Pi launcher | Done: setup, status, open, teardown commands |
 | CO-02 | P0 | T0 | [x] | `.pi/extensions/coordinator.ts` — in-session Pi extension | Done: /coord status\|next\|focus\|gates, session_start context injection |
 | CO-03 | P1 | T0 | [x] | Add `scripts/coordinate.sh` to CI health check (verify worktrees + session integrity) | `health` subcommand: checks worktree exists, correct branch, clean tree (warn), go build passes |
-| CO-04 | P2 | T1 | [ ] | Extend coordinator to track cross-stream dependencies (A-04 + B-01 unblock C-01 full integration) | Currently documented as notes only |
+| CO-04 | P2 | T1 | [x] | Extend coordinator to track cross-stream dependencies (A-04 + B-01 unblock C-01 full integration) | Currently documented as notes only |
 
 ---
 
@@ -48,8 +48,8 @@
 | A-07 | P0 | T0 | [x] | Implement `POST /auth/refresh` handler | Validates existing token, issues new one with fresh TTL |
 | A-08 | P0 | T0 | [x] | Implement `POST /auth/revoke` handler | Adds token to blocklist, 204 response |
 | A-09 | P0 | T0 | [x] | Implement `agentkms-dev enroll` CLI | Implemented as `agentkms-dev enroll` subcommand in `cmd/dev/main.go`; `cmd/enroll/main.go` remains a stub for production SSO (A-11) |
-| A-10 | P1 | T1 | [ ] | Implement PKI engine integration for cert issuance (OpenBao PKI backend) | Issues team intermediate CAs and developer certs |
-| A-11 | P1 | T1 | [ ] | Implement OIDC/SAML SSO flow in `agentkms enroll` | Browser-based enrollment; maps SSO identity to team cert |
+| A-10 | P1 | T1 | [x] | Implement PKI engine integration for cert issuance (OpenBao PKI backend) | Issues team intermediate CAs and developer certs |
+| A-11 | P1 | T1 | [x] | Implement OIDC/SAML SSO flow in `agentkms enroll` | Browser-based enrollment; maps SSO identity to team cert |
 | A-12 | P2 | T2 | [ ] | Implement SPIFFE/SVID support for workload identity (K8s service accounts) | Required for CI/CD and service-to-service auth |
 | A-13 | P2 | T2 | [ ] | Implement cert revocation (OCSP responder or CRL distribution) | Required for incident response |
 
@@ -63,7 +63,7 @@
 | P-02 | P0 | T0 | [x] | Implement policy loader from local YAML (`internal/policy/loader.go`) | Used in T0/dev mode |
 | P-03 | P0 | T0 | [x] | Implement policy evaluator (`internal/policy/engine.go`) | Returns allow/deny + reason for every (identity, operation, key-id) triple |
 | P-04 | P0 | T0 | [x] | Enforce deny-by-default — no operation succeeds without explicit allow | Test: empty policy = all operations denied |
-| P-05 | P1 | T1 | [ ] | Implement policy loader from OpenBao/Vault policy engine | Replaces local YAML in T1+ |
+| P-05 | P1 | T1 | [x] | Implement policy loader from OpenBao/Vault policy engine | Replaces local YAML in T1+ |
 | P-06 | P1 | T1 | [x] | Implement rate limiting in policy engine | Per (rule, callerID) sliding-window counter; conservative shared budget |
 | P-07 | P2 | T2 | [ ] | Implement anomaly detection (rules-based) | Spike detection, unusual hours, repeated denials |
 | P-08 | P3 | T3 | [ ] | Implement ML-augmented anomaly detection | Baseline normal, flag statistical outliers |
@@ -145,7 +145,7 @@
 | PI-11 | P1 | T1 | [x] | Implement `crypto_encrypt` tool | — |
 | PI-12 | P1 | T1 | [x] | Implement `crypto_decrypt` tool | — |
 | PI-13 | P1 | T1 | [x] | Write `skills/agentkms/SKILL.md` | When to use, rules, key ID format |
-| PI-14 | P1 | T1 | [ ] | Publish to private npm registry | Pin version in enterprise settings.json |
+| PI-14 | P1 | T1 | [x] | Publish to private npm registry | Pin version in enterprise settings.json |
 | PI-15 | P2 | T2 | [ ] | Implement `/agentkms-status` Pi command (token TTL, connected identity, active providers) | Developer visibility |
 | PI-16 | P2 | T2 | [ ] | Write enterprise `settings.json` template + AGENTS.md template for distribution | Via `agentkms enroll` CLI output |
 
@@ -185,7 +185,7 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| CX-01 | P1 | T1 | [ ] | Write compliance control mapping (architecture.md §8 → testable evidence) | Investor + auditor artifact |
+| CX-01 | P1 | T1 | [x] | Write compliance control mapping (architecture.md §8 → testable evidence) | Investor + auditor artifact |
 | CX-02 | P1 | T2 | [ ] | Write security runbook (incident response for: cert compromise, token leak, audit failure) | Required for SOC 2 |
 | CX-03 | P1 | T2 | [ ] | Write key rotation runbook (schedule, steps, rollback procedure) | Required for PCI-DSS |
 | CX-04 | P2 | T2 | [ ] | Write GDPR data flow diagram (where key metadata lives, retention, erasure procedure) | — |

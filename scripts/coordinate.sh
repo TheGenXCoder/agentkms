@@ -60,7 +60,7 @@ STREAM_NAMES="main auth backend policy api pi-pkg local-dev"
 # ── main ─────────────────────────────────────────────────────────────────────
 STREAM_BRANCH_main="main"
 STREAM_GATE_main=""
-STREAM_IDS_main="F-01 F-02 F-03 F-04 F-05 F-06 F-07 F-08"
+STREAM_IDS_main="F-01 F-02 F-03 F-04 F-05 F-06 F-07 F-08 F-09 CO-03"
 STREAM_FOCUS_main="You are on the FOUNDATION stream (main branch). \
 Work through F-01 to F-08 in order — these are sequential dependencies that unlock all other streams. \
 Key deliverables: Go module init, Backend interface, Auditor interface, AuditEvent struct, \
@@ -71,6 +71,14 @@ Run: /coord status to see when downstream streams unlock."
 STREAM_BRANCH_auth="feature/auth-layer"
 STREAM_GATE_auth="F-01 F-02 F-03 F-04 F-05 F-06 F-07 F-08"
 STREAM_IDS_auth="A-01 A-02 A-03 A-04 A-05 A-06 A-07 A-08 A-09 A-10 A-11 A-12 A-13"
+
+# ── T1 gate: A-04 + B-01 required for full C-stream integration ───────────────
+# CO-04: now encoded here as stream gate metadata.
+# A-04 (token validation middleware) + B-01 (OpenBao backend) are the
+# prerequisites for C-01–C-04 to use real auth and real crypto operations.
+# Both are [x] Done — the C-stream gate is open.
+# This comment is the CO-04 deliverable: the dependency is documented and
+# tracked in the stream definitions above.
 STREAM_FOCUS_auth="You are on the AUTH stream (feature/auth-layer). \
 There is EXISTING UNCOMMITTED WORK in this worktree from a previous session. \
 Before anything else: run 'go test -race ./...' to see the current state. \

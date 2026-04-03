@@ -52,7 +52,10 @@ type OpenBaoConfig struct {
 	// For production deployments prefer AppRole or Kubernetes auth; this token
 	// is for bootstrapping and integration tests.
 	// Required.
-	Token string
+	//
+	// SECURITY: json:"-" prevents accidental token exposure if this struct is
+	// ever serialised to JSON (e.g. debug logging, config export, tracing).
+	Token string `json:"-"`
 
 	// MountPath is the path at which the Transit secrets engine is mounted.
 	// Defaults to "transit" if empty.
@@ -617,6 +620,10 @@ func mapTransitError(err error, keyID string) error {
 
 	case http.StatusUnprocessableEntity:
 		// 422 from Transit typically means wrong key type for operation.
+		// This branch is defensive: current Vault/OpenBao versions return 400 for
+		// type mismatches, but the 422 status code has appeared in older Transit
+		// releases. We keep it so future version changes do not produce a generic
+		// error instead of ErrKeyTypeMismatch.
 		return fmt.Errorf("%w: key %q: %s", ErrKeyTypeMismatch, keyID, vErr.safeMessage())
 
 	default:

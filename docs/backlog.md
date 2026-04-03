@@ -14,7 +14,7 @@
 |----|-----|-------|--------|------|-------|
 | CO-01 | P0 | T0 | [x] | `scripts/coordinate.sh` — worktree + tmux + Pi launcher | Done: setup, status, open, teardown commands |
 | CO-02 | P0 | T0 | [x] | `.pi/extensions/coordinator.ts` — in-session Pi extension | Done: /coord status\|next\|focus\|gates, session_start context injection |
-| CO-03 | P1 | T0 | [ ] | Add `scripts/coordinate.sh` to CI health check (verify worktrees + session integrity) | — |
+| CO-03 | P1 | T0 | [x] | Add `scripts/coordinate.sh` to CI health check (verify worktrees + session integrity) | `health` subcommand: checks worktree exists, correct branch, clean tree (warn), go build passes |
 | CO-04 | P2 | T1 | [ ] | Extend coordinator to track cross-stream dependencies (A-04 + B-01 unblock C-01 full integration) | Currently documented as notes only |
 
 ---
@@ -31,7 +31,7 @@
 | F-06 | P0 | T0 | [x] | Implement file audit sink (`internal/audit/file.go`) — structured JSON, append-only | Used in local dev mode |
 | F-07 | P1 | T0 | [x] | Implement `MultiAuditor` (`internal/audit/multi.go`) — fan-out to N sinks | All audit writes go through this |
 | F-08 | P0 | T0 | [x] | Write adversarial tests for Backend interface contract | Test: key material never in return values, error paths don't leak |
-| F-09 | P1 | T0 | [ ] | Add `AuditEvent.Validate()` — runtime check that `DenyReason` contains no key material patterns (PEM headers, hex key-length blobs) | Must be wired into all API handlers before C-stream items land. Identified by Opus adversarial review round 2. |
+| F-09 | P1 | T0 | [x] | Add `AuditEvent.Validate()` — runtime check that `DenyReason` contains no key material patterns (PEM headers, hex key-length blobs) | Wired into MultiAuditor.Log(); fail closed — invalid events rejected before any sink is called |
 
 ---
 

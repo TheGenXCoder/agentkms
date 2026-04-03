@@ -490,6 +490,107 @@ open_new_streams() {
 }
 
 # =============================================================================
+# Health Check (CO-03)
+# =============================================================================
+#
+# Verifies the integrity of all parallel worktrees.  Designed to run in CI
+# (GitHub Actions or equivalent) or manually before starting a work session.
+#
+# Exit 0 = all checks pass.  Exit 1 = one or more failures.
+#
+# Checks per stream:
+#   1. Worktree directory exists
+#   2. Worktree is on the expected branch
+#   3. Working tree is clean (no uncommitted changes) — warning, not fatal
+#   4. go build ./... passes (compile check, no test execution)
+#
+# Usage:
+#   bash scripts/coordinate.sh health
+#
+# CI example (GitHub Actions):
+#   - name: Coordinator health check
+#     run: bash scripts/coordinate.sh health
+
+health_check() {
+  echo ""
+  printf "${BOLD}  AgentKMS — Coordinator Health Check${NC}\n"
+  echo "  ──────────────────────────────────────────────────────────────────"
+
+  local failures=0 warnings=0
+
+  # Check main repo first
+  printf "  Checking main worktree...\n"
+  if ! (cd "$REPO_ROOT" && go build ./... 2>/dev/null); then
+    printf "  ${RED}✗${NC}  %-14s  go build failed\n" "main"
+    failures=$((failures + 1))
+  else
+    printf "  ${GREEN}✓${NC}  %-14s  ok (main branch)\n" "main"
+  fi
+
+  # Check each feature stream
+  for name in $STREAM_NAMES; do
+    [ "$name" = "main" ] && continue
+
+    local path expected_branch
+    path=$(stream_path "$name")
+    expected_branch=$(stream_prop "BRANCH" "$name")
+
+    # ── Check 1: worktree exists ──────────────────────────────────────────
+    if [ ! -d "$path" ]; then
+      printf "  ${RED}✗${NC}  %-14s  worktree missing: %s\n" "$name" "$path"
+      failures=$((failures + 1))
+      continue
+    fi
+
+    # ── Check 2: correct branch ───────────────────────────────────────────
+    local current_branch
+    current_branch=$(git -C "$path" branch --show-current 2>/dev/null || echo "UNKNOWN")
+    if [ "$current_branch" != "$expected_branch" ]; then
+      printf "  ${RED}✗${NC}  %-14s  wrong branch: got '%s', want '%s'\n" \
+        "$name" "$current_branch" "$expected_branch"
+      failures=$((failures + 1))
+      continue
+    fi
+
+    # ── Check 3: clean working tree (warning only) ────────────────────────
+    local dirty
+    dirty=$(git -C "$path" status --short 2>/dev/null | grep -v '^??' || true)
+    if [ -n "$dirty" ]; then
+      printf "  ${YELLOW}⚠${NC}  %-14s  uncommitted changes on %s\n" "$name" "$expected_branch"
+      warnings=$((warnings + 1))
+      # Continue — dirty tree is a warning, not a build failure.
+    fi
+
+    # ── Check 4: go build ─────────────────────────────────────────────────
+    local build_out
+    if ! build_out=$(cd "$path" && go build ./... 2>&1); then
+      printf "  ${RED}✗${NC}  %-14s  go build failed:\n" "$name"
+      echo "$build_out" | sed 's/^/          /'
+      failures=$((failures + 1))
+      continue
+    fi
+
+    if [ -n "$dirty" ]; then
+      printf "  ${GREEN}✓${NC}  %-14s  builds ok  ${YELLOW}(dirty tree)${NC}\n" "$name"
+    else
+      printf "  ${GREEN}✓${NC}  %-14s  ok\n" "$name"
+    fi
+  done
+
+  echo "  ──────────────────────────────────────────────────────────────────"
+  if [ "$failures" -gt 0 ]; then
+    printf "  ${RED}Health check: FAIL (%d error(s), %d warning(s))${NC}\n" "$failures" "$warnings"
+    echo ""
+    exit 1
+  elif [ "$warnings" -gt 0 ]; then
+    printf "  ${YELLOW}Health check: PASS with %d warning(s)${NC}\n" "$warnings"
+  else
+    printf "  ${GREEN}Health check: PASS${NC}\n"
+  fi
+  echo ""
+}
+
+# =============================================================================
 # Dependency checks
 # =============================================================================
 
@@ -520,6 +621,7 @@ usage() {
   echo "    setup     Create worktrees for unlocked streams, write .pi/coord.json,"
   echo "              and launch a tmux session with Pi in each window"
   echo "    status    Print progress table across all streams"
+  echo "    health    Verify all worktrees exist, are on correct branches, and build"
   echo "    open      Add newly unlocked streams to the running tmux session"
   echo "    teardown  Kill tmux session and remove all worktrees"
   echo ""
@@ -542,6 +644,9 @@ main() {
       ;;
     status)
       show_status
+      ;;
+    health)
+      health_check
       ;;
     open)
       check_deps

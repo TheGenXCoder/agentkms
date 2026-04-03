@@ -223,10 +223,12 @@ type IdentityMatch struct {
 // RateLimit restricts the number of matched operations within a rolling
 // time window.
 //
-// Rate limiting is enforced per (rule, callerID, operation, keyID) bucket.
+// Rate limiting is enforced per (rule, callerID) bucket.
 // Two different callers hitting the same rule get independent counters.
-// A single caller hitting the same rule for different operations or keys
-// also gets independent counters.
+// A single caller hitting the same rule for different operations or key IDs
+// shares one counter — the budget is consumed across all matching operations
+// and key IDs within that rule.  This is intentionally conservative: a caller
+// cannot reset the rate limit by switching operation types or key IDs.
 //
 // The sliding window is implemented by tracking the timestamps of each
 // request and pruning entries older than the window duration.

@@ -33,7 +33,6 @@ package policy
 import (
 	"fmt"
 	"path"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -141,18 +140,6 @@ func (rls *rateLimitState) bucketCount() int {
 	rls.mu.Lock()
 	defer rls.mu.Unlock()
 	return len(rls.buckets)
-}
-
-// sortStable sorts the bucket timestamps.  Called after tests that inject
-// timestamps out of order via the testing hook.
-func (rls *rateLimitState) sortStable() {
-	rls.mu.Lock()
-	defer rls.mu.Unlock()
-	for _, b := range rls.buckets {
-		sort.SliceStable(b.timestamps, func(i, j int) bool {
-			return b.timestamps[i].Before(b.timestamps[j])
-		})
-	}
 }
 
 // ── Engine ────────────────────────────────────────────────────────────────────

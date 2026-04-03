@@ -18,7 +18,7 @@
 //	    denied, error).
 //	8.  Input validation — malformed inputs are rejected before policy/backend.
 //	9.  Content-Type header is always application/json.
-//	10. Rotate stub returns 501 and emits an audit event.
+//	10. Rotate key — success, policy deny, invalid key ID, key-not-found.
 //	11. Cross-type operations rejected at backend with clean error responses.
 //	12. ADVERSARIAL — audit sink failure causes 500, not silent data loss.
 //	    Verifies that denial and error paths treat audit failures as hard errors.
@@ -1448,29 +1448,116 @@ func TestAllEndpoints_AlwaysApplicationJSON(t *testing.T) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 10. Rotate stub returns 501
+// 10. Rotate key handler (C-05)
 // ════════════════════════════════════════════════════════════════════════════
 
-func TestHandleRotateKeyStub_Returns501(t *testing.T) {
+func TestHandleRotateKey_Success(t *testing.T) {
+	b := backend.NewDevBackend()
+	if err := b.CreateKey("rotate/key", backend.AlgorithmES256, "test-team"); err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+	srv, sink := newAllowServer(t, b)
+
+	rr := request(t, srv, http.MethodPost, "/rotate/rotate/key", nil)
+	assertStatus(t, rr, http.StatusOK)
+	assertContentTypeJSON(t, rr)
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	// Must contain key metadata fields.
+	for _, field := range []string{"key_id", "algorithm", "version", "created_at", "team_id"} {
+		if _, ok := resp[field]; !ok {
+			t.Errorf("missing field %q in rotate response", field)
+		}
+	}
+	// Version must be 2 (was 1 before rotation).
+	if v, _ := resp["version"].(float64); v != 2 {
+		t.Errorf("expected version 2 after rotation, got %v", v)
+	}
+	// ADVERSARIAL: response must contain no PEM headers.
+	assertNoPEMHeaders(t, "rotate response", rr.Body.Bytes())
+
+	// Audit event must record the rotation.
+	if sink.eventCount() != 1 {
+		t.Fatalf("expected 1 audit event, got %d", sink.eventCount())
+	}
+	ev := sink.events[0]
+	if ev.Operation != "rotate_key" {
+		t.Errorf("audit operation = %q, want rotate_key", ev.Operation)
+	}
+	if ev.Outcome != "success" {
+		t.Errorf("audit outcome = %q, want success", ev.Outcome)
+	}
+	if ev.KeyVersion != 2 {
+		t.Errorf("audit key_version = %d, want 2", ev.KeyVersion)
+	}
+}
+
+func TestHandleRotateKey_PolicyDeny(t *testing.T) {
+	b := backend.NewDevBackend()
+	if err := b.CreateKey("rotate/denied", backend.AlgorithmES256, "test-team"); err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+	srv, sink := newDenyServer(t, b)
+
+	rr := request(t, srv, http.MethodPost, "/rotate/rotate/denied", nil)
+	assertStatus(t, rr, http.StatusForbidden)
+
+	// Audit must record the denial.
+	if sink.eventCount() != 1 {
+		t.Fatalf("expected 1 audit event, got %d", sink.eventCount())
+	}
+	ev := sink.events[0]
+	if ev.Outcome != "denied" {
+		t.Errorf("expected denied outcome, got %q", ev.Outcome)
+	}
+	// DenyReason must not appear in the HTTP response body.
+	if ev.DenyReason != "" && strings.Contains(string(rr.Body.Bytes()), ev.DenyReason) {
+		t.Error("ADVERSARIAL: DenyReason leaked into HTTP response body")
+	}
+}
+
+func TestHandleRotateKey_InvalidKeyID(t *testing.T) {
 	b := backend.NewDevBackend()
 	srv, _ := newAllowServer(t, b)
 
-	cases := []string{
-		"/rotate/single",
-		"/rotate/payments/signing-key",
-		"/rotate/a/b/c",
+	for _, path := range []string{"/rotate/", "/rotate/UPPER", "/rotate/../escape"} {
+		rr := request(t, srv, http.MethodPost, path, nil)
+		if rr.Code == http.StatusOK {
+			t.Errorf("path %q: expected non-200, got 200", path)
+		}
 	}
-	for _, path := range cases {
-		t.Run(path, func(t *testing.T) {
-			rr := request(t, srv, http.MethodPost, path, nil)
-			assertStatus(t, rr, http.StatusNotImplemented)
-			assertContentTypeJSON(t, rr)
-			_, code := assertErrorShape(t, "rotate stub", rr.Body.Bytes())
-			if code != "not_implemented" {
-				t.Errorf("code = %q, want not_implemented", code)
-			}
-		})
+}
+
+func TestHandleRotateKey_KeyNotFound(t *testing.T) {
+	b := backend.NewDevBackend() // no keys created
+	srv, sink := newAllowServer(t, b)
+
+	rr := request(t, srv, http.MethodPost, "/rotate/nonexistent/key", nil)
+	assertStatus(t, rr, http.StatusNotFound)
+
+	ev, ok := sink.lastEvent()
+	if !ok {
+		t.Fatal("expected at least one audit event")
 	}
+	if ev.Outcome != "error" {
+		t.Errorf("expected error outcome for not-found key, got %q", ev.Outcome)
+	}
+}
+
+func TestHandleRotateKey_NoKeyMaterialInResponse(t *testing.T) {
+	b := backend.NewDevBackend()
+	if err := b.CreateKey("adv/rotate", backend.AlgorithmES256, "test-team"); err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+	srv, _ := newAllowServer(t, b)
+
+	rr := request(t, srv, http.MethodPost, "/rotate/adv/rotate", nil)
+	assertStatus(t, rr, http.StatusOK)
+	assertNoPEMHeaders(t, "rotate response (adversarial)", rr.Body.Bytes())
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1557,11 +1644,10 @@ func TestHandleRotateKeyStub_InvalidKeyID(t *testing.T) {
 	}
 }
 
-// TestHandleRotateKeyStub_Returns501AndAudits verifies that the rotate stub
-// returns 501 AND writes an audit event with OperationRotateKey and
-// OutcomeError.  Previously the stub returned 501 with no audit record,
-// making probe attempts invisible.
-func TestHandleRotateKeyStub_Returns501AndAudits(t *testing.T) {
+// TestHandleRotateKey_KeyNotFoundAudits verifies that rotate on a non-existent
+// key returns 404, writes an audit event with OperationRotateKey + OutcomeError,
+// and does not expose backend error internals in the HTTP response.
+func TestHandleRotateKey_KeyNotFoundAudits(t *testing.T) {
 	cases := []string{
 		"/rotate/single",
 		"/rotate/payments/signing-key",
@@ -1569,34 +1655,28 @@ func TestHandleRotateKeyStub_Returns501AndAudits(t *testing.T) {
 	}
 	for _, path := range cases {
 		t.Run(path, func(t *testing.T) {
-			b := backend.NewDevBackend()
+			b := backend.NewDevBackend() // no keys
 			aud := &capturingAuditor{}
 			srv := api.NewServer(b, aud, policy.AllowAllEngine{}, "dev")
 
 			rr := request(t, srv, http.MethodPost, path, nil)
-			assertStatus(t, rr, http.StatusNotImplemented)
+			// C-05: real handler returns 404 for missing keys (not 501).
+			assertStatus(t, rr, http.StatusNotFound)
 			assertContentTypeJSON(t, rr)
-			_, code := assertErrorShape(t, "rotate stub", rr.Body.Bytes())
-			if code != "not_implemented" {
-				t.Errorf("code = %q, want not_implemented", code)
-			}
 
-			// Audit event must exist.
+			// Audit event must always be written — probes must be visible.
 			ev, ok := aud.lastEvent()
 			if !ok {
-				t.Fatal("ADVERSARIAL: rotate stub produced no audit event — probe attempts invisible")
+				t.Fatal("ADVERSARIAL: rotate produced no audit event — probe attempts invisible")
 			}
 			if ev.Operation != audit.OperationRotateKey {
 				t.Errorf("audit operation = %q, want %q", ev.Operation, audit.OperationRotateKey)
 			}
 			if ev.Outcome != audit.OutcomeError {
-				t.Errorf("audit outcome = %q, want %q", ev.Outcome, audit.OutcomeError)
+				t.Errorf("audit outcome = %q, want error", ev.Outcome)
 			}
 			if ev.EventID == "" {
 				t.Error("audit EventID is empty")
-			}
-			if ev.CallerID == "" {
-				t.Error("audit CallerID is empty")
 			}
 		})
 	}

@@ -179,29 +179,39 @@ func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// ── Rotate key stub ───────────────────────────────────────────────────────────
+// ── Rotate key handler ────────────────────────────────────────────────────────
 
-// handleRotateKeyStub handles POST /rotate/{keyid...}.
+// rotateKeyResponse is the JSON body for a successful POST /rotate/{keyid...}.
 //
-// ┌──────────────────────────────────────────────────────────────────────┐
-// │  TODO(C-05, B-01) — Not implemented                                  │
-// │                                                                      │
-// │  Key rotation requires the OpenBao backend (backlog B-01) to be      │
-// │  available so that RotateKey can be delegated to the Transit engine.  │
-// │  Implement once B-01 is complete.                                    │
-// │                                                                      │
-// │  When implemented, the endpoint will:                                │
-// │    1. Validate key ID and policy (same pattern as other handlers).   │
-// │    2. Call backend.RotateKey(ctx, keyID).                            │
-// │    3. Audit the rotation event.                                      │
-// │    4. Return updated KeyMeta (no key material).                      │
-// └──────────────────────────────────────────────────────────────────────┘
-func (s *Server) handleRotateKeyStub(w http.ResponseWriter, r *http.Request) {
+// SECURITY: contains ONLY key metadata.  No key material is ever returned.
+type rotateKeyResponse struct {
+	KeyID     string  `json:"key_id"`
+	Algorithm string  `json:"algorithm"`
+	Version   int     `json:"version"`
+	RotatedAt string  `json:"rotated_at"` // RFC 3339
+	CreatedAt string  `json:"created_at"` // RFC 3339
+	TeamID    string  `json:"team_id"`
+}
+
+// handleRotateKey handles POST /rotate/{keyid...}.
+//
+// Rotates the named key: generates a new key version and makes it active for
+// all subsequent Sign and Encrypt operations.  Historical versions are
+// retained so that data encrypted before rotation remains decryptable.
+//
+// Request flow:
+//  1. Input validation (key ID format).
+//  2. Policy evaluation — deny-by-default.
+//  3. backend.RotateKey — generates new version, retains old.
+//  4. Audit log write — before response.
+//  5. Response — updated KeyMeta only (no key material).
+//
+// Implements backlog C-05.
+func (s *Server) handleRotateKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	keyID := r.PathValue("keyid")
 
-	// Audit every access to the rotate endpoint — even stub 501 responses.
-	// An attacker probing rotation capabilities must be visible in the audit trail.
+	// ── Audit event scaffold ───────────────────────────────────────────────
 	ev, evErr := audit.New()
 	if evErr != nil {
 		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
@@ -217,9 +227,7 @@ func (s *Server) handleRotateKeyStub(w http.ResponseWriter, r *http.Request) {
 	ev.TeamID = id.TeamID
 	ev.AgentSession = id.AgentSession
 
-	// Validate key ID before storing it in the audit event.  All other
-	// handlers do this; the stub must be consistent so that audit records
-	// contain only well-formed key IDs regardless of which endpoint was hit.
+	// ── 1. Input validation ────────────────────────────────────────────────
 	if !isValidKeyID(keyID) {
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = "invalid key ID format"
@@ -232,17 +240,66 @@ func (s *Server) handleRotateKeyStub(w http.ResponseWriter, r *http.Request) {
 	}
 	ev.KeyID = keyID
 
-	// Outcome is OutcomeError because the service failed to fulfil the request
-	// (not implemented), not because the policy denied it.
-	ev.Outcome = audit.OutcomeError
-	ev.DenyReason = "key rotation not yet implemented (backlog C-05, B-01)"
-	if logErr := s.auditLog(ctx, ev); logErr != nil {
+	// ── 2. Policy check ────────────────────────────────────────────────────
+	decision, pErr := s.policy.Evaluate(ctx, id, audit.OperationRotateKey, keyID)
+	if pErr != nil {
+		ev.Outcome = audit.OutcomeError
+		if logErr := s.auditLog(ctx, ev); logErr != nil {
+			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
+		return
+	}
+	if !decision.Allow {
+		ev.Outcome = audit.OutcomeDenied
+		ev.DenyReason = decision.DenyReason // audit only — never sent in response
+		if logErr := s.auditLog(ctx, ev); logErr != nil {
+			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
+			return
+		}
+		s.writeError(w, http.StatusForbidden, errCodePolicyDenied, "operation denied by policy")
+		return
+	}
+
+	// ── 3. Backend call ────────────────────────────────────────────────────
+	meta, bErr := s.backend.RotateKey(ctx, keyID)
+	if bErr != nil {
+		ev.Outcome = audit.OutcomeError
+		if logErr := s.auditLog(ctx, ev); logErr != nil {
+			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
+			return
+		}
+		s.writeError(w,
+			statusFromBackendError(bErr),
+			codeFromBackendError(bErr),
+			messageFromBackendError(bErr),
+		)
+		return
+	}
+	ev.KeyVersion = meta.Version
+
+	// ── 4. Audit ───────────────────────────────────────────────────────────
+	ev.Outcome = audit.OutcomeSuccess
+	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
 		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 		return
 	}
 
-	s.writeError(w, http.StatusNotImplemented, errCodeNotImplemented,
-		"key rotation is not yet implemented; see backlog C-05")
+	// ── 5. Response ────────────────────────────────────────────────────────
+	// SECURITY: response contains ONLY key metadata — id, algorithm, version,
+	// timestamps, team.  No key material.
+	resp := rotateKeyResponse{
+		KeyID:     meta.KeyID,
+		Algorithm: string(meta.Algorithm),
+		Version:   meta.Version,
+		CreatedAt: meta.CreatedAt.Format(time.RFC3339),
+		TeamID:    meta.TeamID,
+	}
+	if meta.RotatedAt != nil {
+		resp.RotatedAt = meta.RotatedAt.Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ── Validation helpers (keys-specific) ───────────────────────────────────────

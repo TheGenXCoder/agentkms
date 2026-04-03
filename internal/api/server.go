@@ -132,6 +132,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /decrypt/{keyid...}", wrap(s.handleDecrypt))
 	s.mux.HandleFunc("GET /keys", wrap(s.handleListKeys))
 
-	// C-05 stub: returns 501 until B-01 (OpenBao backend) is wired.
-	s.mux.HandleFunc("POST /rotate/{keyid...}", wrap(s.handleRotateKeyStub))
+	// C-05: fully implemented — delegates to backend.RotateKey.
+	s.mux.HandleFunc("POST /rotate/{keyid...}", wrap(s.handleRotateKey))
 }

@@ -88,4 +88,18 @@ type Identity struct {
 	//
 	// Format: "operation:resource" (e.g. "sign:key-123", "encrypt:*").
 	Scopes []string
+
+	// AuthMethod records how this identity was authenticated.
+	// Used by the policy engine to enforce per-operation auth requirements.
+	AuthMethod AuthMethod
 }
+
+// AuthMethod identifies how a session was established.
+type AuthMethod string
+
+const (
+	AuthMethodWebAuthn    AuthMethod = "webauthn"
+	AuthMethodMTLSEnclave AuthMethod = "mtls_enclave"
+	AuthMethodMTLSCert    AuthMethod = "mtls_cert"
+	AuthMethodMTLSPKCS11  AuthMethod = "mtls_pkcs11"
+)

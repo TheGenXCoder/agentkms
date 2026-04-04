@@ -10,3 +10,4 @@
 {"ts": "2026-04-03T21:23:22.142718Z", "tier": "qa", "model": "gemini-3.1-pro-high", "provider": "google-antigravity", "tokens_in": 238488, "tokens_out": 14962, "cache_read": 1534660, "cache_write": 0, "cost": 0.963452, "elapsed_ms": 276354}
 {"ts": "2026-04-04T01:51:40.978880Z", "tier": "qa", "model": "gemini-3.1-pro-high", "provider": "google-antigravity", "tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_write": 0, "cost": 0.0, "elapsed_ms": 7853}
 {"ts": "2026-04-04T02:03:19.676454Z", "tier": "qa", "model": "gemini-3.1-pro-high", "provider": "google-antigravity", "tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_write": 0, "cost": 0.0, "elapsed_ms": 8283}
+{"ts": "2026-04-04T03:16:39.271499Z", "tier": "worker", "model": "gemini-3-flash", "provider": "google-antigravity", "tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_write": 0, "cost": 0.0, "elapsed_ms": 8619}

@@ -51,20 +51,29 @@ type Server struct {
 	vender     *credentials.Vender // nil until SetVender is called
 	authTokens *auth.TokenService
 
+	// recoveryStore handles Layer 1 recovery codes.
+	recoveryStore *auth.RecoveryStore
+
+	// tokenService exposed for recovery bootstrap token issuance.
+	tokenService *auth.TokenService
+
 	// env identifies the deployment tier for audit events.
-	// Values: "production", "staging", "dev".
 	env string
 
 	mux *http.ServeMux
 
 	// credRateLimit tracks the last vend time per caller+provider.
-	// Key: "callerID:provider", Value: time.Time of last vend.
 	credRateLimit sync.Map
 }
 
 // credRateLimitInterval is the minimum interval between credential vends
 // for the same caller+provider combination.
 const credRateLimitInterval = 60 * time.Second
+
+// SetRecoveryStore wires in the recovery store after construction.
+func (s *Server) SetRecoveryStore(rs *auth.RecoveryStore) {
+	s.recoveryStore = rs
+}
 
 // SetVender wires in the credential vender after construction.
 // Call this from cmd/server/main.go once the KV backend is available.
@@ -96,12 +105,13 @@ func NewServer(b backend.Backend, a audit.Auditor, p policy.EngineI, t *auth.Tok
 		panic("agentkms: NewServer requires a non-nil TokenService")
 	}
 	s := &Server{
-		backend:    b,
-		auditor:    a,
-		policy:     p,
-		authTokens: t,
-		env:        env,
-		mux:        http.NewServeMux(),
+		backend:      b,
+		auditor:      a,
+		policy:       p,
+		authTokens:   t,
+		tokenService: t,
+		env:          env,
+		mux:          http.NewServeMux(),
 	}
 	s.registerRoutes()
 	return s
@@ -168,6 +178,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /credentials/llm/{provider}/refresh", wrap(s.handleRefreshLLMCredential))
 	s.mux.HandleFunc("GET /credentials/generic/{path...}", wrap(s.handleGetGenericCredential))
 
+	// Recovery endpoints — /auth/recovery/redeem is unauthenticated (caller is locked out)
+	s.mux.HandleFunc("POST /auth/recovery/init", wrap(s.handleRecoveryInit))
+	s.mux.HandleFunc("POST /auth/recovery/redeem", s.handleRecoveryRedeem) // no authMiddleware
+	s.mux.HandleFunc("GET /auth/recovery/status", wrap(s.handleRecoveryStatus))
 	// AU-10: audit log export
 	s.mux.HandleFunc("GET /audit/export", wrap(s.handleExportAuditLogs))
 

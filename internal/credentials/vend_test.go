@@ -180,3 +180,48 @@ func contains(s, sub string) bool {
 			return false
 		}()
 }
+
+func TestVendedCredential_Zero(t *testing.T) {
+	c := &credentials.VendedCredential{APIKey: []byte("sk-secret")}
+	c.Zero()
+	for i, b := range c.APIKey {
+		if b != 0 {
+			t.Errorf("byte %d not zeroed", i)
+		}
+	}
+}
+
+func TestVendGeneric_Success(t *testing.T) {
+	kv := &stubKV{data: map[string]map[string]string{
+		"kv/data/generic/github": {"token": "ghp_abc"},
+	}}
+	v := credentials.NewVender(kv, "kv")
+	cred, err := v.VendGeneric(context.Background(), "github")
+	if err != nil {
+		t.Fatalf("VendGeneric: %v", err)
+	}
+	if string(cred.Secrets["token"]) != "ghp_abc" {
+		t.Errorf("expected ghp_abc, got %q", cred.Secrets["token"])
+	}
+}
+
+func TestVendGeneric_NotFound(t *testing.T) {
+	kv := &stubKV{data: map[string]map[string]string{}}
+	v := credentials.NewVender(kv, "kv")
+	_, err := v.VendGeneric(context.Background(), "missing")
+	if err == nil {
+		t.Fatal("expected error for missing path")
+	}
+}
+
+func TestGenericCredential_Zero(t *testing.T) {
+	c := &credentials.GenericCredential{
+		Secrets: map[string][]byte{"k": []byte("v")},
+	}
+	c.Zero()
+	for k, v := range c.Secrets {
+		if v != nil {
+			t.Errorf("secret %q not zeroed", k)
+		}
+	}
+}

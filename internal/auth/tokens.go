@@ -342,6 +342,20 @@ func (s *TokenService) IssueDelegated(id *identity.Identity, ttl time.Duration, 
 }
 
 // claimsToToken converts validated tokenClaims to a Token.
+// IssueBootstrapToken issues a short-lived, single-use bootstrap token
+// for use during device recovery re-enrollment.
+func (s *TokenService) IssueBootstrapToken(callerID string) (string, error) {
+	id := &identity.Identity{
+		CallerID: callerID,
+		Role:     identity.RoleDeveloper,
+	}
+	tokenStr, _, err := s.IssueDelegated(id, RecoveryTokenTTL, []string{"enroll:self"})
+	if err != nil {
+		return "", fmt.Errorf("auth: issue bootstrap token: %w", err)
+	}
+	return tokenStr, nil
+}
+
 func claimsToToken(claims *tokenClaims) *Token {
 	return &Token{
 		JTI: claims.JTI,

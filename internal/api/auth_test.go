@@ -16,6 +16,7 @@ import (
 	"github.com/agentkms/agentkms/internal/api"
 	"github.com/agentkms/agentkms/internal/audit"
 	"github.com/agentkms/agentkms/internal/auth"
+	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/policy"
 	"github.com/agentkms/agentkms/pkg/identity"
 	"github.com/agentkms/agentkms/pkg/tlsutil"
@@ -765,5 +766,19 @@ func TestCRL_WrongMethod(t *testing.T) {
 	handler.CRL(w, r)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", w.Code)
+	}
+}
+
+func TestAuthMiddleware_ExposedPublic(t *testing.T) {
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
+	srv := api.NewServer(backend.NewDevBackend(), &capturingAuditor{}, policy.AllowAllEngine{}, ts, "dev")
+
+	// AuthMiddleware is the exported wrapper — just call it and verify it returns a non-nil handler.
+	handler := srv.AuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+	if handler == nil {
+		t.Fatal("AuthMiddleware returned nil")
 	}
 }

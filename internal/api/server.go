@@ -54,8 +54,11 @@ type Server struct {
 	// recoveryStore handles Layer 1 recovery codes.
 	recoveryStore *auth.RecoveryStore
 
-	// tokenService exposed for recovery bootstrap token issuance.
+	// tokenService exposed for recovery bootstrap token issuance and WebAuthn.
 	tokenService *auth.TokenService
+
+	// webAuthn handles FIDO2/WebAuthn registration and authentication.
+	webAuthn *auth.WebAuthnService
 
 	// env identifies the deployment tier for audit events.
 	env string
@@ -182,6 +185,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /auth/recovery/init", wrap(s.handleRecoveryInit))
 	s.mux.HandleFunc("POST /auth/recovery/redeem", s.handleRecoveryRedeem) // no authMiddleware
 	s.mux.HandleFunc("GET /auth/recovery/status", wrap(s.handleRecoveryStatus))
+
+	// WebAuthn/FIDO2 endpoints
+	s.mux.HandleFunc("POST /auth/webauthn/register/begin", wrap(s.handleWebAuthnRegisterBegin))
+	s.mux.HandleFunc("POST /auth/webauthn/register/finish", wrap(s.handleWebAuthnRegisterFinish))
+	s.mux.HandleFunc("POST /auth/webauthn/auth/begin", s.handleWebAuthnAuthBegin)   // unauthenticated
+	s.mux.HandleFunc("POST /auth/webauthn/auth/finish", s.handleWebAuthnAuthFinish) // unauthenticated
 	// AU-10: audit log export
 	s.mux.HandleFunc("GET /audit/export", wrap(s.handleExportAuditLogs))
 

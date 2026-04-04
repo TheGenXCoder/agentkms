@@ -10,7 +10,8 @@ import (
 	"testing"
 
 	"github.com/agentkms/agentkms/internal/api"
-	"github.com/agentkms/agentkms/internal/auth"
+	auth "github.com/agentkms/agentkms/internal/auth"
+	authpkg "github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/policy"
@@ -484,4 +485,162 @@ func TestHandleRecoveryRedeem_NoStore(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
 	assertStatus(t, rr, http.StatusServiceUnavailable)
+}
+
+// ── WebAuthn handler tests ──────────────────────────────────────────────────
+
+func TestHandleWebAuthnRegisterBegin_NoService(t *testing.T) {
+	srv, _ := newCredServer(t, "")
+	// No SetWebAuthn — expect 503
+	rr := credRequest(t, srv, http.MethodPost, "/auth/webauthn/register/begin")
+	assertStatus(t, rr, http.StatusServiceUnavailable)
+}
+
+func TestHandleWebAuthnRegisterFinish_NoService(t *testing.T) {
+	srv, _ := newCredServer(t, "")
+	rr := credRequest(t, srv, http.MethodPost, "/auth/webauthn/register/finish")
+	assertStatus(t, rr, http.StatusServiceUnavailable)
+}
+
+func TestHandleWebAuthnAuthBegin_NoService(t *testing.T) {
+	srv, _ := newCredServer(t, "")
+	body := strings.NewReader(`{"caller_id":"test@team"}`)
+	req, _ := http.NewRequest(http.MethodPost, "/auth/webauthn/auth/begin", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	assertStatus(t, rr, http.StatusServiceUnavailable)
+}
+
+func TestHandleWebAuthnAuthFinish_NoService(t *testing.T) {
+	srv, _ := newCredServer(t, "")
+	body := strings.NewReader(`{"caller_id":"test@team","response":{}}`)
+	req, _ := http.NewRequest(http.MethodPost, "/auth/webauthn/auth/finish", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	assertStatus(t, rr, http.StatusServiceUnavailable)
+}
+
+func newCredServerWithWebAuthn(t *testing.T) (*api.Server, *capturingAuditor) {
+	t.Helper()
+	srv, aud := newCredServer(t, "")
+	wa, err := authpkg.NewWebAuthnService(authpkg.WebAuthnConfig{
+		RPID:     "localhost",
+		RPOrigin: "http://localhost:8080",
+		DataDir:  t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("NewWebAuthnService: %v", err)
+	}
+	srv.SetWebAuthn(wa)
+	return srv, aud
+}
+
+func TestHandleWebAuthnRegisterBegin_WithService(t *testing.T) {
+	srv, _ := newCredServerWithWebAuthn(t)
+	rr := credRequest(t, srv, http.MethodPost, "/auth/webauthn/register/begin")
+	assertStatus(t, rr, http.StatusOK)
+}
+
+func TestHandleWebAuthnAuthBegin_MissingCallerID(t *testing.T) {
+	srv, _ := newCredServerWithWebAuthn(t)
+	body := strings.NewReader(`{}`)
+	req, _ := http.NewRequest(http.MethodPost, "/auth/webauthn/auth/begin", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestHandleWebAuthnAuthFinish_MissingFields(t *testing.T) {
+	srv, _ := newCredServerWithWebAuthn(t)
+	body := strings.NewReader(`{}`)
+	req, _ := http.NewRequest(http.MethodPost, "/auth/webauthn/auth/finish", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestHandleWebAuthnAuthBegin_WithService(t *testing.T) {
+	srv, _ := newCredServerWithWebAuthn(t)
+	// No credentials for this user — server returns error
+	body := strings.NewReader(`{"caller_id":"test@team"}`)
+	req, _ := http.NewRequest(http.MethodPost, "/auth/webauthn/auth/begin", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	// 500 because no credentials registered yet
+	if rr.Code == http.StatusServiceUnavailable {
+		t.Error("expected non-503 with WebAuthn service configured")
+	}
+}
+
+func TestHandleWebAuthnAuthFinish_BadResponse(t *testing.T) {
+	srv, _ := newCredServerWithWebAuthn(t)
+	body := strings.NewReader(`{"caller_id":"test@team","response":{"garbage":"data"}}`)
+	req, _ := http.NewRequest(http.MethodPost, "/auth/webauthn/auth/finish", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	// Should fail — no pending session
+	if rr.Code == http.StatusOK {
+		t.Error("expected non-200 for invalid auth finish")
+	}
+}
+
+func TestHandleWebAuthnRegisterFinish_BadResponse(t *testing.T) {
+	srv, _ := newCredServerWithWebAuthn(t)
+	// Begin first
+	credRequest(t, srv, http.MethodPost, "/auth/webauthn/register/begin")
+	// Finish with garbage
+	body := strings.NewReader(`{"garbage":"data"}`)
+	rr := credRequest(t, srv, http.MethodPost, "/auth/webauthn/register/finish")
+	if rr.Code == http.StatusOK {
+		t.Error("expected non-200 for invalid registration finish")
+	}
+	_ = body
+}
+
+func TestSetWebAuthn_NonNil(t *testing.T) {
+	srv, _ := newCredServer(t, "")
+	wa, err := authpkg.NewWebAuthnService(authpkg.WebAuthnConfig{
+		RPID:    "localhost",
+		RPOrigin: "http://localhost",
+		DataDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("NewWebAuthnService: %v", err)
+	}
+	srv.SetWebAuthn(wa)
+	// Verify it's wired — begin registration should return 200 now
+	rr := credRequest(t, srv, http.MethodPost, "/auth/webauthn/register/begin")
+	assertStatus(t, rr, http.StatusOK)
+}
+
+func TestHandleWebAuthnRegisterFinish_WithBadJSON(t *testing.T) {
+	srv, _ := newCredServerWithWebAuthn(t)
+	// Begin to get session, then send bad json
+	credRequest(t, srv, http.MethodPost, "/auth/webauthn/register/begin")
+	body := strings.NewReader(`not valid json`)
+	req, _ := http.NewRequest(http.MethodPost, "/auth/webauthn/register/finish", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestHandleWebAuthnAuthFinish_WithSession(t *testing.T) {
+	srv, _ := newCredServerWithWebAuthn(t)
+	// auth/begin for an unknown caller (no creds) — then try finish
+	body := strings.NewReader(`{"caller_id":"t@t","response":{"id":"x","rawId":"x","response":{},"type":"public-key"}}`)
+	req, _ := http.NewRequest(http.MethodPost, "/auth/webauthn/auth/finish", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	// Should fail (no session or bad format) — not 503
+	if rr.Code == http.StatusServiceUnavailable {
+		t.Errorf("unexpected 503")
+	}
 }

@@ -166,6 +166,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /credentials/llm", wrap(s.handleListLLMProviders))
 	s.mux.HandleFunc("GET /credentials/llm/{provider}", wrap(s.handleGetLLMCredential))
 	s.mux.HandleFunc("POST /credentials/llm/{provider}/refresh", wrap(s.handleRefreshLLMCredential))
+	s.mux.HandleFunc("GET /credentials/generic/{path...}", wrap(s.handleGetGenericCredential))
 
 	// AU-10: audit log export
 	s.mux.HandleFunc("GET /audit/export", wrap(s.handleExportAuditLogs))

@@ -35,6 +35,13 @@ type credentialResponse struct {
 	TTLSeconds int `json:"ttl_seconds"`
 }
 
+type genericCredentialResponse struct {
+	Path       string            `json:"path"`
+	Secrets    map[string]string `json:"secrets"` // SECURITY: sensitive
+	ExpiresAt  string            `json:"expires_at"`
+	TTLSeconds int               `json:"ttl_seconds"`
+}
+
 // ── GET /credentials/llm/{provider} ──────────────────────────────────────────
 
 // handleGetLLMCredential handles GET /credentials/llm/{provider}.
@@ -217,4 +224,99 @@ func (s *Server) handleListLLMProviders(w http.ResponseWriter, r *http.Request) 
 		providers = append(providers, p)
 	}
 	writeJSON(w, http.StatusOK, map[string][]string{"providers": providers})
+}
+
+// ── GET /credentials/generic/{path} ──────────────────────────────────────────
+
+func (s *Server) handleGetGenericCredential(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	path := r.PathValue("path")
+	id := identityFromContext(ctx)
+
+	ev, evErr := audit.New()
+	if evErr != nil {
+		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
+		return
+	}
+	ev.Operation = audit.OperationCredentialVend
+	ev.Environment = s.env
+	ev.SourceIP = extractRemoteIP(r)
+	ev.UserAgent = r.UserAgent()
+	ev.CallerID = id.CallerID
+	ev.TeamID = id.TeamID
+	ev.AgentSession = id.AgentSession
+
+	if path == "" {
+		ev.Outcome = audit.OutcomeDenied
+		ev.DenyReason = "invalid path: empty"
+		_ = s.auditLog(ctx, ev)
+		s.writeError(w, http.StatusBadRequest, errCodeInvalidRequest, "path is required")
+		return
+	}
+
+	ev.KeyID = "generic/" + path
+	rateLimitKey := id.CallerID + ":generic:" + path
+	if last, ok := s.credRateLimit.Load(rateLimitKey); ok {
+		if time.Since(last.(time.Time)) < credRateLimitInterval {
+			ev.Outcome = audit.OutcomeDenied
+			ev.DenyReason = "rate limited"
+			_ = s.auditLog(ctx, ev)
+			s.writeError(w, http.StatusTooManyRequests, errCodeRateLimited, "retry after TTL expires")
+			return
+		}
+	}
+
+	decision, pErr := s.policy.Evaluate(ctx, id, audit.OperationCredentialVend, ev.KeyID)
+	if pErr != nil || !decision.Allow {
+		ev.Outcome = audit.OutcomeDenied
+		if pErr == nil {
+			ev.DenyReason = decision.DenyReason
+		}
+		_ = s.auditLog(ctx, ev)
+		s.writeError(w, http.StatusForbidden, errCodePolicyDenied, "denied")
+		return
+	}
+
+	if s.vender == nil {
+		ev.Outcome = audit.OutcomeError
+		_ = s.auditLog(ctx, ev)
+		s.writeError(w, http.StatusServiceUnavailable, errCodeInternal, "vending not configured")
+		return
+	}
+
+	cred, vErr := s.vender.VendGeneric(ctx, path)
+	if vErr != nil {
+		ev.Outcome = audit.OutcomeError
+		if errors.Is(vErr, credentials.ErrCredentialNotFound) {
+			ev.DenyReason = "not found"
+			_ = s.auditLog(ctx, ev)
+			s.writeError(w, http.StatusNotFound, errCodeKeyNotFound, "not found")
+			return
+		}
+		_ = s.auditLog(ctx, ev)
+		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
+		return
+	}
+
+	ev.Outcome = audit.OutcomeSuccess
+	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
+		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
+		return
+	}
+
+	s.credRateLimit.Store(rateLimitKey, time.Now())
+	defer cred.Zero()
+
+	// Convert []byte map to string map for JSON response
+	secretsMap := make(map[string]string, len(cred.Secrets))
+	for k, v := range cred.Secrets {
+		secretsMap[k] = string(v)
+	}
+
+	writeJSON(w, http.StatusOK, genericCredentialResponse{
+		Path:       cred.Path,
+		Secrets:    secretsMap,
+		ExpiresAt:  cred.ExpiresAt.Format("2006-01-02T15:04:05Z"),
+		TTLSeconds: cred.TTLSeconds,
+	})
 }

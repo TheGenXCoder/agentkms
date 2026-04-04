@@ -149,3 +149,31 @@ func (v *Vender) Vend(ctx context.Context, provider string) (*VendedCredential, 
 		TTLSeconds: int(CredentialTTL.Seconds()),
 	}, nil
 }
+
+// VendGeneric fetches a generic set of credentials from the KV store.
+// The path parameter corresponds to the path under kv/generic/{path}.
+//
+// Returns ErrCredentialNotFound if the path does not exist.
+func (v *Vender) VendGeneric(ctx context.Context, path string) (*GenericCredential, error) {
+	// KV v2 data path: {mount}/data/generic/{path}
+	kvPath := fmt.Sprintf("%s/data/generic/%s", v.kvMount, path)
+	secret, err := v.kv.GetSecret(ctx, kvPath)
+	if err != nil {
+		return nil, err
+	}
+
+	secrets := make(map[string][]byte, len(secret))
+	for k, val := range secret {
+		secrets[k] = []byte(val)
+	}
+
+	now := v.nowFunc()
+	expiresAt := now.Add(CredentialTTL)
+
+	return &GenericCredential{
+		Path:       path,
+		Secrets:    secrets,
+		ExpiresAt:  expiresAt,
+		TTLSeconds: int(CredentialTTL.Seconds()),
+	}, nil
+}

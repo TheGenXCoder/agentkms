@@ -1,0 +1,22 @@
+#!/usr/bin/bash
+# /usr/lib/initcpio/install/agentkms-disk
+# mkinitcpio INSTALL hook — adds agentkms-disk to the initramfs
+
+build() {
+  add_binary /usr/local/bin/agentkms-disk
+  add_dir /etc/agentkms
+  add_file /etc/agentkms/ca.crt
+  add_file /etc/agentkms/client.crt
+  add_file /etc/agentkms/client.key 0600
+  add_runscript
+}
+
+help() {
+  cat << HELPEOF
+Unlocks LUKS partitions using a key fetched from AgentKMS.
+Add 'agentkms-disk' to your HOOKS array BEFORE 'encrypt'.
+Configure server and machine-id via kernel cmdline:
+  agentkms.server=https://kms.yourdomain.com
+  agentkms.machine=arch-laptop-01
+HELPEOF
+}

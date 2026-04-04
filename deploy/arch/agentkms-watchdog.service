@@ -1,0 +1,30 @@
+[Unit]
+Description=AgentKMS NBDE Watchdog — destroys LUKS drive if token is revoked
+Documentation=https://github.com/TheGenXCoder/agentkms
+After=network-online.target
+Wants=network-online.target
+# CRITICAL: if this service fails, the machine should take action
+OnFailure=systemd-poweroff.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/agentkms-watchdog \
+  --server https://kms.yourdomain.com \
+  --device /dev/nvme0n1p2 \
+  --interval 60s \
+  --grace 3 \
+  --mode erase
+Restart=on-failure
+RestartSec=10
+# Run as root — needed for cryptsetup luksErase
+User=root
+Group=root
+# Watchdog: if the process hangs, systemd kills and restarts it
+WatchdogSec=120
+NotifyAccess=main
+# Prevent the watchdog from being killed before it can act
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

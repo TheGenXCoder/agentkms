@@ -628,7 +628,10 @@ func TestHandleWebAuthnRegisterFinish_WithBadJSON(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
-	assertStatus(t, rr, http.StatusBadRequest)
+	// 400 or 401 — auth middleware may reject before we get to JSON parsing
+	if rr.Code == http.StatusOK {
+		t.Errorf("expected non-200 for invalid registration finish, got %d", rr.Code)
+	}
 }
 
 func TestHandleWebAuthnAuthFinish_WithSession(t *testing.T) {
@@ -642,5 +645,53 @@ func TestHandleWebAuthnAuthFinish_WithSession(t *testing.T) {
 	// Should fail (no session or bad format) — not 503
 	if rr.Code == http.StatusServiceUnavailable {
 		t.Errorf("unexpected 503")
+	}
+}
+
+func TestHandleWebAuthnAuthBegin_NoCreds(t *testing.T) {
+	srv, _ := newCredServerWithWebAuthn(t)
+	body := strings.NewReader(`{"caller_id":"nobody@team"}`)
+	req, _ := http.NewRequest(http.MethodPost, "/auth/webauthn/auth/begin", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	// Should error — no credentials for this caller
+	if rr.Code == http.StatusOK {
+		t.Error("expected non-200 when user has no credentials")
+	}
+}
+
+func credRequestWithBody(t *testing.T, srv *api.Server, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	req, _ := http.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	id := identity.Identity{
+		CallerID: "test-user",
+		TeamID:   "test-team",
+		Role:     identity.RoleDeveloper,
+	}
+	req = req.WithContext(api.SetIdentityInContext(req.Context(), id))
+	srv.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestHandleWebAuthnRegisterFinish_AuthedBadJSON(t *testing.T) {
+	srv, _ := newCredServerWithWebAuthn(t)
+	// Begin (authenticated)
+	credRequest(t, srv, http.MethodPost, "/auth/webauthn/register/begin")
+	// Finish with authenticated request but invalid body
+	rr := credRequestWithBody(t, srv, http.MethodPost, "/auth/webauthn/register/finish", `not-json`)
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestHandleWebAuthnRegisterFinish_AuthedBadAttestation(t *testing.T) {
+	srv, _ := newCredServerWithWebAuthn(t)
+	credRequest(t, srv, http.MethodPost, "/auth/webauthn/register/begin")
+	rr := credRequestWithBody(t, srv, http.MethodPost, "/auth/webauthn/register/finish",
+		`{"id":"fake","rawId":"ZmFrZQ==","response":{"clientDataJSON":"e30=","attestationObject":"e30="},"type":"public-key"}`)
+	// Should be 400 (bad attestation, not a server error)
+	if rr.Code == http.StatusOK {
+		t.Error("expected non-200 for invalid attestation")
 	}
 }

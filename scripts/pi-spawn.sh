@@ -76,7 +76,7 @@ trap 'rm -rf "$SESSION_DIR"' EXIT
 
 START_MS=$(python3 -c "import time; print(int(time.time()*1000))")
 
-RESPONSE=$(echo "$PROMPT" | pi --print \
+RESPONSE=$(echo "$PROMPT" | pi \
   --model "$MODEL" \
   --session-dir "$SESSION_DIR" \
   --no-prompt-templates \

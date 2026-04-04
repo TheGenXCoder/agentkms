@@ -25,7 +25,7 @@ type errorEngine struct{}
 func (e errorEngine) Evaluate(_ context.Context, _ identity.Identity, _, _ string) (policy.Decision, error) {
 	return policy.Decision{}, errors.New("policy engine: simulated internal error")
 }
-func (e errorEngine) GetPolicy() policy.Policy { return policy.Policy{} }
+func (e errorEngine) GetPolicy() policy.Policy     { return policy.Policy{} }
 func (e errorEngine) Reload(_ policy.Policy) error { return errors.New("unsupported") }
 
 // ── Policy engine error path (handlers return 500, audit OutcomeError) ──────
@@ -109,9 +109,9 @@ func TestHandleListKeys_TeamIDValidation(t *testing.T) {
 	srv, _ := newAllowServer(t, b)
 
 	cases := []struct {
-		name    string
-		teamID  string
-		wantOK  bool
+		name   string
+		teamID string
+		wantOK bool
 	}{
 		{"valid lowercase", "platform-team", true},
 		{"valid with underscore", "ml_team", true},
@@ -212,7 +212,6 @@ func TestRecoveryMiddleware_PanicProducesCleanJSON(t *testing.T) {
 }
 
 // ── Error mapping coverage ────────────────────────────────────────────────────
-
 
 func TestBackendErrorMapping_AlgorithmMismatch(t *testing.T) {
 	// AlgorithmMismatch → 400 algorithm_mismatch

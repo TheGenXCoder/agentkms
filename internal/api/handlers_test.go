@@ -6,22 +6,22 @@
 //
 // Test categories:
 //
-//	1.  Happy-path response schema — each endpoint returns exactly the
-//	    expected JSON fields and nothing else.
-//	2.  ADVERSARIAL — no plaintext in encrypt response.
-//	3.  ADVERSARIAL — no PEM headers or binary key-like data in any response.
-//	4.  ADVERSARIAL — no backend error internals in HTTP error responses.
-//	5.  ADVERSARIAL — audit events: required fields present, correct outcomes,
-//	    no key-material content.
-//	6.  ADVERSARIAL — policy deny-reason only in audit log, never in HTTP body.
-//	7.  ADVERSARIAL — audit event produced for every code path (success,
-//	    denied, error).
-//	8.  Input validation — malformed inputs are rejected before policy/backend.
-//	9.  Content-Type header is always application/json.
-//	10. Rotate key — success, policy deny, invalid key ID, key-not-found.
-//	11. Cross-type operations rejected at backend with clean error responses.
-//	12. ADVERSARIAL — audit sink failure causes 500, not silent data loss.
-//	    Verifies that denial and error paths treat audit failures as hard errors.
+//  1. Happy-path response schema — each endpoint returns exactly the
+//     expected JSON fields and nothing else.
+//  2. ADVERSARIAL — no plaintext in encrypt response.
+//  3. ADVERSARIAL — no PEM headers or binary key-like data in any response.
+//  4. ADVERSARIAL — no backend error internals in HTTP error responses.
+//  5. ADVERSARIAL — audit events: required fields present, correct outcomes,
+//     no key-material content.
+//  6. ADVERSARIAL — policy deny-reason only in audit log, never in HTTP body.
+//  7. ADVERSARIAL — audit event produced for every code path (success,
+//     denied, error).
+//  8. Input validation — malformed inputs are rejected before policy/backend.
+//  9. Content-Type header is always application/json.
+//  10. Rotate key — success, policy deny, invalid key ID, key-not-found.
+//  11. Cross-type operations rejected at backend with clean error responses.
+//  12. ADVERSARIAL — audit sink failure causes 500, not silent data loss.
+//     Verifies that denial and error paths treat audit failures as hard errors.
 //
 // Design note on key-material verification:
 //
@@ -109,7 +109,7 @@ func (a *capturingAuditor) eventCount() int {
 type spyBackend struct {
 	inner backend.Backend
 
-	mu      sync.Mutex
+	mu        sync.Mutex
 	sigResult *backend.SignResult
 	encResult *backend.EncryptResult
 	decResult *backend.DecryptResult
@@ -769,8 +769,8 @@ func TestAdversarial_NoPEMHeaders_AllErrorResponses(t *testing.T) {
 // HTTP response body.  They indicate internal error messages, stack traces,
 // source file paths, or Go runtime output leaking to the caller.
 var forbiddenResponseStrings = []string{
-	"backend:",           // error-wrapping prefix from internal/backend
-	"backend.go",        // source file names
+	"backend:",   // error-wrapping prefix from internal/backend
+	"backend.go", // source file names
 	"dev.go",
 	"interface.go",
 	"panic:",            // Go panic output
@@ -796,7 +796,7 @@ func TestAdversarial_ErrorResponses_NoInternalDetails(t *testing.T) {
 
 	cases := []tc{
 		{
-			name: "sign key-not-found",
+			name:   "sign key-not-found",
 			method: http.MethodPost, path: "/sign/missing/key",
 			body: jsonReader(t, map[string]any{
 				"payload_hash": hashHex([]byte("x")), "algorithm": "ES256",
@@ -804,7 +804,7 @@ func TestAdversarial_ErrorResponses_NoInternalDetails(t *testing.T) {
 			wantStatus: http.StatusNotFound, wantCode: "key_not_found",
 		},
 		{
-			name: "encrypt key-not-found",
+			name:   "encrypt key-not-found",
 			method: http.MethodPost, path: "/encrypt/missing/key",
 			body: jsonReader(t, map[string]any{
 				"plaintext": base64.StdEncoding.EncodeToString([]byte("d")),
@@ -812,7 +812,7 @@ func TestAdversarial_ErrorResponses_NoInternalDetails(t *testing.T) {
 			wantStatus: http.StatusNotFound, wantCode: "key_not_found",
 		},
 		{
-			name: "decrypt key-not-found",
+			name:   "decrypt key-not-found",
 			method: http.MethodPost, path: "/decrypt/missing/key",
 			body: jsonReader(t, map[string]any{
 				"ciphertext": base64.StdEncoding.EncodeToString(make([]byte, 64)),
@@ -1535,7 +1535,7 @@ func TestHandleRotateKey_PolicyDeny(t *testing.T) {
 		t.Errorf("expected denied outcome, got %q", ev.Outcome)
 	}
 	// DenyReason must not appear in the HTTP response body.
-	if ev.DenyReason != "" && strings.Contains(string(rr.Body.Bytes()), ev.DenyReason) {
+	if ev.DenyReason != "" && strings.Contains(rr.Body.String(), ev.DenyReason) {
 		t.Error("ADVERSARIAL: DenyReason leaked into HTTP response body")
 	}
 }

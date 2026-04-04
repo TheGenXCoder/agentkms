@@ -58,11 +58,11 @@ func TestCertRevocationChecker(t *testing.T) {
 	}
 
 	crlTemplate := &x509.RevocationList{
-		SignatureAlgorithm: x509.SHA256WithRSA,
+		SignatureAlgorithm:        x509.SHA256WithRSA,
 		RevokedCertificateEntries: revokedCerts,
-		Number: big.NewInt(1),
-		ThisUpdate: time.Now(),
-		NextUpdate: time.Now().Add(1 * time.Hour),
+		Number:                    big.NewInt(1),
+		ThisUpdate:                time.Now(),
+		NextUpdate:                time.Now().Add(1 * time.Hour),
 	}
 
 	crlDER, err := x509.CreateRevocationList(rand.Reader, crlTemplate, caCert, privateKey)

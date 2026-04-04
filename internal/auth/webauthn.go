@@ -26,15 +26,12 @@ package auth
 //   - Credentials are stored server-side as public keys only — no private material.
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -181,7 +178,7 @@ type WebAuthnStore struct {
 	mu          sync.RWMutex
 	dataDir     string
 	credentials map[string][]webauthn.Credential // callerID → credentials
-	sessions    map[string]*webauthn.SessionData  // "callerID:kind" → session
+	sessions    map[string]*webauthn.SessionData // "callerID:kind" → session
 }
 
 // NewWebAuthnStore creates a WebAuthnStore backed by dataDir.
@@ -271,22 +268,8 @@ func (u *waUser) WebAuthnID() []byte {
 	return []byte(u.id)
 }
 
-func (u *waUser) WebAuthnName() string        { return u.id }
-func (u *waUser) WebAuthnDisplayName() string  { return u.id }
+func (u *waUser) WebAuthnName() string                       { return u.id }
+func (u *waUser) WebAuthnDisplayName() string                { return u.id }
 func (u *waUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-// generateChallenge returns 32 bytes of random challenge data as base64url.
-func generateChallenge() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-
-// challengeExpiresAt returns when a challenge issued now should expire.
-func challengeExpiresAt() time.Time {
-	return time.Now().Add(5 * time.Minute)
-}

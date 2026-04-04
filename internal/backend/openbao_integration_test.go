@@ -495,9 +495,10 @@ func TestOpenBao_RotateKey_OldCiphertextStillDecryptable(t *testing.T) {
 // Unlike the DevBackend adversarial tests, we cannot access the raw private key
 // bytes from inside Transit (that is the whole point of Transit).  Instead, we
 // verify:
-//  (a) The result fields contain only what the interface promises.
-//  (b) The JSON-serialised result contains no "BEGIN" PEM headers.
-//  (c) The signature length matches algorithm expectations.
+//
+//	(a) The result fields contain only what the interface promises.
+//	(b) The JSON-serialised result contains no "BEGIN" PEM headers.
+//	(c) The signature length matches algorithm expectations.
 func TestAdversarial_OpenBao_Sign_ES256_ResultContainsNoKeyMaterial(t *testing.T) {
 	b := newIntegrationBackend(t)
 	keyID := uniqueKeyID(t, "adv-es256")

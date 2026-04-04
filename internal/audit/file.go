@@ -80,14 +80,14 @@ func (s *FileAuditSink) Log(ctx context.Context, event AuditEvent) error {
 	if err := s.enc.Encode(event); err != nil {
 		return fmt.Errorf("audit: file sink encode: %w", err)
 	}
-	
+
 	// SECURITY: Ensure data is durably committed to disk after each write
 	// This prevents audit event loss if the process crashes between a write
 	// and the next scheduled Flush() call.
 	if err := s.f.Sync(); err != nil {
 		return fmt.Errorf("audit: file sink fsync: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -121,7 +121,10 @@ func (s *FileAuditSink) Close() error {
 	defer s.mu.Unlock()
 
 	if err := s.f.Sync(); err != nil {
-		_ = s.f.Close()
+		if err := s.f.Close(); err != nil {
+			// Best-effort: log but do not propagate — caller is already in cleanup.
+			_ = err // audit sink close failure is non-fatal; file already flushed by Flush()
+		}
 		return fmt.Errorf("audit: file sink close sync: %w", err)
 	}
 	if err := s.f.Close(); err != nil {

@@ -13,6 +13,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -175,22 +176,21 @@ func verifyKeyIntegrity(kv *keyVersion, algorithm Algorithm) error {
 			return fmt.Errorf("missing ECDSA private key")
 		}
 		return nil
-		
+
 	case AlgorithmRS256:
 		// Verify RSA key
 		if kv.rsaPrivKey == nil {
 			return fmt.Errorf("missing RSA private key")
 		}
 		return nil
-		
+
 	case AlgorithmEdDSA:
 		// Verify Ed25519 key
 		if len(kv.edPrivKey) == 0 {
 			return fmt.Errorf("missing Ed25519 private key")
 		}
 		return nil
-		
-		
+
 	default:
 		return fmt.Errorf("unsupported algorithm: %s", algorithm)
 	}
@@ -368,6 +368,10 @@ func (b *DevBackend) Encrypt(ctx context.Context, keyID string, plaintext []byte
 	sealed := gcm.Seal(nil, nonce, plaintext, nil)
 
 	out := make([]byte, 4+len(nonce)+len(sealed))
+	// Bounds check: key version must fit in uint32 (overflow → wrong decryption key).
+	if ver.version < 0 || ver.version > math.MaxUint32 {
+		return nil, fmt.Errorf("backend: key version %d out of uint32 range", ver.version)
+	}
 	binary.BigEndian.PutUint32(out[0:4], uint32(ver.version))
 	copy(out[4:4+len(nonce)], nonce)
 	copy(out[4+len(nonce):], sealed)

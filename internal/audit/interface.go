@@ -8,13 +8,14 @@
 // testable without changing business logic.
 //
 // Implementations live alongside this file:
-//   file.go       — append-only NDJSON file (local dev, Tier 0)
-//   multi.go      — fan-out to N sinks (MultiAuditor)
-//   elk.go        — Elasticsearch/Logstash HTTP ingest  (Tier 1, backlog AU-02)
-//   splunk.go     — Splunk HEC                         (Tier 2, backlog AU-05)
-//   datadog.go    — Datadog Logs API                   (Tier 2, backlog AU-06)
-//   cloudwatch.go — AWS CloudWatch Logs                (Tier 3, backlog AU-07)
-//   siem.go       — Generic SIEM webhook               (Tier 2, backlog AU-08)
+//
+//	file.go       — append-only NDJSON file (local dev, Tier 0)
+//	multi.go      — fan-out to N sinks (MultiAuditor)
+//	elk.go        — Elasticsearch/Logstash HTTP ingest  (Tier 1, backlog AU-02)
+//	splunk.go     — Splunk HEC                         (Tier 2, backlog AU-05)
+//	datadog.go    — Datadog Logs API                   (Tier 2, backlog AU-06)
+//	cloudwatch.go — AWS CloudWatch Logs                (Tier 3, backlog AU-07)
+//	siem.go       — Generic SIEM webhook               (Tier 2, backlog AU-08)
 package audit
 
 import (

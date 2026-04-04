@@ -208,6 +208,25 @@
 
 ---
 
+---
+
+## Code Quality & Security
+
+| ID | Pri | Phase | Status | Task | Notes |
+|----|-----|-------|--------|------|-------|
+| QS-01 | P0 | T0 | [x] | Wire real token-validation middleware — replace A-04 stub; add `*auth.TokenService` to `NewServer` signature | Security: API endpoints bypass token auth without this |
+| QS-02 | P0 | T0 | [x] | Align `NewAuthHandler` to 4-arg canonical signature — add `policy.EngineI` parameter for delegate-scope validation | Signature diverged from canonical module |
+| QS-03 | P1 | T1 | [x] | N/A — already had 3-arg `NewOpenBaoKV` prior to this fix signature — add `*tls.Config`; current 2-arg variant has no TLS verification to OpenBao KV | gosec G402; credential-store connection unverified |
+| QS-04 | P0 | T0 | [x] | Fix integer overflow `int → uint32` in `internal/backend/dev.go` — bounds-check before `PutUint32` | gosec G115; version wrap → wrong decryption key → permanent data loss |
+| QS-05 | P1 | T0 | [x] | Fix file write permissions in `cmd/enroll/main.go` — CA cert written 0644, should be 0600 | gosec G306 |
+| QS-06 | P1 | T1 | [x] | Guard `TLSInsecureSkipVerify` in audit sinks — only legal in non-production; add env assertion | gosec G402; audit MITM vector if misconfigured |
+| QS-07 | P2 | T0 | [x] | Remove dead code — unused const `defaultVaultPolicyPath`; dead methods `bucketCount`, `mountPath`; dead test helper `generateTestPayload` | staticcheck U1000 across all modules |
+| QS-08 | P2 | T0 | [x] | Fix silently ignored errors — `_ = s.f.Close()`, `_ = json.NewEncoder(w).Encode(...)`, flush errors on shutdown | Swallowed errors mask audit log failures |
+| QS-09 | P2 | T0 | [x] | Replace `panic()` in `NewServer` and `VaultPolicyLoader.Engine()` with returned `error` | Library code must not panic; goroutine panic crashes whole process |
+| QS-10 | P3 | T0 | [x] | Fix all `gofmt` formatting violations (~25-44 files per module) | Required for CI lint gate |
+| QS-11 | P3 | T0 | [x] | Fix staticcheck style: `rr.Body.String()` idiom; loop `append` spread (S1011); struct conversion (S1016); duplicate import (ST1019); error string punctuation (ST1005) | — |
+
+
 ## How to Use This Backlog
 
 1. Start with the Foundation + Identity sections (T0). Nothing else works without these.

@@ -188,12 +188,12 @@ func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 //
 // SECURITY: contains ONLY key metadata.  No key material is ever returned.
 type rotateKeyResponse struct {
-	KeyID     string  `json:"key_id"`
-	Algorithm string  `json:"algorithm"`
-	Version   int     `json:"version"`
-	RotatedAt string  `json:"rotated_at"` // RFC 3339
-	CreatedAt string  `json:"created_at"` // RFC 3339
-	TeamID    string  `json:"team_id"`
+	KeyID     string `json:"key_id"`
+	Algorithm string `json:"algorithm"`
+	Version   int    `json:"version"`
+	RotatedAt string `json:"rotated_at"` // RFC 3339
+	CreatedAt string `json:"created_at"` // RFC 3339
+	TeamID    string `json:"team_id"`
 }
 
 // handleRotateKey handles POST /rotate/{keyid...}.

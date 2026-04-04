@@ -137,11 +137,11 @@ func (s *SplunkAuditSink) flushLocked(ctx context.Context) error {
 
 // splunkEvent represents the HEC JSON format.
 type splunkEvent struct {
-	Time       int64       `json:"time"`
-	Host       string      `json:"host,omitempty"`
-	SourceType string      `json:"sourcetype,omitempty"`
-	Index      string      `json:"index,omitempty"`
-	Event      AuditEvent  `json:"event"`
+	Time       int64      `json:"time"`
+	Host       string     `json:"host,omitempty"`
+	SourceType string     `json:"sourcetype,omitempty"`
+	Index      string     `json:"index,omitempty"`
+	Event      AuditEvent `json:"event"`
 }
 
 func (s *SplunkAuditSink) writeBatch(ctx context.Context, events []AuditEvent) error {

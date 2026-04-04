@@ -454,7 +454,8 @@ func (b *OpenBaoBackend) CreateTransitKey(ctx context.Context, keyID string, alg
 // path:   path relative to /v1/ (e.g. "transit/sign/my-key")
 // reqBody: JSON-serialisable request body, or nil for no body
 // respData: pointer to a struct that will receive data.* from the response,
-//           or nil if the response body is ignored (e.g. rotate returns 204)
+//
+//	or nil if the response body is ignored (e.g. rotate returns 204)
 //
 // Returns a *vaultAPIError if the server returns an HTTP error status or a
 // Vault error payload.  Callers must NOT include request body contents in
@@ -762,15 +763,15 @@ type vaultEnvelope struct {
 
 // transitSignRequest is the body sent to POST /v1/{mount}/sign/{key}.
 type transitSignRequest struct {
-	Input              string `json:"input"`                          // base64-encoded payload hash
-	Prehashed          bool   `json:"prehashed,omitempty"`             // true for ES256, RS256
-	HashAlgorithm      string `json:"hash_algorithm,omitempty"`        // "sha2-256" for ES256/RS256
-	SignatureAlgorithm string `json:"signature_algorithm,omitempty"`   // "pkcs1v15" for RS256
+	Input              string `json:"input"`                         // base64-encoded payload hash
+	Prehashed          bool   `json:"prehashed,omitempty"`           // true for ES256, RS256
+	HashAlgorithm      string `json:"hash_algorithm,omitempty"`      // "sha2-256" for ES256/RS256
+	SignatureAlgorithm string `json:"signature_algorithm,omitempty"` // "pkcs1v15" for RS256
 }
 
 // transitSignData is the data field in the POST /v1/{mount}/sign/{key} response.
 type transitSignData struct {
-	Signature  string `json:"signature"`   // "vault:vN:base64..."
+	Signature  string `json:"signature"` // "vault:vN:base64..."
 	KeyVersion int    `json:"key_version"`
 }
 
@@ -804,11 +805,11 @@ type transitListData struct {
 // No field in this struct can hold key material; the Transit API never
 // returns key material in this endpoint (exportable=false enforced in CreateTransitKey).
 type transitKeyData struct {
-	Name           string                       `json:"name"`
-	Type           string                       `json:"type"`           // "ecdsa-p256", "rsa-2048", etc.
-	LatestVersion  int                          `json:"latest_version"`
-	Keys           map[string]json.RawMessage   `json:"keys"`           // version number → version metadata (polymorphic)
-	CustomMetadata map[string]string            `json:"custom_metadata"`
+	Name           string                     `json:"name"`
+	Type           string                     `json:"type"` // "ecdsa-p256", "rsa-2048", etc.
+	LatestVersion  int                        `json:"latest_version"`
+	Keys           map[string]json.RawMessage `json:"keys"` // version number → version metadata (polymorphic)
+	CustomMetadata map[string]string          `json:"custom_metadata"`
 }
 
 // transitKeyVersion holds per-version metadata for a Transit key.
@@ -872,7 +873,7 @@ func decodeTransitKeyVersion(raw json.RawMessage) (transitKeyVersion, error) {
 // transitCreateKeyRequest is the body sent to POST /v1/{mount}/keys/{name}.
 type transitCreateKeyRequest struct {
 	Type                 string            `json:"type"`
-	Exportable           bool              `json:"exportable"`            // always false
+	Exportable           bool              `json:"exportable"`             // always false
 	AllowPlaintextBackup bool              `json:"allow_plaintext_backup"` // always false
 	CustomMetadata       map[string]string `json:"custom_metadata,omitempty"`
 }

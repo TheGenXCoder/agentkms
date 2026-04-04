@@ -11,7 +11,6 @@ import (
 
 	"github.com/agentkms/agentkms/internal/api"
 	auth "github.com/agentkms/agentkms/internal/auth"
-	authpkg "github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/policy"
@@ -209,7 +208,7 @@ func TestHandleGetLLMCredential_RateLimit(t *testing.T) {
 	// We'll use the router so it goes through the middleware (if any) or we just inject it manually.
 	// Wait, api package has ContextWithIdentity? No, it's SetIdentityInContext which is unexported.
 	// Let's use credRequest.
-	
+
 	// First request should succeed.
 	rr1 := httptest.NewRecorder()
 	srv.ServeHTTP(rr1, req)
@@ -525,7 +524,7 @@ func TestHandleWebAuthnAuthFinish_NoService(t *testing.T) {
 func newCredServerWithWebAuthn(t *testing.T) (*api.Server, *capturingAuditor) {
 	t.Helper()
 	srv, aud := newCredServer(t, "")
-	wa, err := authpkg.NewWebAuthnService(authpkg.WebAuthnConfig{
+	wa, err := auth.NewWebAuthnService(auth.WebAuthnConfig{
 		RPID:     "localhost",
 		RPOrigin: "http://localhost:8080",
 		DataDir:  t.TempDir(),
@@ -605,10 +604,10 @@ func TestHandleWebAuthnRegisterFinish_BadResponse(t *testing.T) {
 
 func TestSetWebAuthn_NonNil(t *testing.T) {
 	srv, _ := newCredServer(t, "")
-	wa, err := authpkg.NewWebAuthnService(authpkg.WebAuthnConfig{
-		RPID:    "localhost",
+	wa, err := auth.NewWebAuthnService(auth.WebAuthnConfig{
+		RPID:     "localhost",
 		RPOrigin: "http://localhost",
-		DataDir: t.TempDir(),
+		DataDir:  t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("NewWebAuthnService: %v", err)

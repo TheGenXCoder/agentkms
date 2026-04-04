@@ -6,7 +6,7 @@
 //  2. Obtain a bootstrap token (one of):
 //     a. --bootstrap-token flag (operator-issued, single-use)
 //     b. --oidc-issuer flag: start OIDC flow → exchange code for identity →
-//        call AgentKMS /auth/bootstrap to get a short-lived enroll token
+//     call AgentKMS /auth/bootstrap to get a short-lived enroll token
 //  3. Call PKIClient.IssueCert with the bootstrap token
 //  4. Write cert + key to ~/.agentkms/client.{crt,key}
 //     Key file mode 0600; never logged
@@ -182,13 +182,13 @@ Examples:
 		return fmt.Errorf("writing private key: %w", err)
 	}
 
-	if err := os.WriteFile(certPath, []byte(bundle.CertificatePEM), 0644); err != nil {
-		os.Remove(keyPath) //nolint:errcheck // best-effort cleanup
+	if err := os.WriteFile(certPath, []byte(bundle.CertificatePEM), 0600); err != nil {
+		_ = os.Remove(keyPath) // best-effort cleanup
 		return fmt.Errorf("writing certificate: %w", err)
 	}
 
 	if bundle.CAPEM != "" {
-		if err := os.WriteFile(caPath, []byte(bundle.CAPEM), 0644); err != nil {
+		if err := os.WriteFile(caPath, []byte(bundle.CAPEM), 0600); err != nil {
 			return fmt.Errorf("writing CA cert: %w", err)
 		}
 	}
@@ -303,14 +303,16 @@ func obtainOIDCBootstrapToken(issuer, clientID, agentKMSAddr string) (string, er
 	}()
 
 	var code string
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	select {
 	case code = <-codeCh:
-		srv.Shutdown(context.Background()) //nolint:errcheck
+		_ = srv.Shutdown(shutdownCtx)
 	case err := <-errCh:
-		srv.Shutdown(context.Background()) //nolint:errcheck
+		_ = srv.Shutdown(shutdownCtx)
 		return "", err
 	case <-ctx.Done():
-		srv.Shutdown(context.Background()) //nolint:errcheck
+		_ = srv.Shutdown(shutdownCtx)
 		return "", fmt.Errorf("OIDC: timed out waiting for browser callback")
 	}
 
@@ -473,5 +475,6 @@ func openBrowser(url string) {
 	default:
 		return // unsupported; user must open manually
 	}
-	exec.Command(cmd, args...).Start() //nolint:errcheck
+	//nolint:gosec // G204: browser-open commands use a hardcoded command name with a user-supplied URL
+	_ = exec.Command(cmd, args...).Start()
 }

@@ -19,7 +19,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
-	"strings"
 )
 
 // VaultConfig holds configuration for the HashiCorp Vault backend.
@@ -47,14 +46,6 @@ type VaultConfig struct {
 	HTTPClient *http.Client
 }
 
-func (c *VaultConfig) mountPath() string {
-	mp := c.MountPath
-	if mp == "" {
-		mp = "transit"
-	}
-	return strings.Trim(mp, "/")
-}
-
 // VaultBackend implements Backend against HashiCorp Vault.
 type VaultBackend struct {
 	// VaultBackend delegates most logic to an internal OpenBaoBackend
@@ -67,14 +58,7 @@ type VaultBackend struct {
 // NewVaultBackend constructs a VaultBackend from cfg.
 func NewVaultBackend(cfg VaultConfig) (*VaultBackend, error) {
 	// Map VaultConfig to OpenBaoConfig for the internal implementation.
-	obCfg := OpenBaoConfig{
-		Address:    cfg.Address,
-		Token:      cfg.Token,
-		TLSConfig:  cfg.TLSConfig,
-		MountPath:  cfg.MountPath,
-		Namespace:  cfg.Namespace,
-		HTTPClient: cfg.HTTPClient,
-	}
+	obCfg := OpenBaoConfig(cfg)
 
 	inner, err := NewOpenBaoBackend(obCfg)
 	if err != nil {

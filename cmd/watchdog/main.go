@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -120,7 +119,7 @@ func main() {
 	}
 
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout:   10 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
 
@@ -202,8 +201,4 @@ func validate(client *http.Client, serverAddr string) error {
 	return fmt.Errorf("unexpected status %d", resp.StatusCode)
 }
 
-// tlsConfig builds a tls.Config with the given cert/key files.
 // Extracted for use in tests without real files.
-func tlsConfig(caBytes, certBytes, keyBytes []byte) (*tls.Config, error) {
-	return tlsutil.ClientTLSConfig(caBytes, certBytes, keyBytes)
-}

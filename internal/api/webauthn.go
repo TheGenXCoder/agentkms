@@ -24,10 +24,6 @@ import (
 
 // ── POST /auth/webauthn/register/begin ───────────────────────────────────────
 
-type waRegisterBeginRequest struct {
-	CallerID string `json:"caller_id"`
-}
-
 func (s *Server) handleWebAuthnRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := identityFromContext(ctx)
@@ -167,8 +163,8 @@ func (s *Server) handleWebAuthnAuthFinish(w http.ResponseWriter, r *http.Request
 	_ = s.auditLog(ctx, ev)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"token":      tokenStr,
-		"expires_at": tok.ExpiresAt.Format("2006-01-02T15:04:05Z"),
+		"token":       tokenStr,
+		"expires_at":  tok.ExpiresAt.Format("2006-01-02T15:04:05Z"),
 		"auth_method": string(identity.AuthMethodWebAuthn),
 	})
 }

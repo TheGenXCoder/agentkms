@@ -40,7 +40,7 @@ func TestFileAuditSink_FlushExportClose(t *testing.T) {
 	start := now.Add(-1 * time.Hour)
 	end := now.Add(1 * time.Hour)
 	out, errc := sink.Export(ctx, start, end)
-	
+
 	var events []AuditEvent
 	for ev := range out {
 		events = append(events, ev)
@@ -82,7 +82,8 @@ func TestFileAuditSink_ExportCancel(t *testing.T) {
 	cancel() // Pre-cancel
 
 	out, errc := sink.Export(ctx, time.Time{}, time.Now().Add(time.Hour))
-	for range out {} // drain
+	for range out {
+	} // drain
 	if err := <-errc; err == nil {
 		t.Fatal("Expected error due to cancelled context")
 	}

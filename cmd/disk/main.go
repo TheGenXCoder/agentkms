@@ -2,11 +2,11 @@
 //
 // This binary is embedded into the mkinitcpio initramfs image.
 // On boot, before the root filesystem is mounted, it:
-//   1. Establishes networking (handled by the initramfs hook).
-//   2. Loads the machine's mTLS client certificate from /etc/agentkms.
-//   3. Fetches the LUKS master key from AgentKMS via GET /credentials/generic/disk/{machine-id}.
-//   4. Pipes the key directly into cryptsetup luksOpen.
-//   5. Zeros the key from memory.
+//  1. Establishes networking (handled by the initramfs hook).
+//  2. Loads the machine's mTLS client certificate from /etc/agentkms.
+//  3. Fetches the LUKS master key from AgentKMS via GET /credentials/generic/disk/{machine-id}.
+//  4. Pipes the key directly into cryptsetup luksOpen.
+//  5. Zeros the key from memory.
 //
 // Usage in mkinitcpio runtime hook:
 //

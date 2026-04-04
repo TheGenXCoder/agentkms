@@ -151,12 +151,13 @@ func (s *Server) auditLog(ctx context.Context, ev audit.AuditEvent) error {
 //	POST /rotate/{keyid...}        C-05  Rotate a key (stub — 501)
 //
 // Note on /rotate routing:
-//   The architecture spec defines the rotate endpoint as
-//   POST /keys/{key-id}/rotate.  The standard net/http ServeMux (Go 1.22+)
-//   requires {wildcard...} to be at the end of a pattern, so the suffix
-//   "/rotate" cannot follow a multi-segment wildcard.  Using
-//   POST /rotate/{keyid...} avoids the ambiguity.  The final URL shape will
-//   be confirmed when C-05 is fully implemented (backlog C-05, B-01).
+//
+//	The architecture spec defines the rotate endpoint as
+//	POST /keys/{key-id}/rotate.  The standard net/http ServeMux (Go 1.22+)
+//	requires {wildcard...} to be at the end of a pattern, so the suffix
+//	"/rotate" cannot follow a multi-segment wildcard.  Using
+//	POST /rotate/{keyid...} avoids the ambiguity.  The final URL shape will
+//	be confirmed when C-05 is fully implemented (backlog C-05, B-01).
 //
 // Authentication endpoints (/auth/session, /auth/refresh, /auth/revoke) are
 // owned by the auth stream (backlog A-06 to A-08) and are not registered here.

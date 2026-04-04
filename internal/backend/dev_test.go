@@ -10,13 +10,13 @@
 // in order to assert they do NOT appear elsewhere.
 //
 // Test categories:
-//   1. Happy-path correctness: sign → verify, encrypt → decrypt roundtrips.
-//   2. Key versioning: rotate → old ciphertext still decryptable.
-//   3. ADVERSARIAL — key material never in return values.
-//   4. ADVERSARIAL — key material never in error messages.
-//   5. Input validation: malformed inputs return errors, not panics.
-//   6. Concurrency: safe for parallel use.
-//   7. ListKeys / RotateKey: metadata only, no key material.
+//  1. Happy-path correctness: sign → verify, encrypt → decrypt roundtrips.
+//  2. Key versioning: rotate → old ciphertext still decryptable.
+//  3. ADVERSARIAL — key material never in return values.
+//  4. ADVERSARIAL — key material never in error messages.
+//  5. Input validation: malformed inputs return errors, not panics.
+//  6. Concurrency: safe for parallel use.
+//  7. ListKeys / RotateKey: metadata only, no key material.
 package backend
 
 import (
@@ -25,7 +25,6 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256" // used by testHash; also registers SHA-256 with the crypto package
 	"crypto/x509"
@@ -1259,17 +1258,7 @@ func TestDevBackend_CreateKey_UnsupportedAlgorithm(t *testing.T) {
 // multi-error chains produced by errors.Join and fmt.Errorf with multiple
 // %w verbs (Go 1.20+).  The previous containsSentinel helper only handled
 // single-parent Unwrap() chains.
-func isErrKeyNotFound(err error) bool     { return errors.Is(err, ErrKeyNotFound) }
+func isErrKeyNotFound(err error) bool       { return errors.Is(err, ErrKeyNotFound) }
 func isErrAlgorithmMismatch(err error) bool { return errors.Is(err, ErrAlgorithmMismatch) }
-func isErrKeyTypeMismatch(err error) bool  { return errors.Is(err, ErrKeyTypeMismatch) }
-func isErrInvalidInput(err error) bool    { return errors.Is(err, ErrInvalidInput) }
-
-// generateTestPayload produces a random 32-byte hash for use in tests.
-func generateTestPayload(t *testing.T) []byte {
-	t.Helper()
-	h := make([]byte, 32)
-	if _, err := rand.Read(h); err != nil {
-		t.Fatalf("rand.Read: %v", err)
-	}
-	return h
-}
+func isErrKeyTypeMismatch(err error) bool   { return errors.Is(err, ErrKeyTypeMismatch) }
+func isErrInvalidInput(err error) bool      { return errors.Is(err, ErrInvalidInput) }

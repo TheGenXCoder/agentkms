@@ -7,7 +7,7 @@ module github.com/agentkms/agentkms
 // Every new dependency added to this file requires a documented reason in
 // AGENTS.md before the PR is merged.
 
-go 1.25.0
+go 1.25.8
 
 require (
 	github.com/go-webauthn/webauthn v0.16.2

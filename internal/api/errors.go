@@ -14,15 +14,15 @@ import (
 // Machine-readable error codes for the "code" field in error responses.
 // These values are part of the public API contract; do not change them.
 const (
-	errCodeInvalidRequest       = "invalid_request"
-	errCodeKeyNotFound          = "key_not_found"
-	errCodePolicyDenied         = "policy_denied"
-	errCodeAlgorithmMismatch    = "algorithm_mismatch"
+	errCodeInvalidRequest        = "invalid_request"
+	errCodeKeyNotFound           = "key_not_found"
+	errCodePolicyDenied          = "policy_denied"
+	errCodeAlgorithmMismatch     = "algorithm_mismatch"
 	errCodeOperationNotSupported = "operation_not_supported"
-	errCodeInternal             = "internal_error"
-	errCodeNotImplemented       = "not_implemented"
-	errCodeRateLimited          = "rate_limited"
-	errCodeUnauthorized         = "unauthorized"
+	errCodeInternal              = "internal_error"
+	errCodeNotImplemented        = "not_implemented"
+	errCodeRateLimited           = "rate_limited"
+	errCodeUnauthorized          = "unauthorized"
 )
 
 // ── Response types ────────────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ func (s *Server) writeError(w http.ResponseWriter, statusCode int, code, message
 	w.WriteHeader(statusCode)
 	// Ignore json.Encoder errors: if the response writer is broken we cannot
 	// report the error to the client anyway.
-	_ = json.NewEncoder(w).Encode(errorResponse{Error: message, Code: code})
+	_ = json.NewEncoder(w).Encode(errorResponse{Error: message, Code: code}) //nolint:errcheck // best-effort: if the write fails the connection is already broken
 }
 
 // writeJSON writes a JSON-encoded value with the given HTTP status code.
@@ -67,7 +67,7 @@ func writeJSON(w http.ResponseWriter, statusCode int, v any) {
 	w.WriteHeader(statusCode)
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	_ = enc.Encode(v)
+	_ = enc.Encode(v) //nolint:errcheck // best-effort: connection may be broken
 }
 
 // ── Backend error mapping ─────────────────────────────────────────────────────

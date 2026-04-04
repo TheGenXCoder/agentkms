@@ -288,13 +288,13 @@ func TestTokenService_Validate_MissingRequiredClaims(t *testing.T) {
 	id := testIdentity("fp1")
 
 	cases := []struct {
-		name           string
+		name                string
 		jti, sub, team, cfp string
 	}{
-		{"empty_jti",  "",         "sub@team",      "platform-team", "fp1"},
-		{"empty_sub",  "test-jti", "",              "platform-team", "fp1"},
-		{"empty_cfp",  "test-jti", "sub@team",      "platform-team", ""},
-		{"empty_team", "test-jti", "sub@team",      "",              "fp1"},
+		{"empty_jti", "", "sub@team", "platform-team", "fp1"},
+		{"empty_sub", "test-jti", "", "platform-team", "fp1"},
+		{"empty_cfp", "test-jti", "sub@team", "platform-team", ""},
+		{"empty_team", "test-jti", "sub@team", "", "fp1"},
 	}
 
 	for _, tc := range cases {

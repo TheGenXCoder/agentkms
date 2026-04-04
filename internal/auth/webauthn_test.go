@@ -8,9 +8,9 @@ import (
 
 func TestNewWebAuthnService_Valid(t *testing.T) {
 	_, err := auth.NewWebAuthnService(auth.WebAuthnConfig{
-		RPID:      "localhost",
-		RPOrigin:  "http://localhost:8080",
-		DataDir:   t.TempDir(),
+		RPID:     "localhost",
+		RPOrigin: "http://localhost:8080",
+		DataDir:  t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("NewWebAuthnService: %v", err)

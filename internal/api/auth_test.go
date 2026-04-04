@@ -566,6 +566,7 @@ func TestRefreshRevoke_WithMiddleware(t *testing.T) {
 		t.Errorf("refresh with revoked token: status = %d, want 401", w3.Code)
 	}
 }
+
 // ── POST /auth/delegate tests ─────────────────────────────────────────────────
 
 // mockPolicyEngine implements policy.EngineI for testing.
@@ -579,7 +580,7 @@ func (m *mockPolicyEngine) Evaluate(ctx context.Context, id identity.Identity, o
 	}
 	return policy.Decision{Allow: false, DenyReason: "mock deny"}, nil
 }
-func (m *mockPolicyEngine) GetPolicy() policy.Policy { return policy.Policy{} }
+func (m *mockPolicyEngine) GetPolicy() policy.Policy     { return policy.Policy{} }
 func (m *mockPolicyEngine) Reload(p policy.Policy) error { return nil }
 
 func newTestStackWithMockPolicy(t *testing.T, allow bool) (*auth.TokenService, *api.AuthHandler, *nullAuditor) {
@@ -607,7 +608,7 @@ func TestDelegate_Valid_Returns200WithToken(t *testing.T) {
 	r, _ := http.NewRequest(http.MethodPost, "/auth/delegate", strings.NewReader(reqBody))
 	r.Header.Set("Content-Type", "application/json")
 	r = withToken(r, parentTok)
-	
+
 	handler.Delegate(w, r)
 
 	if w.Code != http.StatusOK {
@@ -713,7 +714,7 @@ func TestDelegate_InvalidScopeFormat_Returns400(t *testing.T) {
 func TestDelegate_PolicyDeny_Returns403(t *testing.T) {
 	svc, handler, _ := newTestStackWithMockPolicy(t, false) // false -> denies everything
 	cert := makeTestCert(t, "bert@platform-team")
-	
+
 	// Wait, we need the parent token to be issued! sessionToken will succeed if mockPolicyEngine isn't involved in issuance?
 	// Oh, Session doesn't evaluate policy, it just authenticates the cert. Let's check!
 	parentTokStr := sessionToken(t, handler, cert.Cert)

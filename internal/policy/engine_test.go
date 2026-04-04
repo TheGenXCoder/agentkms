@@ -47,9 +47,9 @@ func svcID(team, caller string) identity.Identity {
 // agentID returns an agent-session Identity.
 func agentID(team, caller string) identity.Identity {
 	return identity.Identity{
-		CallerID:  caller + "@" + team,
-		TeamID:    team,
-		Role:      identity.RoleAgent,
+		CallerID:     caller + "@" + team,
+		TeamID:       team,
+		Role:         identity.RoleAgent,
 		AgentSession: "sess-abc123",
 	}
 }
@@ -85,7 +85,7 @@ func allOps() []Operation {
 //   - 3 identity types (developer, service, agent) × 3 teams = 9 identities
 //   - 8 operations
 //   - 5 key IDs (including empty string and a key that looks like a wildcard)
-//   = 360 total evaluations, all of which must produce Allow=false.
+//     = 360 total evaluations, all of which must produce Allow=false.
 func TestDenyByDefault_EmptyPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -348,9 +348,9 @@ func TestEvaluate_CallerIDGlobMatching(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		pattern    string
-		callerID   string
-		wantMatch  bool
+		pattern   string
+		callerID  string
+		wantMatch bool
 	}{
 		// Exact match.
 		{"alice@platform-team", "alice@platform-team", true},
@@ -921,7 +921,7 @@ func TestEvaluate_EmptyKeyIDNeverMatchesKeyConstraints(t *testing.T) {
 
 	enginePrefix := mustEngine(t, Policy{
 		Version: "1",
-		Rules: []Rule{{ID: "r", Match: Match{KeyPrefix: "payments/"}, Effect: EffectAllow}},
+		Rules:   []Rule{{ID: "r", Match: Match{KeyPrefix: "payments/"}, Effect: EffectAllow}},
 	})
 	if dec := enginePrefix.Evaluate(devID("t", "a"), OpSign, ""); dec.Allow {
 		t.Error("empty key ID should not match non-empty key prefix")
@@ -929,7 +929,7 @@ func TestEvaluate_EmptyKeyIDNeverMatchesKeyConstraints(t *testing.T) {
 
 	engineIDs := mustEngine(t, Policy{
 		Version: "1",
-		Rules: []Rule{{ID: "r", Match: Match{KeyIDs: []string{"payments/key"}}, Effect: EffectAllow}},
+		Rules:   []Rule{{ID: "r", Match: Match{KeyIDs: []string{"payments/key"}}, Effect: EffectAllow}},
 	})
 	if dec := engineIDs.Evaluate(devID("t", "a"), OpSign, ""); dec.Allow {
 		t.Error("empty key ID should not match explicit key ID list")

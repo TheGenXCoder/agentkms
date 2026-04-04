@@ -54,7 +54,7 @@ rules:
 
 type fakeKV struct {
 	calls     atomic.Int64
-	status    atomic.Int32  // 0 means 200
+	status    atomic.Int32 // 0 means 200
 	policyDoc string
 	lastToken string
 }

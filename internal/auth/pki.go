@@ -113,15 +113,15 @@ func NewPKIClient(cfg PKIConfig) *PKIClient {
 		// responsibility, but we surface the risk at construction time.
 		fmt.Fprintf(os.Stderr,
 			"agentkms: WARNING: PKIClient Address uses http:// for a non-loopback host;\n"+
-			"  bootstrap tokens will be sent in plaintext.\n"+
-			"  Use https:// in production.\n")
+				"  bootstrap tokens will be sent in plaintext.\n"+
+				"  Use https:// in production.\n")
 	}
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = cfg.TLSConfig
 
 	return &PKIClient{
-		cfg:    cfg,
+		cfg: cfg,
 		client: &http.Client{
 			Timeout:   30 * time.Second,
 			Transport: transport,
@@ -144,11 +144,11 @@ type pkiIssueRequest struct {
 // pkiIssueResponse is the Vault API response envelope for PKI issuance.
 type pkiIssueResponse struct {
 	Data struct {
-		Certificate    string `json:"certificate"`
-		IssuingCA      string `json:"issuing_ca"`
-		PrivateKey     string `json:"private_key"`
-		SerialNumber   string `json:"serial_number"`
-		Expiration     int64  `json:"expiration"`
+		Certificate  string `json:"certificate"`
+		IssuingCA    string `json:"issuing_ca"`
+		PrivateKey   string `json:"private_key"`
+		SerialNumber string `json:"serial_number"`
+		Expiration   int64  `json:"expiration"`
 	} `json:"data"`
 	Errors []string `json:"errors"`
 }

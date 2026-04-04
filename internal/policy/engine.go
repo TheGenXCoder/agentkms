@@ -57,7 +57,9 @@ func (DenyAllEngine) Evaluate(_ context.Context, _ identity.Identity, _, _ strin
 }
 
 func (DenyAllEngine) GetPolicy() Policy { return Policy{Version: "1"} }
-func (DenyAllEngine) Reload(_ Policy) error { return fmt.Errorf("policy: DenyAllEngine does not support Reload") }
+func (DenyAllEngine) Reload(_ Policy) error {
+	return fmt.Errorf("policy: DenyAllEngine does not support Reload")
+}
 
 // AllowAllEngine permits every operation. For tests only — never production.
 type AllowAllEngine struct{}
@@ -67,7 +69,9 @@ func (AllowAllEngine) Evaluate(_ context.Context, _ identity.Identity, _, _ stri
 }
 
 func (AllowAllEngine) GetPolicy() Policy { return Policy{Version: "1"} }
-func (AllowAllEngine) Reload(_ Policy) error { return fmt.Errorf("policy: AllowAllEngine does not support Reload") }
+func (AllowAllEngine) Reload(_ Policy) error {
+	return fmt.Errorf("policy: AllowAllEngine does not support Reload")
+}
 
 // AsEngineI wraps *Engine as an EngineI for injection into api.NewServer.
 func AsEngineI(e *Engine) EngineI { return &engineIAdapter{e: e} }
@@ -132,8 +136,8 @@ type rateLimitBucket struct {
 // rateLimitState holds all rate-limit counters.  It is protected by its own
 // mutex so that counter updates do not contend with policy reads.
 type rateLimitState struct {
-	mu       sync.Mutex
-	buckets  map[string]*rateLimitBucket // key: ruleID + "\x00" + callerID
+	mu      sync.Mutex
+	buckets map[string]*rateLimitBucket // key: ruleID + "\x00" + callerID
 }
 
 func newRateLimitState() *rateLimitState {
@@ -191,12 +195,6 @@ func (rls *rateLimitState) reset() {
 }
 
 // bucketCount returns the number of active buckets.  Used in tests.
-func (rls *rateLimitState) bucketCount() int {
-	rls.mu.Lock()
-	defer rls.mu.Unlock()
-	return len(rls.buckets)
-}
-
 // ── Engine ────────────────────────────────────────────────────────────────────
 
 // Engine evaluates (identity, operation, key-id) triples against a Policy.

@@ -19,14 +19,14 @@ import (
 // ── fake PKI server ───────────────────────────────────────────────────────────
 
 type fakePKI struct {
-	status   int
-	certPEM  string
-	keyPEM   string
-	caPEM    string
-	serial   string
-	expiry   int64
-	errors   []string
-	lastBody map[string]interface{}
+	status    int
+	certPEM   string
+	keyPEM    string
+	caPEM     string
+	serial    string
+	expiry    int64
+	errors    []string
+	lastBody  map[string]interface{}
 	lastToken string
 }
 

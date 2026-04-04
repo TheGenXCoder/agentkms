@@ -100,13 +100,13 @@ func TestLoadFromFile_MultipleErrors(t *testing.T) {
 	// resilient to minor wording changes.
 	for _, sub := range []string{
 		"id must not be empty",
-		"permit",      // bad effect
-		"explode",     // bad operation
-		"admin",       // bad role
-		"start_utc",   // bad time window
+		"permit",             // bad effect
+		"explode",            // bad operation
+		"admin",              // bad role
+		"start_utc",          // bad time window
 		"mutually exclusive", // key_ids + key_prefix
-		"duplicate",   // duplicate rule ID
-		"max_requests", // bad rate limit
+		"duplicate",          // duplicate rule ID
+		"max_requests",       // bad rate limit
 	} {
 		if !strings.Contains(err.Error(), sub) {
 			t.Errorf("error should contain %q; got:\n%v", sub, err)

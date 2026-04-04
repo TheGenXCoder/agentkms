@@ -292,9 +292,7 @@ func (p *Policy) Validate() error {
 	var errs []string
 
 	for i, r := range p.Rules {
-		for _, e := range r.validate(i) {
-			errs = append(errs, e)
-		}
+		errs = append(errs, r.validate(i)...)
 		if r.ID != "" {
 			if prev, seen := seenIDs[r.ID]; seen {
 				errs = append(errs, fmt.Sprintf("rules[%d]: duplicate rule ID %q (first seen at rules[%d])", i, r.ID, prev))

@@ -20,17 +20,17 @@ func TestHandleSOC2ComplianceExport(t *testing.T) {
 
 	// 1. Create some audit events of different types.
 	now := time.Now().UTC()
-	
+
 	// CC6.1 & CC7.2
 	aud.Log(context.Background(), audit.AuditEvent{
 		EventID: "ev1", Timestamp: now.Add(-10 * time.Minute), Operation: audit.OperationAuth, Outcome: audit.OutcomeSuccess,
 	})
-	
+
 	// CC8.1 & CC7.2
 	aud.Log(context.Background(), audit.AuditEvent{
 		EventID: "ev2", Timestamp: now.Add(-5 * time.Minute), Operation: audit.OperationRotateKey, Outcome: audit.OutcomeSuccess,
 	})
-	
+
 	// CC6.2 & CC7.2
 	aud.Log(context.Background(), audit.AuditEvent{
 		EventID: "ev3", Timestamp: now.Add(-1 * time.Minute), Operation: audit.OperationCredentialVend, Outcome: audit.OutcomeSuccess,
@@ -47,7 +47,7 @@ func TestHandleSOC2ComplianceExport(t *testing.T) {
 		audit.AuditEvent
 		SOC2Controls []string `json:"soc2_controls"`
 	}
-	
+
 	for dec.More() {
 		var ev struct {
 			audit.AuditEvent
@@ -68,12 +68,12 @@ func TestHandleSOC2ComplianceExport(t *testing.T) {
 	if !containsInSlice(received[0].SOC2Controls, "CC6.1") || !containsInSlice(received[0].SOC2Controls, "CC7.2") {
 		t.Errorf("ev1 missing controls: %v", received[0].SOC2Controls)
 	}
-	
+
 	// ev2 (RotateKey) -> CC8.1, CC7.2
 	if !containsInSlice(received[1].SOC2Controls, "CC8.1") || !containsInSlice(received[1].SOC2Controls, "CC7.2") {
 		t.Errorf("ev2 missing controls: %v", received[1].SOC2Controls)
 	}
-	
+
 	// ev3 (CredentialVend) -> CC6.2, CC7.2
 	if !containsInSlice(received[2].SOC2Controls, "CC6.2") || !containsInSlice(received[2].SOC2Controls, "CC7.2") {
 		t.Errorf("ev3 missing controls: %v", received[2].SOC2Controls)

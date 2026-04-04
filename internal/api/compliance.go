@@ -90,13 +90,13 @@ func (s *Server) handleSOC2ComplianceExport(w http.ResponseWriter, r *http.Reque
 				}
 				return
 			}
-			
+
 			// Map to SOC 2 controls.
 			soc2Ev := soc2Event{
 				AuditEvent:   ev,
 				SOC2Controls: mapToSOC2(ev),
 			}
-			
+
 			if err := enc.Encode(soc2Ev); err != nil {
 				return
 			}
@@ -135,7 +135,7 @@ func mapToSOC2(ev audit.AuditEvent) []string {
 	if ev.Outcome == audit.OutcomeDenied {
 		controls = append(controls, "CC6.1")
 	}
-	
+
 	// If it contains anomalies, it's evidence of CC7.2 monitoring effectiveness.
 	if len(ev.Anomalies) > 0 {
 		controls = append(controls, "CC7.2")

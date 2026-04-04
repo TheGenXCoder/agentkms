@@ -100,15 +100,15 @@ func NewVaultPolicyLoader(cfg VaultPolicyConfig) *VaultPolicyLoader {
 		!strings.Contains(addr, "localhost") {
 		fmt.Fprintf(os.Stderr,
 			"agentkms: WARNING: VaultPolicyLoader Address uses http:// for a non-loopback host;\n"+
-			"  Vault tokens will be sent in plaintext.\n"+
-			"  Use https:// in production.\n")
+				"  Vault tokens will be sent in plaintext.\n"+
+				"  Use https:// in production.\n")
 	}
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = cfg.TLSConfig
 
 	return &VaultPolicyLoader{
-		cfg:    cfg,
+		cfg: cfg,
 		client: &http.Client{
 			Timeout:   15 * time.Second,
 			Transport: transport,

@@ -28,6 +28,7 @@ func (m *mockExporter) Export(ctx context.Context, start, end time.Time) (<-chan
 }
 
 type plainSink struct{}
+
 func (p *plainSink) Log(ctx context.Context, ev AuditEvent) error { return nil }
 func (p *plainSink) Flush(ctx context.Context) error              { return nil }
 
@@ -38,7 +39,8 @@ func TestMultiAuditor_Export(t *testing.T) {
 	// Scenario 1: No sinks
 	m1 := NewMultiAuditor()
 	out1, errc1 := m1.Export(ctx, now, now)
-	for range out1 {}
+	for range out1 {
+	}
 	if err := <-errc1; err == nil {
 		t.Fatal("Expected error with no sinks")
 	}
@@ -46,7 +48,8 @@ func TestMultiAuditor_Export(t *testing.T) {
 	// Scenario 2: Sinks, but no exporter
 	m2 := NewMultiAuditor(&plainSink{})
 	out2, errc2 := m2.Export(ctx, now, now)
-	for range out2 {}
+	for range out2 {
+	}
 	if err := <-errc2; err == nil {
 		t.Fatal("Expected error with no exporters")
 	}

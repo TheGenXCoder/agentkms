@@ -84,7 +84,7 @@ func TestMetricsMiddleware(t *testing.T) {
 	if !strings.Contains(body3, "http_requests_total{method=\"POST\",status=\"202\"} 1") {
 		t.Errorf("Expected POST 202 request count to be 1. Body: %s", body3)
 	}
-	
+
 	// Check duration sum
 	if !strings.Contains(body3, "http_request_duration_seconds_sum{method=\"POST\"}") {
 		t.Errorf("Expected duration sum for POST. Body: %s", body3)

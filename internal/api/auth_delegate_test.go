@@ -41,7 +41,7 @@ func TestDelegate_ValidRequest_Returns200WithScopedToken(t *testing.T) {
 	// Use the postWithToken helper from auth_test.go
 	r := postWithToken(t, "/auth/delegate", cert.Cert, parentTokenStr)
 	r.Body = io.NopCloser(bytes.NewReader(reqBody))
-	
+
 	// Manually inject token since we are calling handler directly without middleware in this test
 	r = withToken(r, parentTok)
 

@@ -1,12 +1,11 @@
 package policy
 
 import (
-	"sync/atomic"
-	"sync"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
-
 )
 
 // ── P-06: Rate limiting ──────────────────────────────────────────────────────
@@ -602,4 +601,3 @@ func TestRateLimit_ConcurrentSafety(t *testing.T) {
 		t.Error("expected some requests to be denied")
 	}
 }
-

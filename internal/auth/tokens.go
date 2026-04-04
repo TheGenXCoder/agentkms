@@ -41,15 +41,15 @@ var ErrTokenRevoked = errors.New("auth: token revoked")
 // tokenClaims is the JSON payload embedded in a session token.
 // Field names are intentionally short (no sensitive data; just compact).
 type tokenClaims struct {
-	JTI       string   `json:"jti"`            // Unique token ID (used for revocation)
-	Subject   string   `json:"sub"`            // CallerID from cert CN
-	Team      string   `json:"team"`           // TeamID from cert O
-	Role      string   `json:"role"`           // Role from cert OU
+	JTI       string   `json:"jti"`              // Unique token ID (used for revocation)
+	Subject   string   `json:"sub"`              // CallerID from cert CN
+	Team      string   `json:"team"`             // TeamID from cert O
+	Role      string   `json:"role"`             // Role from cert OU
 	SPIFFE    string   `json:"spiffe,omitempty"` // SPIFFE ID from cert SAN (may be empty)
-	CertFP    string   `json:"cfp"`            // Cert fingerprint (SHA-256 hex of DER)
-	Scopes    []string `json:"scp,omitempty"`   // Delegated scopes
-	IssuedAt  int64    `json:"iat"`            // Unix timestamp (seconds)
-	ExpiresAt int64    `json:"exp"`            // Unix timestamp (seconds)
+	CertFP    string   `json:"cfp"`              // Cert fingerprint (SHA-256 hex of DER)
+	Scopes    []string `json:"scp,omitempty"`    // Delegated scopes
+	IssuedAt  int64    `json:"iat"`              // Unix timestamp (seconds)
+	ExpiresAt int64    `json:"exp"`              // Unix timestamp (seconds)
 }
 
 // Token is a validated, parsed session token.  Returned by TokenService.Validate

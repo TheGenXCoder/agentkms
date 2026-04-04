@@ -14,17 +14,18 @@ import (
 // authMiddleware validates the caller's session token and injects the verified
 // Identity into the request context.
 //
-// 1. Extract the session token from the Authorization header:
-//      Authorization: Bearer <token>
-// 2. Validate the HMAC signature and TTL (15 min max).
-// 3. Verify the token identity matches the mTLS cert identity on
-//    the current connection (prevents token replay on a different
-//    mTLS connection).
-// 4. Check the token is not in the revocation blocklist.
-// 5. On success: call SetIdentityInContext with the validated
-//    Identity and call next.
-// 6. On failure: return 401 Unauthorized with
-//      WWW-Authenticate: Bearer realm="agentkms"
+//  1. Extract the session token from the Authorization header:
+//     Authorization: Bearer <token>
+//  2. Validate the HMAC signature and TTL (15 min max).
+//  3. Verify the token identity matches the mTLS cert identity on
+//     the current connection (prevents token replay on a different
+//     mTLS connection).
+//  4. Check the token is not in the revocation blocklist.
+//  5. On success: call SetIdentityInContext with the validated
+//     Identity and call next.
+//  6. On failure: return 401 Unauthorized with
+//     WWW-Authenticate: Bearer realm="agentkms"
+//
 // AuthMiddleware returns the authentication middleware for the given handler.
 func (s *Server) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return s.authMiddleware(next)

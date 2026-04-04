@@ -154,8 +154,9 @@ func TestHandleListKeys_Error(t *testing.T) {
 }
 
 type nullAud struct{}
+
 func (n nullAud) Log(ctx context.Context, ev audit.AuditEvent) error { return nil }
-func (n nullAud) Flush(ctx context.Context) error { return nil }
+func (n nullAud) Flush(ctx context.Context) error                    { return nil }
 
 func TestHandleListAudit_NotSupported(t *testing.T) {
 	h := &Handlers{

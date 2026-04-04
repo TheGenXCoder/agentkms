@@ -26,9 +26,9 @@ func TestAuthMiddleware(t *testing.T) {
 		Version: "1",
 		Rules: []policy.Rule{
 			{
-				ID: "allow-all",
+				ID:     "allow-all",
 				Effect: policy.EffectAllow,
-				Match: policy.Match{},
+				Match:  policy.Match{},
 			},
 		},
 	})

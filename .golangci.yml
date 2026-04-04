@@ -1,0 +1,157 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    # Correctness
+    - errcheck          # unchecked error returns
+    - staticcheck       # advanced static analysis (SA*, S1*, QF*)
+    - unused            # unused code
+    - ineffassign       # assignments that have no effect
+    - govet             # go vet checks
+    - bodyclose         # HTTP response body not closed
+    - contextcheck      # context not passed to function that accepts it
+    - nilerr            # returns nil on error path instead of the error
+    - rowserrcheck      # sql.Rows.Err not checked
+    - sqlclosecheck     # sql.Rows/Stmt not closed
+
+    # Security
+    - gosec             # security checks (G*)
+    - noctx             # http.NewRequest without context
+
+    # Complexity & maintainability
+    - cyclop            # cyclomatic complexity
+    - gocognit          # cognitive complexity
+    - funlen            # function length
+    - maintidx          # maintainability index
+
+    # Code style
+    - misspell          # common spelling mistakes in comments/strings
+    - whitespace        # leading/trailing whitespace
+    - godot             # comment periods
+    - revive            # opinionated Go linter
+
+    # Error handling
+    - wrapcheck         # errors from external packages must be wrapped
+    - errorlint         # correct error wrapping patterns
+
+    # Bugs
+    - gocritic          # various checks including suspicious patterns
+    - predeclared       # shadowing of predeclared identifiers
+    - copyloopvar       # loop variable capture bugs
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+    exclude-functions:
+      - (net/http.ResponseWriter).Write
+      - (*os.File).Close
+      - (*sync.WaitGroup).Done
+
+  gosec:
+    severity: medium
+    confidence: medium
+    excludes:
+      - G115  # integer overflow conversion (too noisy for HMAC/crypto sizes)
+    config:
+      G306: "0600"  # file permissions
+
+  cyclop:
+    max-complexity: 15
+    package-average: 8.0
+
+  gocognit:
+    min-complexity: 25
+
+  funlen:
+    lines: 120
+    statements: 60
+
+  revive:
+    severity: warning
+    rules:
+      - name: exported
+        severity: warning
+      - name: var-naming
+      - name: package-comments
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: increment-decrement
+      - name: modifies-value-receiver
+      - name: unused-parameter
+        severity: warning
+      - name: unreachable-code
+      - name: early-return
+      - name: context-as-argument
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+      - style
+    disabled-checks:
+      - commentedOutCode
+      - whyNoLint
+      - hugeParam        # too noisy for audit event structs
+
+  wrapcheck:
+    ignoreSigs:
+      - .Errorf(
+      - errors.New(
+      - errors.Unwrap(
+      - fmt.Errorf(
+    ignorePackageGlobs:
+      - github.com/agentkms/agentkms/*
+
+  misspell:
+    locale: US
+
+  godot:
+    scope: declarations
+    capital: true
+
+  maintidx:
+    under: 20
+
+issues:
+  exclude-rules:
+    # Test files: relax several checks
+    - path: "_test\\.go"
+      linters:
+        - errcheck
+        - funlen
+        - cyclop
+        - gocognit
+        - wrapcheck
+        - gocritic
+
+    # CGo files (Secure Enclave): C interop patterns look odd to Go linters
+    - path: "secureenclave_darwin\\.go"
+      linters:
+        - gocritic
+        - revive
+        - staticcheck
+
+    # cmd/ main packages: less strict about function length
+    - path: "cmd/"
+      linters:
+        - funlen
+        - cyclop
+
+    # Generated / bootstrap code
+    - path: "pkg/keystore/prompt\\.go"
+      linters:
+        - wrapcheck
+
+    # Audit events: large structs are intentional
+    - path: "internal/audit/events\\.go"
+      linters:
+        - gocritic
+
+  max-issues-per-linter: 0
+  max-same-issues: 0

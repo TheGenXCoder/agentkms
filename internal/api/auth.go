@@ -15,10 +15,10 @@ import (
 
 // AuthHandler implements the /auth/* HTTP endpoints.
 //
-//   POST /auth/session  — A-06: exchange mTLS cert for a session token
-//   POST /auth/refresh  — A-07: refresh an expiring session token
-//   POST /auth/revoke   — A-08: revoke a session token
-//   POST /auth/delegate — FX-02: delegate a scoped token to a sub-agent
+//	POST /auth/session  — A-06: exchange mTLS cert for a session token
+//	POST /auth/refresh  — A-07: refresh an expiring session token
+//	POST /auth/revoke   — A-08: revoke a session token
+//	POST /auth/delegate — FX-02: delegate a scoped token to a sub-agent
 //
 // All endpoints are mTLS-only (TLS is enforced at the server level).
 // /auth/session is unauthenticated by token (it bootstraps the first token).
@@ -26,11 +26,11 @@ import (
 // auth.RequireToken middleware.
 type AuthHandler struct {
 	tokens      *auth.TokenService
-	pki         *auth.PKIClient           // optional; for cert revocation
+	pki         *auth.PKIClient             // optional; for cert revocation
 	certChecker *auth.CertRevocationChecker // optional; for cert revocation
 	auditor     audit.Auditor
-	policy      policy.EngineI            // for scope validation (FX-02)
-	environment string // "dev", "staging", "production"
+	policy      policy.EngineI // for scope validation (FX-02)
+	environment string         // "dev", "staging", "production"
 }
 
 // NewAuthHandler constructs an AuthHandler.

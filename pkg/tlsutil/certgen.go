@@ -177,9 +177,9 @@ func GenerateLeafCert(ca *CertBundle, opts LeafOptions) (*CertBundle, error) {
 func GenerateCRL(ca *CertBundle, revoked []x509.RevocationListEntry) ([]byte, error) {
 	now := time.Now().UTC()
 	tmpl := &x509.RevocationList{
-		Number:                     big.NewInt(1),
-		ThisUpdate:                 now,
-		NextUpdate:                 now.Add(24 * time.Hour),
+		Number:                    big.NewInt(1),
+		ThisUpdate:                now,
+		NextUpdate:                now.Add(24 * time.Hour),
 		RevokedCertificateEntries: revoked,
 	}
 

@@ -89,6 +89,26 @@ func (c *VendedCredential) Zero() {
 	}
 }
 
+// GenericCredential is a collection of secrets returned to a generic caller.
+//
+// SECURITY: Secrets contains sensitive key material. It must not be logged.
+type GenericCredential struct {
+	Path       string
+	Secrets    map[string][]byte
+	ExpiresAt  time.Time
+	TTLSeconds int
+}
+
+// Zero overwrites the Secrets map values with zeros.
+func (c *GenericCredential) Zero() {
+	for k, v := range c.Secrets {
+		for i := range v {
+			v[i] = 0
+		}
+		c.Secrets[k] = nil
+	}
+}
+
 // KVReader is the interface for reading secrets from the backend KV store.
 // Only a narrow read interface is needed — credential vending never writes.
 type KVReader interface {

@@ -188,7 +188,7 @@ func TestRegisterHandlers(t *testing.T) {
 	h := &Handlers{
 		Backend: backend.NewDevBackend(),
 	}
-	RegisterHandlers(mux, h)
+	RegisterHandlers(mux, h, func(next http.HandlerFunc) http.HandlerFunc { return next })
 
 	// test GET /ui/api/keys
 	req := httptest.NewRequest("GET", "/ui/api/keys", nil)

@@ -10,7 +10,8 @@ import (
 var staticFiles embed.FS
 
 // RegisterHandlers registers the UI handlers on the given mux.
-func RegisterHandlers(mux *http.ServeMux, h *Handlers) {
+// authMw is used to protect the API endpoints.
+func RegisterHandlers(mux *http.ServeMux, h *Handlers, authMw func(http.HandlerFunc) http.HandlerFunc) {
 	// Static files
 	sub, _ := fs.Sub(staticFiles, "static")
 	mux.Handle("GET /ui/", http.StripPrefix("/ui/", http.FileServer(http.FS(sub))))
@@ -18,9 +19,9 @@ func RegisterHandlers(mux *http.ServeMux, h *Handlers) {
 		http.Redirect(w, r, "/ui/", http.StatusMovedPermanently)
 	})
 
-	// UI API endpoints (internal for the UI, not part of the public API)
-	mux.HandleFunc("GET /ui/api/keys", h.HandleListKeys)
-	mux.HandleFunc("GET /ui/api/audit", h.HandleListAudit)
-	mux.HandleFunc("GET /ui/api/policy", h.HandleGetPolicy)
-	mux.HandleFunc("PUT /ui/api/policy", h.HandleUpdatePolicy)
+	// UI API endpoints (protected)
+	mux.HandleFunc("GET /ui/api/keys", authMw(h.HandleListKeys))
+	mux.HandleFunc("GET /ui/api/audit", authMw(h.HandleListAudit))
+	mux.HandleFunc("GET /ui/api/policy", authMw(h.HandleGetPolicy))
+	mux.HandleFunc("PUT /ui/api/policy", authMw(h.HandleUpdatePolicy))
 }

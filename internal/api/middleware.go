@@ -25,6 +25,11 @@ import (
 //    Identity and call next.
 // 6. On failure: return 401 Unauthorized with
 //      WWW-Authenticate: Bearer realm="agentkms"
+// AuthMiddleware returns the authentication middleware for the given handler.
+func (s *Server) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return s.authMiddleware(next)
+}
+
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Bypass authentication in tests if a token is already in the context.

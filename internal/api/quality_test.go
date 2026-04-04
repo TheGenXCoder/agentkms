@@ -25,6 +25,8 @@ type errorEngine struct{}
 func (e errorEngine) Evaluate(_ context.Context, _ identity.Identity, _, _ string) (policy.Decision, error) {
 	return policy.Decision{}, errors.New("policy engine: simulated internal error")
 }
+func (e errorEngine) GetPolicy() policy.Policy { return policy.Policy{} }
+func (e errorEngine) Reload(_ policy.Policy) error { return errors.New("unsupported") }
 
 // ── Policy engine error path (handlers return 500, audit OutcomeError) ──────
 

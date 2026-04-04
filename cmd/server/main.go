@@ -302,8 +302,16 @@ func main() {
 		}()
 	}
 
+	// ── Set up token service ───────────────────────────────────────────────────
+	revocationList := auth.NewRevocationList()
+	tokenSvc, tErr := auth.NewTokenService(revocationList)
+	if tErr != nil {
+		slog.Error("failed to initialize token service", "error", tErr)
+		os.Exit(1)
+	}
+
 	// ── Credential vender ─────────────────────────────────────────────────────
-	apiServer := api.NewServer(bknd, auditor, eng, *env)
+	apiServer := api.NewServer(bknd, auditor, eng, tokenSvc, *env)
 	if *vaultAddr != "" {
 		kv := credentials.NewOpenBaoKV(*vaultAddr, vaultToken, vaultTLS)
 		apiServer.SetVender(credentials.NewVender(kv, "kv"))
@@ -320,7 +328,7 @@ func main() {
 		Policy:  eng,
 		Env:     *env,
 	}
-	ui.RegisterHandlers(mux, uiHandlers)
+	ui.RegisterHandlers(mux, uiHandlers, apiServer.AuthMiddleware)
 	mux.HandleFunc("POST /auth/session", authHandler.Session)
 	mux.HandleFunc("POST /auth/refresh", authHandler.Refresh)
 	mux.HandleFunc("POST /auth/revoke", authHandler.Revoke)

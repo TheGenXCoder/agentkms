@@ -35,6 +35,7 @@ import (
 	"github.com/agentkms/agentkms/internal/audit"
 	"github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/backend"
+	"github.com/agentkms/agentkms/internal/policy"
 	"github.com/agentkms/agentkms/pkg/tlsutil"
 )
 

@@ -219,6 +219,8 @@ Found a vulnerability? Email security@catalyst9.ai.
 
 Apache License 2.0 — see [LICENSE](LICENSE).
 
-## Built by [Catalyst9](https://catalyst9.ai)
+## About
 
-AgentKMS is the security foundation for the Catalyst9 AI security platform. Learn more at [catalyst9.ai](https://catalyst9.ai).
+AgentKMS is built and maintained by [@TheGenXCoder](https://github.com/TheGenXCoder). It serves as the security foundation for [Catalyst9](https://catalyst9.ai), an AI security platform for regulated industries.
+
+Enterprise support and professional services available — [get in touch](mailto:security@catalyst9.ai).

@@ -2,19 +2,48 @@
 
 **Stop putting LLM API keys in .env files.**
 
-AgentKMS is a cryptographic proxy and credential vending service that keeps secrets out of your code, off your disk, and away from attackers. Agents and applications receive short-lived, scoped credentials over mTLS — never raw keys.
+AgentKMS is a cryptographic proxy and credential vending service that keeps secrets out of your code, off your disk, and away from attackers. Works as an **MCP server** for AI coding tools or as a standalone REST API.
+
+## Use It in Claude Code (30 seconds)
+
+```jsonc
+// Add to your Claude Code MCP settings:
+{
+  "mcpServers": {
+    "agentkms": {
+      "command": "agentkms-mcp"
+    }
+  }
+}
+```
+
+That's it. Claude Code can now securely fetch LLM keys, sign payloads, and encrypt data — all over mTLS, zero secrets on disk.
+
+Also works with **Cursor**, **Windsurf**, and any MCP-compatible tool.
+
+## How It Works
 
 ```
-Your App  ──mTLS──▶  AgentKMS  ──▶  Vault Backend
-                        │
-                        ├── POST /auth/session        → session token (15-min TTL)
-                        ├── GET  /credentials/llm/anthropic → short-lived API key
-                        ├── POST /sign/{key-id}       → signature (no private key exposed)
-                        ├── POST /encrypt/{key-id}    → ciphertext
-                        └── POST /decrypt/{key-id}    → plaintext
+AI Tool  ──MCP/stdio──▶  agentkms-mcp  ──mTLS──▶  AgentKMS  ──▶  Vault Backend
+                                                       │
+                                                       ├── session token (15-min TTL)
+                                                       ├── short-lived LLM API keys
+                                                       ├── sign / encrypt / decrypt
+                                                       └── full audit trail
 ```
 
 **Private key material never leaves the backend. No exceptions.**
+
+### MCP Tools Available
+
+| Tool | What it does |
+|------|-------------|
+| `agentkms_get_credential` | Fetch a short-lived LLM API key (Anthropic, OpenAI, Google, etc.) |
+| `agentkms_list_providers` | List providers with stored credentials |
+| `agentkms_get_secret` | Fetch any generic secret by path |
+| `agentkms_sign` | Sign data — returns signature only, private key stays in vault |
+| `agentkms_encrypt` | Encrypt data — returns ciphertext only |
+| `agentkms_decrypt` | Decrypt data — returns plaintext only |
 
 ## Why
 

@@ -66,6 +66,8 @@ type writeMetadataRequest struct {
 
 type metadataResponse struct {
 	Path        string   `json:"path"`
+	Service     string   `json:"service,omitempty"`
+	Name        string   `json:"name,omitempty"`
 	Version     int      `json:"version"`
 	Created     string   `json:"created,omitempty"`
 	Updated     string   `json:"updated,omitempty"`
@@ -145,6 +147,13 @@ func metadataToResponse(userPath string, rec metadataRecord) metadataResponse {
 		Type:        rec.Type,
 		Expires:     rec.Expires,
 		Deleted:     rec.Deleted == "true",
+	}
+	// Populate service and name from path (e.g. "cloudflare/dns-token" → service="cloudflare", name="dns-token").
+	if idx := strings.Index(userPath, "/"); idx >= 0 {
+		resp.Service = userPath[:idx]
+		resp.Name = userPath[idx+1:]
+	} else {
+		resp.Service = userPath
 	}
 	if rec.Tags != "" {
 		resp.Tags = strings.Split(rec.Tags, ";")

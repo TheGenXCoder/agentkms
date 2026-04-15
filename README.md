@@ -45,6 +45,25 @@ AI Tool  ──MCP/stdio──▶  agentkms-mcp  ──mTLS──▶  AgentKMS  
 | `agentkms_encrypt` | Encrypt data — returns ciphertext only |
 | `agentkms_decrypt` | Decrypt data — returns plaintext only |
 
+## KPM — The Local Secrets CLI
+
+For developers who want to replace `.env` files and manage secrets from the command line, use [KPM](https://github.com/TheGenXCoder/kpm) — the lightweight client CLI for AgentKMS.
+
+```bash
+# Install KPM
+curl -sL https://raw.githubusercontent.com/TheGenXCoder/kpm/main/scripts/install.sh | bash
+
+# Try it locally (no server setup needed)
+kpm quickstart
+
+# Or connect to your team's AgentKMS
+kpm init --server https://agentkms.your-company.com
+```
+
+KPM replaces `.env` files with encrypted templates. Secrets are ciphertext in your environment — decrypted only at the moment your app needs them.
+
+See the [KPM repo](https://github.com/TheGenXCoder/kpm) for full documentation.
+
 ## Why
 
 Every team using LLMs has the same problem: API keys in environment variables, `.env` files, or config maps. One compromised laptop, one leaked container image, one careless `git push` — and those keys are gone.

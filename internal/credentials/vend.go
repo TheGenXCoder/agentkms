@@ -46,6 +46,7 @@ var SupportedProviders = map[string]bool{
 	"bedrock":   true,
 	"mistral":   true,
 	"groq":      true,
+	"xai":       true,
 }
 
 // ErrProviderNotSupported is returned when the requested provider is not
@@ -115,6 +116,14 @@ type KVReader interface {
 	// GetSecret retrieves a secret value by its KV path.
 	// Returns ErrCredentialNotFound if the path does not exist.
 	GetSecret(ctx context.Context, path string) (map[string]string, error)
+}
+
+// KVWriter extends KVReader with write, delete, and list operations.
+type KVWriter interface {
+	KVReader
+	SetSecret(ctx context.Context, path string, fields map[string]string) error
+	DeleteSecret(ctx context.Context, path string) error
+	ListPaths(ctx context.Context) ([]string, error)
 }
 
 // Vender issues short-lived LLM credentials to authenticated callers.

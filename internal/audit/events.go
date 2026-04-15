@@ -40,6 +40,13 @@ const (
 	OperationRevokeCert     = "revoke_cert"
 	OperationGetCRL         = "get_crl"
 	OperationAuthDelegate   = "auth_delegate"
+
+	OperationSecretWrite   = "secret_write"
+	OperationSecretDelete  = "secret_delete"
+	OperationSecretPurge   = "secret_purge"
+	OperationMetadataWrite = "metadata_write"
+	OperationMetadataList  = "metadata_list"
+	OperationSecretHistory = "secret_history"
 )
 
 // ── Outcome constants ─────────────────────────────────────────────────────────

@@ -54,6 +54,24 @@ const (
 
 	// OpAuth — issue or refresh a session token.
 	OpAuth Operation = "auth"
+
+	// OpSecretWrite — write a secret to the registry.
+	OpSecretWrite Operation = "secret_write"
+
+	// OpSecretDelete — soft-delete a secret from the registry.
+	OpSecretDelete Operation = "secret_delete"
+
+	// OpSecretPurge — hard-delete a secret and all its versions from the registry.
+	OpSecretPurge Operation = "secret_purge"
+
+	// OpMetadataWrite — write metadata for a registry secret.
+	OpMetadataWrite Operation = "metadata_write"
+
+	// OpMetadataList — list all registry secret metadata.
+	OpMetadataList Operation = "metadata_list"
+
+	// OpSecretHistory — retrieve version history for a registry secret.
+	OpSecretHistory Operation = "secret_history"
 )
 
 // allOperations is the canonical set of known operations.
@@ -67,6 +85,12 @@ var allOperations = map[Operation]struct{}{
 	OpCredentialVend: {},
 	OpCredRefresh:    {},
 	OpAuth:           {},
+	OpSecretWrite:    {},
+	OpSecretDelete:   {},
+	OpSecretPurge:    {},
+	OpMetadataWrite:  {},
+	OpMetadataList:   {},
+	OpSecretHistory:  {},
 }
 
 // IsKnown reports whether op is a recognised operation value.

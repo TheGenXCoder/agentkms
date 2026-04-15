@@ -104,7 +104,7 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 	// ── Rate limit check (MEDIUM-05) ─────────────────────────────────────
 	rateLimitKey := id.CallerID + ":" + provider
 	if last, ok := s.credRateLimit.Load(rateLimitKey); ok {
-		if time.Since(last.(time.Time)) < credRateLimitInterval {
+		if s.credRateLimitInterval > 0 && time.Since(last.(time.Time)) < s.credRateLimitInterval {
 			ev.Outcome = audit.OutcomeDenied
 			ev.DenyReason = "rate limited: credential recently vended"
 			_ = s.auditLog(ctx, ev)
@@ -257,7 +257,7 @@ func (s *Server) handleGetGenericCredential(w http.ResponseWriter, r *http.Reque
 	ev.KeyID = "generic/" + path
 	rateLimitKey := id.CallerID + ":generic:" + path
 	if last, ok := s.credRateLimit.Load(rateLimitKey); ok {
-		if time.Since(last.(time.Time)) < credRateLimitInterval {
+		if s.credRateLimitInterval > 0 && time.Since(last.(time.Time)) < s.credRateLimitInterval {
 			ev.Outcome = audit.OutcomeDenied
 			ev.DenyReason = "rate limited"
 			_ = s.auditLog(ctx, ev)

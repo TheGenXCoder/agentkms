@@ -48,7 +48,8 @@ type Server struct {
 	backend    backend.Backend
 	auditor    audit.Auditor
 	policy     policy.EngineI
-	vender     *credentials.Vender // nil until SetVender is called
+	vender         *credentials.Vender    // nil until SetVender is called
+	registryWriter credentials.KVWriter   // nil until SetRegistryWriter is called
 	authTokens *auth.TokenService
 
 	// recoveryStore handles Layer 1 recovery codes.
@@ -67,11 +68,11 @@ type Server struct {
 
 	// credRateLimit tracks the last vend time per caller+provider.
 	credRateLimit sync.Map
-}
 
-// credRateLimitInterval is the minimum interval between credential vends
-// for the same caller+provider combination.
-const credRateLimitInterval = 60 * time.Second
+	// credRateLimitInterval is the minimum interval between credential vends
+	// for the same caller+provider combination. Set to 0 to disable rate limiting.
+	credRateLimitInterval time.Duration
+}
 
 // SetRecoveryStore wires in the recovery store after construction.
 func (s *Server) SetRecoveryStore(rs *auth.RecoveryStore) {
@@ -83,6 +84,19 @@ func (s *Server) SetRecoveryStore(rs *auth.RecoveryStore) {
 // If not called, /credentials/llm/* returns 503 Service Unavailable.
 func (s *Server) SetVender(v *credentials.Vender) {
 	s.vender = v
+}
+
+// SetRegistryWriter wires in the KV writer for registry endpoints after construction.
+// Call this from cmd/dev/main.go after the EncryptedKV is created.
+// If not called, registry write/delete endpoints return 503 Service Unavailable.
+func (s *Server) SetRegistryWriter(w credentials.KVWriter) {
+	s.registryWriter = w
+}
+
+// SetRateLimitInterval overrides the minimum interval between credential vends
+// for the same caller+provider combination. Pass 0 to disable rate limiting.
+func (s *Server) SetRateLimitInterval(d time.Duration) {
+	s.credRateLimitInterval = d
 }
 
 // NewServer constructs a Server, registers all routes on an internal mux, and
@@ -108,13 +122,14 @@ func NewServer(b backend.Backend, a audit.Auditor, p policy.EngineI, t *auth.Tok
 		panic("agentkms: NewServer requires a non-nil TokenService")
 	}
 	s := &Server{
-		backend:      b,
-		auditor:      a,
-		policy:       p,
-		authTokens:   t,
-		tokenService: t,
-		env:          env,
-		mux:          http.NewServeMux(),
+		backend:               b,
+		auditor:               a,
+		policy:                p,
+		authTokens:            t,
+		tokenService:          t,
+		env:                   env,
+		mux:                   http.NewServeMux(),
+		credRateLimitInterval: 60 * time.Second,
 	}
 	s.registerRoutes()
 	return s
@@ -200,4 +215,15 @@ func (s *Server) registerRoutes() {
 
 	// LV-06: credential use audit
 	s.mux.HandleFunc("POST /audit/use", wrap(s.handleLogCredentialUse))
+
+	// Registry endpoints — KPM Phase 1
+	// Note: GET /secrets/{path...}/history conflicts with the wildcard multi-segment
+	// pattern in Go 1.22 ServeMux (suffix after {path...} is not supported).
+	// History is accessed via ?action=history on the GET /secrets/{path...} handler.
+	s.mux.HandleFunc("POST /secrets/{path...}", wrap(s.handleWriteSecret))
+	s.mux.HandleFunc("POST /metadata/{path...}", wrap(s.handleWriteMetadata))
+	s.mux.HandleFunc("GET /metadata", wrap(s.handleListMetadata))
+	s.mux.HandleFunc("GET /metadata/{path...}", wrap(s.handleGetMetadata))
+	s.mux.HandleFunc("DELETE /secrets/{path...}", wrap(s.handleDeleteSecret))
+	s.mux.HandleFunc("GET /secrets/{path...}", wrap(s.handleGetSecretOrHistory))
 }

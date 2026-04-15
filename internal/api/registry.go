@@ -837,10 +837,60 @@ func (s *Server) handleGetSecretOrHistory(w http.ResponseWriter, r *http.Request
 		s.handleSecretHistory(w, r)
 		return
 	}
-	// GET on secrets without action=history is not a supported operation.
-	// Secrets are vended via /credentials/generic/{path}, not read directly.
-	s.writeError(w, http.StatusMethodNotAllowed, errCodeInvalidRequest,
-		"secrets are not directly readable; use /credentials/generic/{path} for vending or add ?action=history for version history")
+	// Read secret value — goes through policy + audit like any vending operation.
+	s.handleReadSecret(w, r)
+}
+
+func (s *Server) handleReadSecret(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	userPath := strings.Trim(r.PathValue("path"), "/")
+	id := identityFromContext(ctx)
+
+	ev, evErr := audit.New()
+	if evErr != nil {
+		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
+		return
+	}
+	ev.Operation = audit.OperationCredentialVend
+	ev.Environment = s.env
+	ev.SourceIP = extractRemoteIP(r)
+	ev.UserAgent = r.UserAgent()
+	ev.CallerID = id.CallerID
+	ev.TeamID = id.TeamID
+	ev.KeyID = "secrets/" + userPath
+
+	if userPath == "" || s.registryWriter == nil {
+		ev.Outcome = audit.OutcomeDenied
+		_ = s.auditLog(ctx, ev)
+		s.writeError(w, http.StatusBadRequest, errCodeInvalidRequest, "path required")
+		return
+	}
+
+	decision, pErr := s.policy.Evaluate(ctx, id, audit.OperationCredentialVend, "secrets/"+userPath)
+	if pErr != nil || !decision.Allow {
+		ev.Outcome = audit.OutcomeDenied
+		if pErr == nil {
+			ev.DenyReason = decision.DenyReason
+		}
+		_ = s.auditLog(ctx, ev)
+		s.writeError(w, http.StatusForbidden, errCodePolicyDenied, "denied")
+		return
+	}
+
+	secretsPath := "kv/data/secrets/" + userPath
+	secret, err := s.registryWriter.GetSecret(ctx, secretsPath)
+	if err != nil || secret == nil {
+		ev.Outcome = audit.OutcomeDenied
+		ev.DenyReason = "not found"
+		_ = s.auditLog(ctx, ev)
+		s.writeError(w, http.StatusNotFound, errCodeKeyNotFound, "secret not found")
+		return
+	}
+
+	ev.Outcome = audit.OutcomeSuccess
+	_ = s.auditLog(ctx, ev)
+
+	writeJSON(w, http.StatusOK, secret)
 }
 
 // handleSecretHistory returns version history for a secret — NEVER values.

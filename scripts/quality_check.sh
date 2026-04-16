@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# AgentKMS Quality Gate — thin wrapper around the global quality-gate skill.
+# AgentKMS Quality Gate — thin wrapper around the quality-gate implementation.
 #
 # This file exists so the project's AGENTS.md and CI can reference
-# `bash scripts/quality_check.sh` without knowing the global install path.
+# `bash scripts/quality_check.sh` without knowing the implementation path.
 #
-# The global script handles all the actual work. This wrapper sets
-# AgentKMS-specific defaults before delegating.
+# Resolution order:
+#   1. Vendored implementation at scripts/quality_check_impl.sh (always present,
+#      used by CI and any fresh checkout).
+#   2. Global quality-gate skill at ~/.pi/agent/skills/quality-gate/scripts/
+#      quality_check.sh (used by local dev if the user has it installed; keeps
+#      the skill-based workflow working).
+#
+# The wrapper sets AgentKMS-specific defaults before delegating.
 
 set -euo pipefail
 
@@ -19,14 +25,15 @@ export SECURITY_PACKAGES="${SECURITY_PACKAGES:-internal/auth*,internal/policy*,i
 # Apple Secure Enclave hardware token.  They are excluded from the coverage threshold.
 export EXCLUDE_PACKAGES="${EXCLUDE_PACKAGES:-pkg/keystore}"
 
-# Delegate to global skill script
-GLOBAL_SCRIPT="$HOME/.pi/agent/skills/quality-gate/scripts/quality_check.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENDORED_SCRIPT="${SCRIPT_DIR}/quality_check_impl.sh"
+GLOBAL_SCRIPT="${HOME}/.pi/agent/skills/quality-gate/scripts/quality_check.sh"
 
-if [ -f "$GLOBAL_SCRIPT" ]; then
+if [ -f "$VENDORED_SCRIPT" ]; then
+  exec bash "$VENDORED_SCRIPT" "$@"
+elif [ -f "$GLOBAL_SCRIPT" ]; then
   exec bash "$GLOBAL_SCRIPT" "$@"
 else
-  echo "ERROR: Global quality gate not found at $GLOBAL_SCRIPT" >&2
-  echo "Install: mkdir -p ~/.pi/agent/skills/quality-gate/scripts" >&2
-  echo "Then copy a quality_check.sh there, or install the quality-gate skill." >&2
+  echo "ERROR: Neither vendored ($VENDORED_SCRIPT) nor global ($GLOBAL_SCRIPT) quality gate found." >&2
   exit 1
 fi

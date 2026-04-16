@@ -83,3 +83,21 @@ func TestRotator_Start(t *testing.T) {
 	cancel()
 	time.Sleep(2 * time.Millisecond)
 }
+
+// TestNewRotator_DefaultNowFunc ensures the constructor installs a usable
+// nowFunc closure (other tests override it with mocks, leaving the default
+// closure uncovered).
+func TestNewRotator_DefaultNowFunc(t *testing.T) {
+	r := NewRotator(&mockRotatableBackend{}, []string{"k"}, time.Hour)
+	if r.nowFunc == nil {
+		t.Fatal("expected nowFunc to be set, got nil")
+	}
+	// Invoke the closure — it should return a UTC time close to now.
+	got := r.nowFunc()
+	if got.Location() != time.UTC {
+		t.Errorf("expected UTC location, got %s", got.Location())
+	}
+	if diff := time.Since(got); diff < 0 || diff > time.Second {
+		t.Errorf("expected nowFunc to return a time within 1s of now, got diff=%v", diff)
+	}
+}

@@ -105,6 +105,7 @@ func TestNewDevKVStoreFromFile(t *testing.T) {
 
 func TestNewDevKVStoreFromFile_PermissionRefused(t *testing.T) {
 	if os.Getuid() == 0 {
+		// TODO(#permanent): root bypasses POSIX permission checks — this test can only run as a non-root user
 		t.Skip("cannot test file permissions as root")
 	}
 	dir := t.TempDir()
@@ -123,5 +124,43 @@ func TestNewDevKVStoreFromFile_Missing(t *testing.T) {
 	_, err := NewDevKVStoreFromFile("/nonexistent/path/secrets.json")
 	if err == nil {
 		t.Fatal("expected error for missing file, got nil")
+	}
+}
+
+func TestDevKVStore_Paths(t *testing.T) {
+	s := NewDevKVStore()
+	s.Set("kv/data/llm/anthropic", map[string]string{"api_key": "x"})
+	s.Set("kv/data/llm/openai", map[string]string{"api_key": "y"})
+	s.Set("kv/data/generic/foo", map[string]string{"token": "z"})
+
+	paths := s.Paths()
+	if len(paths) != 3 {
+		t.Fatalf("got %d paths, want 3", len(paths))
+	}
+
+	// Verify each expected path is present (order is not guaranteed by the API).
+	want := map[string]bool{
+		"kv/data/llm/anthropic": false,
+		"kv/data/llm/openai":    false,
+		"kv/data/generic/foo":   false,
+	}
+	for _, p := range paths {
+		if _, ok := want[p]; !ok {
+			t.Errorf("unexpected path %q", p)
+		}
+		want[p] = true
+	}
+	for p, seen := range want {
+		if !seen {
+			t.Errorf("missing expected path %q", p)
+		}
+	}
+}
+
+func TestDevKVStore_Paths_Empty(t *testing.T) {
+	s := NewDevKVStore()
+	paths := s.Paths()
+	if len(paths) != 0 {
+		t.Errorf("got %d paths on empty store, want 0", len(paths))
 	}
 }

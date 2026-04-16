@@ -619,6 +619,7 @@ func TestEmptyFile_Fails(t *testing.T) {
 
 func TestSecretsFile_Permissions_0600(t *testing.T) {
 	if os.Getuid() == 0 {
+		// TODO(#permanent): root bypasses POSIX permission checks — this test can only run as a non-root user
 		t.Skip("cannot test file permissions as root")
 	}
 	kv, secretsPath := newTestKV(t)
@@ -1030,6 +1031,7 @@ func TestSet_CorruptExistingFile_ReturnsError(t *testing.T) {
 // (file exists and Stat passes, but Read fails due to permissions).
 func TestLoadAll_UnreadableFile_ReturnsError(t *testing.T) {
 	if os.Getuid() == 0 {
+		// TODO(#permanent): root bypasses POSIX permission checks — this test can only run as a non-root user
 		t.Skip("cannot test file permissions as root")
 	}
 	keyPath := writeTestECKey(t)
@@ -1056,6 +1058,7 @@ func TestLoadAll_UnreadableFile_ReturnsError(t *testing.T) {
 // (directory exists but is not writable, so temp file creation fails).
 func TestSaveAll_UnwritableDir_ReturnsError(t *testing.T) {
 	if os.Getuid() == 0 {
+		// TODO(#permanent): root bypasses POSIX permission checks — this test can only run as a non-root user
 		t.Skip("cannot test directory permissions as root")
 	}
 	keyPath := writeTestECKey(t)

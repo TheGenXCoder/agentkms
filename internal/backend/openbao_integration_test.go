@@ -68,6 +68,19 @@ var vaultProcess *os.Process
 
 // TestMain starts (or connects to) a Vault dev server, enables Transit, and
 // runs all integration tests.  Vault is stopped on exit if we started it.
+//
+// Resolution order:
+//  1. If AGENTKMS_VAULT_ADDR is set and reachable, use it. If set but
+//     unreachable, fail fast.
+//  2. If unset and the default dev address is already reachable, use it.
+//  3. If unset, default unreachable, and a `vault` binary is on PATH, spawn
+//     a dev server.
+//  4. Otherwise, fail loudly with an actionable message.
+//
+// We used to silently try (3) whenever (2) failed, which produced opaque
+// errors in CI ("exec vault: executable file not found") when the test
+// should have told the operator "set AGENTKMS_VAULT_ADDR to your running
+// OpenBao/Vault instance."
 func TestMain(m *testing.M) {
 	globalEnv = resolveEnv()
 
@@ -81,7 +94,25 @@ func TestMain(m *testing.M) {
 				globalEnv.addr)
 			os.Exit(1)
 		}
-		// No existing instance and no explicit address — start one.
+		// No explicit address and the default wasn't reachable. Only spawn
+		// a subprocess if a vault binary is actually on PATH; otherwise fail
+		// loudly so the operator knows what to configure.
+		if _, err := exec.LookPath("vault"); err != nil {
+			fmt.Fprintln(os.Stderr, "FATAL: integration tests cannot run.")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "  AGENTKMS_VAULT_ADDR is unset, the default dev address")
+			fmt.Fprintf(os.Stderr, "  (%s) is unreachable, and no 'vault' binary was\n", globalEnv.addr)
+			fmt.Fprintln(os.Stderr, "  found on PATH for auto-spawn.")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "  Either:")
+			fmt.Fprintln(os.Stderr, "    1. Point the tests at a running instance:")
+			fmt.Fprintln(os.Stderr, "         export AGENTKMS_VAULT_ADDR=http://127.0.0.1:8200")
+			fmt.Fprintln(os.Stderr, "         export AGENTKMS_VAULT_TOKEN=<root-token>")
+			fmt.Fprintln(os.Stderr, "    2. Install Vault or OpenBao for the auto-spawn path:")
+			fmt.Fprintln(os.Stderr, "         brew install vault          # macOS")
+			fmt.Fprintln(os.Stderr, "         # or https://openbao.org/downloads/")
+			os.Exit(1)
+		}
 		proc, err := startVaultDev(globalEnv.addr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "FATAL: could not start vault dev server: %v\n", err)

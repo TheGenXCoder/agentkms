@@ -19,7 +19,7 @@ func populateAnomalies(ev *audit.AuditEvent, anomalies []policy.AnomalyRecord) {
 
 // populateIdentityFields copies the forensics-relevant identity fields from
 // id into ev.  CallerID / TeamID / AgentSession are preserved as before;
-// CertSerialNumber / CallerOU / CallerRole are new in SchemaVersion 1.
+// CertFingerprint / CallerOU / CallerRole are new in SchemaVersion 1.
 //
 // Safe to call on a zero-value Identity (all fields default to empty
 // strings, matching the omitempty JSON tags).
@@ -28,7 +28,7 @@ func populateIdentityFields(ev *audit.AuditEvent, id identity.Identity) {
 	ev.TeamID = id.TeamID
 	ev.AgentSession = id.AgentSession
 	// SchemaVersion 1 forensics fields.
-	ev.CertSerialNumber = id.CertFingerprint
+	ev.CertFingerprint = id.CertFingerprint
 	ev.CallerOU = id.CallerOU
 	ev.CallerRole = string(id.Role)
 }

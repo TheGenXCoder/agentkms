@@ -235,7 +235,7 @@
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| FO-A1 | P0 | T0 | [~] | Add `SchemaVersion`, `CredentialUUID`, `RuleID`, `CertSerialNumber`, `CallerOU`, `CredentialType`, `ProviderTokenHash` to AuditEvent | Additive, backwards-compatible. Unblocks forensics on data accruing from this migration forward. |
+| FO-A1 | P0 | T0 | [x] | Add `SchemaVersion`, `CredentialUUID`, `RuleID`, `CertFingerprint`, `CallerOU`, `CallerRole`, `CredentialType`, `ProviderTokenHash` to AuditEvent | Additive, backwards-compatible. Commit 294850c0 + fingerprint rename. |
 | FO-A2 | P1 | T0 | [ ] | Add `RequestPath` / `MCPToolName` to AuditEvent | Stretch for Bucket A; slips to B if not trivial. |
 | FO-A3 | P1 | T0 | [ ] | Update CHANGELOG and tag v0.1.1 | Quiet release — no public announcement. |
 

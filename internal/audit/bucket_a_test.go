@@ -1,7 +1,7 @@
 package audit_test
 
 // Bucket A — forensics fields: SchemaVersion, CredentialUUID, RuleID,
-// CertSerialNumber, CallerOU, CallerRole, CredentialType, ProviderTokenHash.
+// CertFingerprint, CallerOU, CallerRole, CredentialType, ProviderTokenHash.
 //
 // These tests cover the audit-package pieces of the Bucket A contract:
 //
@@ -78,7 +78,7 @@ func TestBucketA_OldEventParsesCleanly(t *testing.T) {
 	}
 	// Bucket A fields must all default to zero values.
 	if ev.CredentialUUID != "" || ev.RuleID != "" ||
-		ev.CertSerialNumber != "" || ev.CallerOU != "" ||
+		ev.CertFingerprint != "" || ev.CallerOU != "" ||
 		ev.CallerRole != "" || ev.CredentialType != "" ||
 		ev.ProviderTokenHash != "" {
 		t.Errorf("old event should have empty Bucket A fields, got: %+v", ev)
@@ -98,7 +98,7 @@ func TestBucketA_NewEventRoundTrip(t *testing.T) {
 	orig.Outcome = audit.OutcomeSuccess
 	orig.CredentialUUID = "550e8400-e29b-41d4-a716-446655440000"
 	orig.RuleID = "rule-payments-vend"
-	orig.CertSerialNumber = hex.EncodeToString(make([]byte, 32))
+	orig.CertFingerprint = hex.EncodeToString(make([]byte, 32))
 	orig.CallerOU = "service"
 	orig.CallerRole = "service"
 	orig.CredentialType = "llm-session"
@@ -115,7 +115,7 @@ func TestBucketA_NewEventRoundTrip(t *testing.T) {
 	if round.SchemaVersion != orig.SchemaVersion ||
 		round.CredentialUUID != orig.CredentialUUID ||
 		round.RuleID != orig.RuleID ||
-		round.CertSerialNumber != orig.CertSerialNumber ||
+		round.CertFingerprint != orig.CertFingerprint ||
 		round.CallerOU != orig.CallerOU ||
 		round.CallerRole != orig.CallerRole ||
 		round.CredentialType != orig.CredentialType ||
@@ -198,7 +198,7 @@ func TestBucketA_Validate_AcceptsLegitimateFields(t *testing.T) {
 	ev.Outcome = audit.OutcomeSuccess
 	ev.CredentialUUID = "550e8400-e29b-41d4-a716-446655440000"
 	ev.RuleID = "payments-vend-allow"
-	ev.CertSerialNumber = hex.EncodeToString(make([]byte, 32))
+	ev.CertFingerprint = hex.EncodeToString(make([]byte, 32))
 	ev.CallerOU = "service"
 	ev.CallerRole = "service"
 	ev.CredentialType = "llm-session"
@@ -210,7 +210,7 @@ func TestBucketA_Validate_AcceptsLegitimateFields(t *testing.T) {
 }
 
 // TestBucketA_Validate_RejectsNonHexHash — ProviderTokenHash and
-// CertSerialNumber must be strict lowercase hex.  Any other shape
+// CertFingerprint must be strict lowercase hex.  Any other shape
 // indicates a misuse (potential raw-token leak).
 func TestBucketA_Validate_RejectsNonHexHash(t *testing.T) {
 	ev, err := audit.New()

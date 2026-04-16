@@ -87,7 +87,7 @@ type AuditEvent struct {
 	// must still parse cleanly — every field added after v0 is omitempty.
 	//
 	// v1 (2026-04-16, Bucket A): adds forensics fields — CredentialUUID,
-	//   RuleID, CertSerialNumber, CallerOU, CredentialType, ProviderTokenHash.
+	//   RuleID, CertFingerprint, CallerOU, CredentialType, ProviderTokenHash.
 	SchemaVersion int `json:"schema_version,omitempty"`
 
 	// EventID is a unique identifier for this event.  Format: UUID v4.
@@ -197,14 +197,12 @@ type AuditEvent struct {
 	// fallthrough) or when the operation was not policy-gated.
 	RuleID string `json:"rule_id,omitempty"`
 
-	// CertSerialNumber binds the event to the specific client certificate
-	// presented over mTLS.  Copied from Identity.CertFingerprint — the
-	// hex-encoded SHA-256 digest of the raw DER certificate bytes — which is
-	// the stable, unique identifier AgentKMS already computes at mTLS
-	// extraction time (pkg/identity/identity.go).  The name "CertSerial" is
-	// the forensics nomenclature; the underlying value is the cert
-	// fingerprint.
-	CertSerialNumber string `json:"cert_serial_number,omitempty"`
+	// CertFingerprint binds the event to the specific client certificate
+	// presented over mTLS.  Hex-encoded SHA-256 digest of the raw DER
+	// certificate bytes, computed at mTLS extraction time in
+	// pkg/identity/identity.go.  Preferred over X.509 serial for forensics
+	// because it is globally unique (issuer-independent) and content-addressed.
+	CertFingerprint string `json:"cert_fingerprint,omitempty"`
 
 	// CallerOU is the Organisational Unit field of the client certificate,
 	// carrying the caller's role (developer / service / agent).  Currently
@@ -284,7 +282,7 @@ func (e AuditEvent) Validate() error {
 		// Bucket A additions — same defence-in-depth as the original set.
 		// CallerOU, CallerRole, and CredentialType are expected to be very
 		// short (e.g. "developer", "llm-session"); flagging a 64-char hex run
-		// here is essentially free.  ProviderTokenHash and CertSerialNumber
+		// here is essentially free.  ProviderTokenHash and CertFingerprint
 		// are legitimately hex but capped well below the 64-char threshold
 		// when used correctly (SHA-256 hex is 64 chars; allow it explicitly
 		// below).  CredentialUUID is a UUID v4 and never hits 64 contiguous
@@ -297,7 +295,7 @@ func (e AuditEvent) Validate() error {
 			return fmt.Errorf("audit: AuditEvent.Validate: %w", err)
 		}
 	}
-	// ProviderTokenHash and CertSerialNumber are structurally hex digests of
+	// ProviderTokenHash and CertFingerprint are structurally hex digests of
 	// fixed size (SHA-256 → 64 chars).  They must pass the PEM-delimiter
 	// check but are exempt from the hex-run rule that would otherwise flag
 	// every legitimate value.  Verify the shape instead.
@@ -306,7 +304,7 @@ func (e AuditEvent) Validate() error {
 		value string
 	}{
 		{"ProviderTokenHash", e.ProviderTokenHash},
-		{"CertSerialNumber", e.CertSerialNumber},
+		{"CertFingerprint", e.CertFingerprint},
 	} {
 		if fc.value == "" {
 			continue
@@ -364,7 +362,7 @@ func checkForKeyMaterial(field, value string) error {
 // consumers may want to reason about explicitly.
 //
 //	v1 — 2026-04-16: Bucket A forensics fields
-//	      (CredentialUUID, RuleID, CertSerialNumber, CallerOU, CallerRole,
+//	      (CredentialUUID, RuleID, CertFingerprint, CallerOU, CallerRole,
 //	       CredentialType, ProviderTokenHash)
 //
 // SchemaVersion is additive only: events at any version must parse with

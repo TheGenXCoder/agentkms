@@ -451,11 +451,11 @@ func (h *AuthHandler) logAudit(
 	// have an authenticated Identity in context, the token-bound identity
 	// fields take precedence.
 	if idCtx := identityFromContext(ctx); idCtx.CallerID != "" {
-		ev.CertSerialNumber = idCtx.CertFingerprint
+		ev.CertFingerprint =idCtx.CertFingerprint
 		ev.CallerOU = idCtx.CallerOU
 		ev.CallerRole = string(idCtx.Role)
 	} else if id, idErr := auth.ExtractIdentity(r); idErr == nil && id != nil {
-		ev.CertSerialNumber = id.CertFingerprint
+		ev.CertFingerprint =id.CertFingerprint
 		ev.CallerOU = id.CallerOU
 		ev.CallerRole = string(id.Role)
 	}

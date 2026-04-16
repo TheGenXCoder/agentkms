@@ -24,7 +24,7 @@ Findings from the schema audit of `internal/audit/events.go` and `internal/api/`
 | Credential class / type | Partial — class in `KeyID`, type not distinguished | A |
 | Caller identity (CN, O) | Present in `CallerID` / `TeamID` | — |
 | Caller OU / role | Extracted at `auth/mtls.go:106-119`, discarded | A |
-| Cert serial / fingerprint | Computed at `pkg/identity/identity.go:79-82`, never audited | A |
+| Cert fingerprint (SHA-256 of DER) | Computed at `pkg/identity/identity.go:79-82`, never audited | A |
 | MCP tool / request path | Missing | A |
 | Agent session ID | Present | — |
 | Policy rule ID | Engine returns `Decision.MatchedRuleID`, not emitted (denies log `DenyReason` only) | A |
@@ -44,7 +44,7 @@ All fields are backwards-compatible: old events parse with empty strings/zero in
 1. `SchemaVersion int` — start at 1; every new event declares.
 2. `CredentialUUID string` — generated at vend time in `internal/credentials/vend.go`, threaded through `VendedCredential` so clients echo back on `/audit/use`.
 3. `RuleID string` — copy from `Decision.MatchedRuleID` on allow and deny.
-4. `CertSerialNumber string` — copy from `Identity.CertFingerprint`.
+4. `CertFingerprint string` — copy from `Identity.CertFingerprint` (SHA-256 of DER). Preferred over X.509 serial because it is globally unique (issuer-independent) and content-addressed.
 5. `CallerOU string` — flow from mTLS extraction into AuditEvent.
 6. `CredentialType string` — `llm-session`, `generic-vend`, `aws-sts`, `github-pat`, etc.
 7. `ProviderTokenHash string` — SHA-256 hex of the provider-issued token. **Raw token never stored.** Enables reverse lookup when a provider reports a leak.

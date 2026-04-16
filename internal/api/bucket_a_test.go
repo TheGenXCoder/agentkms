@@ -6,7 +6,7 @@ package api_test
 // the audit sink:
 //
 //   - RuleID is emitted on successful allows (not only on denies)
-//   - CertSerialNumber, CallerOU, CallerRole flow from Identity into events
+//   - CertFingerprint, CallerOU, CallerRole flow from Identity into events
 //   - CredentialType, CredentialUUID, ProviderTokenHash are recorded on
 //     successful credential vends
 //   - POST /audit/use accepts and records credential_uuid
@@ -197,7 +197,7 @@ func TestBucketA_SchemaVersion_OnHandlerEvents(t *testing.T) {
 
 // ── Identity → audit forensics flow ───────────────────────────────────────────
 
-// TestBucketA_IdentityFields_Populated verifies that CertSerialNumber,
+// TestBucketA_IdentityFields_Populated verifies that CertFingerprint,
 // CallerOU, and CallerRole flow from the injected Identity into the
 // recorded audit event.
 func TestBucketA_IdentityFields_Populated(t *testing.T) {
@@ -212,9 +212,9 @@ func TestBucketA_IdentityFields_Populated(t *testing.T) {
 		t.Fatal("no audit event recorded")
 	}
 	id := bucketAIdentity()
-	if ev.CertSerialNumber != id.CertFingerprint {
-		t.Errorf("CertSerialNumber = %q, want %q",
-			ev.CertSerialNumber, id.CertFingerprint)
+	if ev.CertFingerprint != id.CertFingerprint {
+		t.Errorf("CertFingerprint = %q, want %q",
+			ev.CertFingerprint, id.CertFingerprint)
 	}
 	if ev.CallerOU != id.CallerOU {
 		t.Errorf("CallerOU = %q, want %q", ev.CallerOU, id.CallerOU)
@@ -376,7 +376,7 @@ func TestBucketA_MtlsExtract_SetsCallerOU(t *testing.T) {
 	// to assert the identity→event mapping contract.
 	ev.CallerID = id.CallerID
 	ev.TeamID = id.TeamID
-	ev.CertSerialNumber = id.CertFingerprint
+	ev.CertFingerprint = id.CertFingerprint
 	ev.CallerOU = id.CallerOU
 	ev.CallerRole = string(id.Role)
 

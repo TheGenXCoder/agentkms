@@ -302,24 +302,25 @@ func TestVaultPolicyLoader_HotReload_UpdatesEngine(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	// Wait for the 3rd call to be served (updated policy).
-	deadline := time.Now().Add(500 * time.Millisecond)
+	// Poll the engine until the updated policy is visible. Observing
+	// callCount >= 3 does not guarantee the engine has been swapped in — there
+	// is a window between HTTP response and engine update. Poll the actual
+	// observable (engine behavior) instead.
+	deadline := time.Now().Add(2 * time.Second)
+	var lastDecision policy.Decision
+	var lastErr error
 	for time.Now().Before(deadline) {
-		if callCount.Load() >= 3 {
-			break
+		eng := loader.EngineI()
+		lastDecision, lastErr = eng.Evaluate(context.Background(), identityForTest("u@t", "t"), "encrypt", "k")
+		if lastErr == nil && lastDecision.Allow {
+			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-
-	// After update, encrypt should be allowed (updatedPolicyYAML includes it).
-	eng := loader.EngineI()
-	decision, err := eng.Evaluate(context.Background(), identityForTest("u@t", "t"), "encrypt", "k")
-	if err != nil {
-		t.Fatalf("Evaluate: %v", err)
+	if lastErr != nil {
+		t.Fatalf("Evaluate (last attempt): %v (callCount=%d)", lastErr, callCount.Load())
 	}
-	if !decision.Allow {
-		t.Error("expected encrypt to be allowed after policy hot-reload")
-	}
+	t.Errorf("expected encrypt to be allowed after policy hot-reload (callCount=%d)", callCount.Load())
 }
 
 // ── Cancelled context ─────────────────────────────────────────────────────────

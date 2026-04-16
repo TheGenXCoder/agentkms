@@ -104,5 +104,6 @@ v0.3 if we can fit it, v0.4 otherwise. The leak-webhook infrastructure v0.3 buil
 
 ## Open questions
 
-- **Pricing signal from the report.** If the forensics CLI is what justifies the paid tier, does the OSS/free tier include it at all? Lean: free tier includes single-credential inspection via CLI; paid tier adds the web UI, the dashboards, webhook integrations, ingestion from multiple providers, and ML anomaly detection.
 - **Self-hosted vs. hosted ingestion.** The ingestion workers need credentials to the upstream admin APIs. In self-hosted deployments those live in the customer's infra, which is fine. Hosted ingestion ("let Catalyst9 ingest on your behalf") would require customer upstream credentials to live in our infra — rejected by the sovereignty principle. Self-hosted only.
+
+*(The pricing-signal question is resolved in the [OSS vs Paid Surface](2026-04-16-oss-vs-paid-surface.md) doc: single-credential `inspect` is OSS, multi-credential correlation and org-wide search are Pro. 24h audit retention on OSS with unlimited retention on Pro. Full table with teaser placement rules.)*

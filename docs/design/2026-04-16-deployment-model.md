@@ -67,7 +67,10 @@ The OSS core must remain fully functional at the laptop and corp-VPC tiers witho
 
 Paid features = additional backend adapters, additional audit sinks, additional compliance tooling, additional CLI/UI. Not "the same thing but we can also see it."
 
+See [2026-04-16-oss-vs-paid-surface.md](2026-04-16-oss-vs-paid-surface.md) for the line-by-line table of OSS constraints, paid upgrades, and teaser placement rules.
+
 ## Open questions
 
-- **Backend adapters as paid modules.** Which adapters are OSS (openbao, AWS STS, GitHub App) and which are paid (CloudHSM, PKCS#11, custom SIEM audit export)? Lean: anything that requires HSM or enterprise SIEM integration = paid; anything that targets a common open-source backend = OSS.
 - **Hosted operator minimum contract size.** At what team size does the hosted offering make financial sense vs. the customer running it themselves? Needs pricing model work before we solicit pilot customers.
+
+*(The backend-adapter split question is now resolved in the dedicated [OSS vs Paid Surface](2026-04-16-oss-vs-paid-surface.md) doc: all three Dynamic Secrets engines — AWS STS, GitHub App, Anthropic Admin — ship in OSS. HSM/PKCS#11/enterprise SIEM sinks are Pro.)*

@@ -12,6 +12,7 @@ Conversation with Grok, review, strategic alignment. These four docs capture the
 - [**Dynamic Secrets — AgentKMS as Secret-Issuing Authority**](2026-04-16-dynamic-secrets.md) — provider admin API landscape, three attribution granularities, v0.2 implementation priority.
 - [**Deployment Model & Sovereignty Principle**](2026-04-16-deployment-model.md) — three tiers, why Catalyst9 never custodies customer secrets, Vault Enterprise business model.
 - [**Audit Schema Migration — v0.1 → v0.3 Forensics**](2026-04-16-audit-schema-migration.md) — gap analysis, Bucket A/B/C plan, migration strategy.
+- [**OSS vs Paid Surface**](2026-04-16-oss-vs-paid-surface.md) — concrete per-feature limits, teaser placement rules, what's locked-in OSS forever.
 
 ## Reading order for someone new
 

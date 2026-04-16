@@ -227,17 +227,17 @@
 | QS-11 | P3 | T0 | [x] | Fix staticcheck style: `rr.Body.String()` idiom; loop `append` spread (S1011); struct conversion (S1016); duplicate import (ST1019); error string punctuation (ST1005) | — |
 
 
-## Forensics Track — v0.1.1 → v0.3
+## Forensics Track — all in v0.3
 
-> See `docs/design/2026-04-16-forensics-v0.3.md` for product direction and `docs/design/2026-04-16-audit-schema-migration.md` for the full bucket plan. v0.3 is the announcement target; v0.1.1 and v0.2 ship quietly.
+> See `docs/design/2026-04-16-forensics-v0.3.md` for product direction, `docs/design/2026-04-16-audit-schema-migration.md` for the schema plan, and `docs/design/2026-04-16-oss-vs-paid-surface.md` for the OSS/Pro split. **No v0.1.1 or v0.2 public tags** — everything lands in v0.3.0 or doesn't ship. No v0.4 planned; "slips to v0.4" items have been pulled back into v0.3 scope.
 
-### Bucket A — v0.1.1 Additive Audit Fields (in flight)
+### Bucket A — Additive Audit Fields (done)
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| FO-A1 | P0 | T0 | [x] | Add `SchemaVersion`, `CredentialUUID`, `RuleID`, `CertFingerprint`, `CallerOU`, `CallerRole`, `CredentialType`, `ProviderTokenHash` to AuditEvent | Additive, backwards-compatible. Commit 294850c0 + fingerprint rename. |
-| FO-A2 | P1 | T0 | [ ] | Add `RequestPath` / `MCPToolName` to AuditEvent | Stretch for Bucket A; slips to B if not trivial. |
-| FO-A3 | P1 | T0 | [ ] | Update CHANGELOG and tag v0.1.1 | Quiet release — no public announcement. |
+| FO-A1 | P0 | T0 | [x] | Add `SchemaVersion`, `CredentialUUID`, `RuleID`, `CertFingerprint`, `CallerOU`, `CallerRole`, `CredentialType`, `ProviderTokenHash` to AuditEvent | Additive, backwards-compatible. Commits 294850c0 + 945f3495. |
+| FO-A2 | P2 | T0 | [ ] | Add `RequestPath` / `MCPToolName` to AuditEvent | Additive; fold into Bucket B when convenient. |
+| ~~FO-A3~~ | — | — | ~~[ ]~~ | ~~Tag v0.1.1~~ | **Dropped:** no mid-version tag, everything ships in v0.3. |
 
 ### Bucket B — v0.2 Architectural Refactors
 
@@ -251,7 +251,7 @@
 | FO-B6 | P0 | T1 | [ ] | Dynamic Secrets engine: AWS STS AssumeRole adapter | Highest blast radius; demo writes itself. |
 | FO-B7 | P1 | T1 | [ ] | Dynamic Secrets engine: GitHub App ephemeral PAT adapter | Fits agent-workflow narrative. |
 | FO-B8 | P1 | T1 | [ ] | Dynamic Secrets engine: Anthropic Admin API adapter | Per-user attribution for LLM spend. |
-| FO-B9 | P2 | T1 | [ ] | Dynamic Secrets engine: Postgres dynamic roles | Vault parity; could slip to v0.3. |
+| FO-B9 | P1 | T1 | [ ] | Dynamic Secrets engine: Postgres dynamic roles | Vault parity; in v0.3 scope. |
 | FO-B10 | P1 | T1 | [ ] | Request-coalescing layer for upstream admin API calls | Rate-limit resilience. |
 
 ### Bucket C — v0.3 Forensics UX & Launch
@@ -266,9 +266,22 @@
 | FO-C6 | P1 | T1 | [ ] | Upstream usage ingestion worker — AWS CloudTrail | STS session usage. |
 | FO-C7 | P1 | T1 | [ ] | Engineering-manager dashboard — baselines, anomaly alerts | Second buyer persona. |
 | FO-C8 | P1 | T1 | [ ] | Per-user / per-tool rolling-average anomaly detection | Threshold-based, no ML. |
-| FO-C9 | P2 | T1 | [ ] | Honeytoken issuance + alert pipeline | Stretch for v0.3; otherwise v0.4. |
+| FO-C9 | P1 | T1 | [ ] | Honeytoken issuance + alert pipeline | In v0.3. OSS caps at 5 active; unlimited in Pro. |
 | FO-C10 | P0 | T1 | [ ] | Corp VPC deployment guide — Terraform / Helm, IRSA / EC2 role examples | The artifact that sells "no hosted dependency". |
 | FO-C11 | P0 | T1 | [ ] | Blog posts 5-7 for v0.3 launch — Dynamic Secrets, Forensics, Incident Response | Bundle-publish with release. |
+
+### Bucket D — OSS/Pro Surface (all in v0.3)
+
+| ID | Pri | Phase | Status | Task | Notes |
+|----|-----|-------|--------|------|-------|
+| FO-D1 | P0 | T1 | [ ] | 24h audit-retention pruning + teaser footer in OSS `akms forensics inspect` | OSS constraint per design doc. |
+| FO-D2 | P0 | T1 | [ ] | Honeytoken hard-cap at 5 active in OSS with clear error on 6th | Hard limit; enforced, not nudged. |
+| FO-D3 | P0 | T1 | [ ] | Single-provider ingestion constraint + teaser on `akms ingest list` | OSS gets GitHub only. |
+| FO-D4 | P0 | T1 | [ ] | `--no-upgrade-hints` flag on every command + `AGENTKMS_HINTS=off` env var | Always respected; no loopholes. |
+| FO-D5 | P0 | T1 | [ ] | Static-HTML report generator (`akms report html`) — OSS dashboard alternative | Instead of live web UI. |
+| FO-D6 | P1 | T1 | [ ] | Teaser library (shared helper for footer placement, formatting, suppression) | One place to tune messaging. |
+| FO-D7 | P1 | T1 | [ ] | `agentkms-pro` binary scaffold — plugin interface docs + one reference plugin | Unblocks closed-source Pro development. |
+| FO-D8 | P2 | T1 | [ ] | License-file enabling (Pro feature unlock, zero phone-home) | Billing via customer-provided usage reports. |
 
 ---
 

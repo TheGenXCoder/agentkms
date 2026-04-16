@@ -227,6 +227,51 @@
 | QS-11 | P3 | T0 | [x] | Fix staticcheck style: `rr.Body.String()` idiom; loop `append` spread (S1011); struct conversion (S1016); duplicate import (ST1019); error string punctuation (ST1005) | — |
 
 
+## Forensics Track — v0.1.1 → v0.3
+
+> See `docs/design/2026-04-16-forensics-v0.3.md` for product direction and `docs/design/2026-04-16-audit-schema-migration.md` for the full bucket plan. v0.3 is the announcement target; v0.1.1 and v0.2 ship quietly.
+
+### Bucket A — v0.1.1 Additive Audit Fields (in flight)
+
+| ID | Pri | Phase | Status | Task | Notes |
+|----|-----|-------|--------|------|-------|
+| FO-A1 | P0 | T0 | [~] | Add `SchemaVersion`, `CredentialUUID`, `RuleID`, `CertSerialNumber`, `CallerOU`, `CredentialType`, `ProviderTokenHash` to AuditEvent | Additive, backwards-compatible. Unblocks forensics on data accruing from this migration forward. |
+| FO-A2 | P1 | T0 | [ ] | Add `RequestPath` / `MCPToolName` to AuditEvent | Stretch for Bucket A; slips to B if not trivial. |
+| FO-A3 | P1 | T0 | [ ] | Update CHANGELOG and tag v0.1.1 | Quiet release — no public announcement. |
+
+### Bucket B — v0.2 Architectural Refactors
+
+| ID | Pri | Phase | Status | Task | Notes |
+|----|-----|-------|--------|------|-------|
+| FO-B1 | P0 | T1 | [ ] | Scoped credential vending — replace master-credential return with per-session scope computation | `credentials/vend.go:8` notes LV-03/T2. Required for "scope at issuance" to mean anything. |
+| FO-B2 | P0 | T1 | [ ] | Implement revocation handler + `OperationRevoke` emission | Defined at `audit/events.go:34`, never emitted. |
+| FO-B3 | P0 | T1 | [ ] | Emit expiry events when TTLs lapse | Currently implicit; needs explicit event. |
+| FO-B4 | P0 | T1 | [ ] | Add `InvalidationReason` enum to audit events | `expired` / `revoked-user` / `revoked-policy` / `revoked-leak`. |
+| FO-B5 | P0 | T1 | [ ] | Harden `cmd/mcp/main.go` — tests, docs, version handshake | 593-line scaffold exists; needs productionization. |
+| FO-B6 | P0 | T1 | [ ] | Dynamic Secrets engine: AWS STS AssumeRole adapter | Highest blast radius; demo writes itself. |
+| FO-B7 | P1 | T1 | [ ] | Dynamic Secrets engine: GitHub App ephemeral PAT adapter | Fits agent-workflow narrative. |
+| FO-B8 | P1 | T1 | [ ] | Dynamic Secrets engine: Anthropic Admin API adapter | Per-user attribution for LLM spend. |
+| FO-B9 | P2 | T1 | [ ] | Dynamic Secrets engine: Postgres dynamic roles | Vault parity; could slip to v0.3. |
+| FO-B10 | P1 | T1 | [ ] | Request-coalescing layer for upstream admin API calls | Rate-limit resilience. |
+
+### Bucket C — v0.3 Forensics UX & Launch
+
+| ID | Pri | Phase | Status | Task | Notes |
+|----|-----|-------|--------|------|-------|
+| FO-C1 | P0 | T1 | [ ] | `akms forensics inspect` CLI — single-credential report | The headline demo. |
+| FO-C2 | P0 | T1 | [ ] | Post-hoc detection enrichment API — PATCH credential record with `DetectedAt` + reason | Webhook-compatible. |
+| FO-C3 | P0 | T1 | [ ] | GitHub secret scanning webhook receiver | Free leak intel, immediate ticket creation. |
+| FO-C4 | P0 | T1 | [ ] | Upstream usage ingestion worker — GitHub audit log | Correlation by `ProviderTokenHash`. |
+| FO-C5 | P0 | T1 | [ ] | Upstream usage ingestion worker — Anthropic Admin usage API | Per-workspace usage join. |
+| FO-C6 | P1 | T1 | [ ] | Upstream usage ingestion worker — AWS CloudTrail | STS session usage. |
+| FO-C7 | P1 | T1 | [ ] | Engineering-manager dashboard — baselines, anomaly alerts | Second buyer persona. |
+| FO-C8 | P1 | T1 | [ ] | Per-user / per-tool rolling-average anomaly detection | Threshold-based, no ML. |
+| FO-C9 | P2 | T1 | [ ] | Honeytoken issuance + alert pipeline | Stretch for v0.3; otherwise v0.4. |
+| FO-C10 | P0 | T1 | [ ] | Corp VPC deployment guide — Terraform / Helm, IRSA / EC2 role examples | The artifact that sells "no hosted dependency". |
+| FO-C11 | P0 | T1 | [ ] | Blog posts 5-7 for v0.3 launch — Dynamic Secrets, Forensics, Incident Response | Bundle-publish with release. |
+
+---
+
 ## How to Use This Backlog
 
 1. Start with the Foundation + Identity sections (T0). Nothing else works without these.

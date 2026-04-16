@@ -14,6 +14,7 @@ Conversation with Grok, review, strategic alignment. These four docs capture the
 - [**Audit Schema Migration — v0.1 → v0.3 Forensics**](2026-04-16-audit-schema-migration.md) — gap analysis, Bucket A/B/C plan, migration strategy.
 - [**OSS Core + Plugin Ecosystem**](2026-04-16-oss-vs-paid-surface.md) — plugin architecture (`hashicorp/go-plugin`), concrete per-feature limits, teaser placement rules, what's locked-in OSS forever.
 - [**v0.3 Scope Lock**](2026-04-16-v0.3-scope-lock.md) — ring-fenced launch scope (what ships, what lands post-launch as monthly plugin releases), sharpened demo.
+- [**FO-B1 — Scoped Credential Vending**](2026-04-16-scoped-credential-vending.md) — core Scope type, request/policy/validator pipeline, plugin interfaces (ScopeValidator/Analyzer/Serializer), audit integration, implementation order.
 
 ## Reading order for someone new
 

@@ -538,6 +538,28 @@ health_check() {
     printf "  ${GREEN}✓${NC}  %-14s  ok (main branch)\n" "main"
   fi
 
+  # CI-mode detection: GitHub Actions and similar CI environments set $CI.
+  # In CI we run on a bare checkout without the dev feature worktrees that
+  # `coordinate.sh setup` creates on a local dev machine. Skip the
+  # feature-stream checks and report only the main worktree health.
+  if [ -n "${CI:-}" ]; then
+    local any_feature_worktree=0
+    for name in $STREAM_NAMES; do
+      [ "$name" = "main" ] && continue
+      if [ -d "$(stream_path "$name")" ]; then
+        any_feature_worktree=1
+        break
+      fi
+    done
+    if [ "$any_feature_worktree" -eq 0 ]; then
+      printf "  ${YELLOW}ℹ${NC}  CI mode detected — no feature worktrees to check (run 'coordinate.sh setup' locally)\n"
+      echo "  ──────────────────────────────────────────────────────────────────"
+      printf "  ${GREEN}Health check: PASS (main worktree only, CI mode)${NC}\n"
+      echo ""
+      return 0
+    fi
+  fi
+
   # Check each feature stream
   for name in $STREAM_NAMES; do
     [ "$name" = "main" ] && continue

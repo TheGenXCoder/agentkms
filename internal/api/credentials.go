@@ -33,6 +33,12 @@ type credentialResponse struct {
 	// TTLSeconds is the number of seconds until expiry.
 	// The Pi extension refreshes when TTL < 10 minutes (600 seconds).
 	TTLSeconds int `json:"ttl_seconds"`
+
+	// CredentialUUID is the AgentKMS-assigned identifier for this issuance.
+	// Clients must echo this value in POST /audit/use so server-side use
+	// events can be joined to the vend event in the audit log.  Safe to log
+	// on the client (opaque identifier, not a secret).
+	CredentialUUID string `json:"credential_uuid,omitempty"`
 }
 
 type genericCredentialResponse struct {
@@ -40,6 +46,9 @@ type genericCredentialResponse struct {
 	Secrets    map[string]string `json:"secrets"` // SECURITY: sensitive
 	ExpiresAt  string            `json:"expires_at"`
 	TTLSeconds int               `json:"ttl_seconds"`
+
+	// CredentialUUID — see credentialResponse.CredentialUUID.
+	CredentialUUID string `json:"credential_uuid,omitempty"`
 }
 
 // ── GET /credentials/llm/{provider} ──────────────────────────────────────────
@@ -71,9 +80,7 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 	ev.ComplianceTags = []string{"soc2", "pci-dss", "iso27001"}
 
 	id := identityFromContext(ctx)
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
-	ev.AgentSession = id.AgentSession
+	populateIdentityFields(&ev, id)
 
 	// ── 1. Input validation ────────────────────────────────────────────────
 	provider = strings.ToLower(strings.TrimSpace(provider))
@@ -128,7 +135,7 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 	if !decision.Allow {
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = decision.DenyReason
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		if logErr := s.auditLog(ctx, ev); logErr != nil {
 			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 			return
@@ -140,7 +147,7 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 	// ── 3. Vend credential ─────────────────────────────────────────────────
 	if s.vender == nil {
 		ev.Outcome = audit.OutcomeError
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		if logErr := s.auditLog(ctx, ev); logErr != nil {
 			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 			return
@@ -153,7 +160,7 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 	cred, vErr := s.vender.Vend(ctx, provider)
 	if vErr != nil {
 		ev.Outcome = audit.OutcomeError
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		if errors.Is(vErr, credentials.ErrCredentialNotFound) {
 			ev.DenyReason = "credential not found for provider"
 			if logErr := s.auditLog(ctx, ev); logErr != nil {
@@ -174,7 +181,13 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 
 	// ── 4. Audit (key MUST NOT appear here) ───────────────────────────────
 	ev.Outcome = audit.OutcomeSuccess
-	populateAnomalies(&ev, decision.Anomalies)
+	populateDecisionFields(&ev, decision)
+	// Forensics fields (Bucket A): record the credential identity and the
+	// one-way hash of the provider token so a later leak report can be joined
+	// back to this issuance.  The raw APIKey is NEVER copied into ev.
+	ev.CredentialType = cred.Type
+	ev.CredentialUUID = cred.UUID
+	ev.ProviderTokenHash = cred.ProviderTokenHash
 	// ev.KeyID is already set to "llm/{provider}" — safe to audit
 	// The actual API key is deliberately absent from the audit event.
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
@@ -193,10 +206,11 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 	// Zero the key in memory immediately after writing the response.
 	defer cred.Zero()
 	writeJSON(w, http.StatusOK, credentialResponse{
-		Provider:   cred.Provider,
-		APIKey:     string(cred.APIKey),
-		ExpiresAt:  cred.ExpiresAt.Format("2006-01-02T15:04:05Z"),
-		TTLSeconds: cred.TTLSeconds,
+		Provider:       cred.Provider,
+		APIKey:         string(cred.APIKey),
+		ExpiresAt:      cred.ExpiresAt.Format("2006-01-02T15:04:05Z"),
+		TTLSeconds:     cred.TTLSeconds,
+		CredentialUUID: cred.UUID,
 	})
 }
 
@@ -242,9 +256,7 @@ func (s *Server) handleGetGenericCredential(w http.ResponseWriter, r *http.Reque
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)
 	ev.UserAgent = r.UserAgent()
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
-	ev.AgentSession = id.AgentSession
+	populateIdentityFields(&ev, id)
 
 	if path == "" {
 		ev.Outcome = audit.OutcomeDenied
@@ -271,6 +283,7 @@ func (s *Server) handleGetGenericCredential(w http.ResponseWriter, r *http.Reque
 		ev.Outcome = audit.OutcomeDenied
 		if pErr == nil {
 			ev.DenyReason = decision.DenyReason
+			populateDecisionFields(&ev, decision)
 		}
 		_ = s.auditLog(ctx, ev)
 		s.writeError(w, http.StatusForbidden, errCodePolicyDenied, "denied")
@@ -299,6 +312,11 @@ func (s *Server) handleGetGenericCredential(w http.ResponseWriter, r *http.Reque
 	}
 
 	ev.Outcome = audit.OutcomeSuccess
+	populateDecisionFields(&ev, decision)
+	// Forensics fields — see handleGetLLMCredential for invariant notes.
+	ev.CredentialType = cred.Type
+	ev.CredentialUUID = cred.UUID
+	ev.ProviderTokenHash = cred.ProviderTokenHash
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
 		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 		return
@@ -314,9 +332,10 @@ func (s *Server) handleGetGenericCredential(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, genericCredentialResponse{
-		Path:       cred.Path,
-		Secrets:    secretsMap,
-		ExpiresAt:  cred.ExpiresAt.Format("2006-01-02T15:04:05Z"),
-		TTLSeconds: cred.TTLSeconds,
+		Path:           cred.Path,
+		Secrets:        secretsMap,
+		ExpiresAt:      cred.ExpiresAt.Format("2006-01-02T15:04:05Z"),
+		TTLSeconds:     cred.TTLSeconds,
+		CredentialUUID: cred.UUID,
 	})
 }

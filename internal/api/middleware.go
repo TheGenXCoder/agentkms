@@ -101,9 +101,7 @@ func (s *Server) recoveryMiddleware(next http.HandlerFunc) http.HandlerFunc {
 					ev.Operation = audit.OperationPanicRecovery
 					ev.Outcome = audit.OutcomeError
 					ev.DenyReason = "handler panicked — panic value suppressed"
-					ev.CallerID = id.CallerID
-					ev.TeamID = id.TeamID
-					ev.AgentSession = id.AgentSession
+					populateIdentityFields(&ev, id)
 					ev.SourceIP = extractRemoteIP(r)
 					ev.UserAgent = r.UserAgent()
 					ev.Environment = s.env

@@ -111,7 +111,20 @@ func (s *Server) handleExportAuditLogs(w http.ResponseWriter, r *http.Request) {
 type useRequest struct {
 	Provider string `json:"provider"`
 	Action   string `json:"action"` // e.g., "chat", "embeddings"
+
+	// CredentialUUID is the UUID returned by the original vend response.
+	// Clients echo it here so server-side use events can be joined to the
+	// vend event in the audit log.  Optional on the wire (old clients that
+	// pre-date the field continue to work) but strongly recommended: use
+	// events without a UUID cannot be correlated to a specific issuance.
+	CredentialUUID string `json:"credential_uuid,omitempty"`
 }
+
+// credentialUUIDPattern matches RFC 4122 UUID strings (lowercase hex, 8-4-4-4-12).
+// Validated on the wire to prevent log poisoning.
+var credentialUUIDPattern = regexp.MustCompile(
+	`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
+)
 
 // handleLogCredentialUse handles POST /audit/use.
 //
@@ -143,6 +156,13 @@ func (s *Server) handleLogCredentialUse(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Validate credential_uuid shape if present (log-poisoning defence).
+	// Empty is permitted for old clients.
+	if req.CredentialUUID != "" && !credentialUUIDPattern.MatchString(req.CredentialUUID) {
+		s.writeError(w, http.StatusBadRequest, errCodeInvalidRequest, "invalid credential_uuid format")
+		return
+	}
+
 	ev, err := audit.New()
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
@@ -151,13 +171,17 @@ func (s *Server) handleLogCredentialUse(w http.ResponseWriter, r *http.Request) 
 
 	ev.Operation = audit.OperationCredentialUse
 	ev.KeyID = "llm/" + req.Provider
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
-	ev.AgentSession = id.AgentSession
+	populateIdentityFields(&ev, id)
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)
 	ev.UserAgent = r.UserAgent()
 	ev.Outcome = audit.OutcomeSuccess
+	// Bucket A forensics — thread the credential UUID and class through so
+	// use events can be joined to the original vend event on
+	// CredentialUUID / CredentialType.
+	ev.CredentialUUID = req.CredentialUUID
+	ev.CredentialType = "llm-session"
+	ev.RuleID = decision.MatchedRuleID
 	// ComplianceTags: log that this is an AI transparency event.
 	ev.ComplianceTags = []string{"colorado-ai-act", "soc2"}
 

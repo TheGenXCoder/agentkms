@@ -102,10 +102,14 @@ func identityFromCert(cert *x509.Certificate) (*identity.Identity, error) {
 
 	// Organisational Unit maps to role.  Unrecognised values default to
 	// RoleDeveloper rather than failing, to allow certificate extensions without
-	// a service disruption.  The audit log always records the actual OU value.
+	// a service disruption.  The audit log always records the actual OU value
+	// via Identity.CallerOU below so forensics can distinguish a recognised
+	// value from a defaulted one.
 	role := identity.RoleDeveloper
+	var ouRaw string
 	if len(cert.Subject.OrganizationalUnit) > 0 {
-		switch strings.ToLower(strings.TrimSpace(cert.Subject.OrganizationalUnit[0])) {
+		ouRaw = strings.TrimSpace(cert.Subject.OrganizationalUnit[0])
+		switch strings.ToLower(ouRaw) {
 		case "developer":
 			role = identity.RoleDeveloper
 		case "service":
@@ -131,5 +135,6 @@ func identityFromCert(cert *x509.Certificate) (*identity.Identity, error) {
 		Role:            role,
 		SPIFFEID:        spiffeID,
 		CertFingerprint: fingerprint,
+		CallerOU:        ouRaw,
 	}, nil
 }

@@ -247,9 +247,7 @@ func (s *Server) handleWriteSecret(w http.ResponseWriter, r *http.Request) {
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)
 	ev.UserAgent = r.UserAgent()
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
-	ev.AgentSession = id.AgentSession
+	populateIdentityFields(&ev, id)
 
 	// ── 1. Input validation ────────────────────────────────────────────────
 	userPath = strings.Trim(userPath, "/")
@@ -273,7 +271,7 @@ func (s *Server) handleWriteSecret(w http.ResponseWriter, r *http.Request) {
 	if !decision.Allow {
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = decision.DenyReason
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		_ = s.auditLog(ctx, ev)
 		s.writeError(w, http.StatusForbidden, errCodePolicyDenied, "operation denied by policy")
 		return
@@ -375,7 +373,7 @@ func (s *Server) handleWriteSecret(w http.ResponseWriter, r *http.Request) {
 
 	// ── 8. Audit success (NO secret values) ───────────────────────────────
 	ev.Outcome = audit.OutcomeSuccess
-	populateAnomalies(&ev, decision.Anomalies)
+	populateDecisionFields(&ev, decision)
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
 		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 		return
@@ -410,9 +408,7 @@ func (s *Server) handleWriteMetadata(w http.ResponseWriter, r *http.Request) {
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)
 	ev.UserAgent = r.UserAgent()
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
-	ev.AgentSession = id.AgentSession
+	populateIdentityFields(&ev, id)
 
 	userPath = strings.Trim(userPath, "/")
 	if userPath == "" {
@@ -434,7 +430,7 @@ func (s *Server) handleWriteMetadata(w http.ResponseWriter, r *http.Request) {
 	if !decision.Allow {
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = decision.DenyReason
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		_ = s.auditLog(ctx, ev)
 		s.writeError(w, http.StatusForbidden, errCodePolicyDenied, "operation denied by policy")
 		return
@@ -499,7 +495,7 @@ func (s *Server) handleWriteMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ev.Outcome = audit.OutcomeSuccess
-	populateAnomalies(&ev, decision.Anomalies)
+	populateDecisionFields(&ev, decision)
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
 		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 		return
@@ -532,9 +528,7 @@ func (s *Server) handleListMetadata(w http.ResponseWriter, r *http.Request) {
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)
 	ev.UserAgent = r.UserAgent()
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
-	ev.AgentSession = id.AgentSession
+	populateIdentityFields(&ev, id)
 
 	decision, pErr := s.policy.Evaluate(ctx, id, audit.OperationMetadataList, "metadata/*")
 	if pErr != nil {
@@ -546,7 +540,7 @@ func (s *Server) handleListMetadata(w http.ResponseWriter, r *http.Request) {
 	if !decision.Allow {
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = decision.DenyReason
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		_ = s.auditLog(ctx, ev)
 		s.writeError(w, http.StatusForbidden, errCodePolicyDenied, "operation denied by policy")
 		return
@@ -593,7 +587,7 @@ func (s *Server) handleListMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ev.Outcome = audit.OutcomeSuccess
-	populateAnomalies(&ev, decision.Anomalies)
+	populateDecisionFields(&ev, decision)
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
 		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 		return
@@ -620,9 +614,7 @@ func (s *Server) handleGetMetadata(w http.ResponseWriter, r *http.Request) {
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)
 	ev.UserAgent = r.UserAgent()
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
-	ev.AgentSession = id.AgentSession
+	populateIdentityFields(&ev, id)
 
 	userPath = strings.Trim(userPath, "/")
 	if userPath == "" {
@@ -644,7 +636,7 @@ func (s *Server) handleGetMetadata(w http.ResponseWriter, r *http.Request) {
 	if !decision.Allow {
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = decision.DenyReason
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		_ = s.auditLog(ctx, ev)
 		s.writeError(w, http.StatusForbidden, errCodePolicyDenied, "operation denied by policy")
 		return
@@ -677,7 +669,7 @@ func (s *Server) handleGetMetadata(w http.ResponseWriter, r *http.Request) {
 	rec := metadataFromMap(raw)
 
 	ev.Outcome = audit.OutcomeSuccess
-	populateAnomalies(&ev, decision.Anomalies)
+	populateDecisionFields(&ev, decision)
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
 		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 		return
@@ -714,9 +706,7 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)
 	ev.UserAgent = r.UserAgent()
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
-	ev.AgentSession = id.AgentSession
+	populateIdentityFields(&ev, id)
 
 	userPath = strings.Trim(userPath, "/")
 	if userPath == "" {
@@ -738,7 +728,7 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	if !decision.Allow {
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = decision.DenyReason
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		_ = s.auditLog(ctx, ev)
 		s.writeError(w, http.StatusForbidden, errCodePolicyDenied, "operation denied by policy")
 		return
@@ -812,7 +802,7 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ev.Outcome = audit.OutcomeSuccess
-	populateAnomalies(&ev, decision.Anomalies)
+	populateDecisionFields(&ev, decision)
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
 		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 		return
@@ -855,8 +845,7 @@ func (s *Server) handleReadSecret(w http.ResponseWriter, r *http.Request) {
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)
 	ev.UserAgent = r.UserAgent()
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
+	populateIdentityFields(&ev, id)
 	ev.KeyID = "secrets/" + userPath
 
 	if userPath == "" || s.registryWriter == nil {
@@ -908,9 +897,7 @@ func (s *Server) handleSecretHistory(w http.ResponseWriter, r *http.Request) {
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)
 	ev.UserAgent = r.UserAgent()
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
-	ev.AgentSession = id.AgentSession
+	populateIdentityFields(&ev, id)
 
 	userPath = strings.Trim(userPath, "/")
 	if userPath == "" {
@@ -932,7 +919,7 @@ func (s *Server) handleSecretHistory(w http.ResponseWriter, r *http.Request) {
 	if !decision.Allow {
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = decision.DenyReason
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		_ = s.auditLog(ctx, ev)
 		s.writeError(w, http.StatusForbidden, errCodePolicyDenied, "operation denied by policy")
 		return
@@ -971,7 +958,7 @@ func (s *Server) handleSecretHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ev.Outcome = audit.OutcomeSuccess
-	populateAnomalies(&ev, decision.Anomalies)
+	populateDecisionFields(&ev, decision)
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
 		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 		return

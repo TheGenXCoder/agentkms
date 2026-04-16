@@ -81,6 +81,14 @@ type Identity struct {
 	// certificate and detect token replay attacks across connections.
 	CertFingerprint string
 
+	// CallerOU is the raw Organisational Unit (OU) field as it appeared on
+	// the client certificate, preserved verbatim (with leading/trailing
+	// whitespace trimmed).  Role above is the parsed enum derived from this
+	// value; CallerOU preserves the original text so forensics can
+	// distinguish, for example, "developer" vs. an unknown OU that was
+	// defaulted to RoleDeveloper.
+	CallerOU string
+
 	// Scopes is the set of operations and resources the identity is permitted
 	// to access.  If non-empty, the identity's permissions are restricted to
 	// only those explicitly granted by the scopes, even if the policy would

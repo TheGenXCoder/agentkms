@@ -76,9 +76,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 
 	// Identity is injected by the auth middleware (TODO A-04 stub for now).
 	id := identityFromContext(ctx)
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
-	ev.AgentSession = id.AgentSession
+	populateIdentityFields(&ev, id)
 
 	// ── 1. Input validation ────────────────────────────────────────────────
 	if !isValidKeyID(keyID) {
@@ -155,7 +153,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		ev.Outcome = audit.OutcomeDenied
 		// DenyReason goes to the audit log ONLY — never to the HTTP response.
 		ev.DenyReason = decision.DenyReason
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		if logErr := s.auditLog(ctx, ev); logErr != nil {
 			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 			return
@@ -170,7 +168,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 	result, bErr := s.backend.Sign(ctx, keyID, hashBytes, alg)
 	if bErr != nil {
 		ev.Outcome = audit.OutcomeError
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		if logErr := s.auditLog(ctx, ev); logErr != nil {
 			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 			return
@@ -189,7 +187,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 	// that a failed audit write surfaces as an error to the client (who can
 	// retry) rather than silently producing an unaudited signature.
 	ev.Outcome = audit.OutcomeSuccess
-	populateAnomalies(&ev, decision.Anomalies)
+	populateDecisionFields(&ev, decision)
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
 		// The backend signed successfully but we cannot record the event.
 		// Return 500: client retries; the unaudited sign result is discarded.

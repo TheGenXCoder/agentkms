@@ -61,9 +61,7 @@ func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 	ev.UserAgent = r.UserAgent()
 
 	id := identityFromContext(ctx)
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
-	ev.AgentSession = id.AgentSession
+	populateIdentityFields(&ev, id)
 
 	// ── 1. Query parameter parsing ─────────────────────────────────────────
 	q := r.URL.Query()
@@ -118,7 +116,7 @@ func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 	if !decision.Allow {
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = decision.DenyReason
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		if logErr := s.auditLog(ctx, ev); logErr != nil {
 			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 			return
@@ -136,7 +134,7 @@ func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 	metas, bErr := s.backend.ListKeys(ctx, scope)
 	if bErr != nil {
 		ev.Outcome = audit.OutcomeError
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		if logErr := s.auditLog(ctx, ev); logErr != nil {
 			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 			return
@@ -151,7 +149,7 @@ func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 
 	// ── 4. Audit ───────────────────────────────────────────────────────────
 	ev.Outcome = audit.OutcomeSuccess
-	populateAnomalies(&ev, decision.Anomalies)
+	populateDecisionFields(&ev, decision)
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
 		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 		return
@@ -226,9 +224,7 @@ func (s *Server) handleRotateKey(w http.ResponseWriter, r *http.Request) {
 	ev.UserAgent = r.UserAgent()
 
 	id := identityFromContext(ctx)
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
-	ev.AgentSession = id.AgentSession
+	populateIdentityFields(&ev, id)
 
 	// ── 1. Input validation ────────────────────────────────────────────────
 	if !isValidKeyID(keyID) {
@@ -257,7 +253,7 @@ func (s *Server) handleRotateKey(w http.ResponseWriter, r *http.Request) {
 	if !decision.Allow {
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = decision.DenyReason // audit only — never sent in response
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		if logErr := s.auditLog(ctx, ev); logErr != nil {
 			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 			return
@@ -270,7 +266,7 @@ func (s *Server) handleRotateKey(w http.ResponseWriter, r *http.Request) {
 	meta, bErr := s.backend.RotateKey(ctx, keyID)
 	if bErr != nil {
 		ev.Outcome = audit.OutcomeError
-		populateAnomalies(&ev, decision.Anomalies)
+		populateDecisionFields(&ev, decision)
 		if logErr := s.auditLog(ctx, ev); logErr != nil {
 			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 			return
@@ -286,7 +282,7 @@ func (s *Server) handleRotateKey(w http.ResponseWriter, r *http.Request) {
 
 	// ── 4. Audit ───────────────────────────────────────────────────────────
 	ev.Outcome = audit.OutcomeSuccess
-	populateAnomalies(&ev, decision.Anomalies)
+	populateDecisionFields(&ev, decision)
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
 		s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
 		return

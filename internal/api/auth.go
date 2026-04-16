@@ -444,6 +444,22 @@ func (h *AuthHandler) logAudit(
 	ev.Environment = h.environment
 	ev.ComplianceTags = []string{"soc2", "iso27001"}
 
+	// Bucket A: populate forensics fields directly from the mTLS peer
+	// certificate if one is available.  The session handler runs before an
+	// Identity is in context (it is issuing the token), so we pull OU / cert
+	// fingerprint straight from the TLS state.  For callers that already
+	// have an authenticated Identity in context, the token-bound identity
+	// fields take precedence.
+	if idCtx := identityFromContext(ctx); idCtx.CallerID != "" {
+		ev.CertSerialNumber = idCtx.CertFingerprint
+		ev.CallerOU = idCtx.CallerOU
+		ev.CallerRole = string(idCtx.Role)
+	} else if id, idErr := auth.ExtractIdentity(r); idErr == nil && id != nil {
+		ev.CertSerialNumber = id.CertFingerprint
+		ev.CallerOU = id.CallerOU
+		ev.CallerRole = string(id.Role)
+	}
+
 	if err := h.auditor.Log(auditCtx, ev); err != nil {
 		slog.Error("audit write failed",
 			"operation", operation,

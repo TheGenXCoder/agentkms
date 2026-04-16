@@ -39,8 +39,7 @@ func (s *Server) handleRecoveryInit(w http.ResponseWriter, r *http.Request) {
 	id := identityFromContext(ctx)
 
 	ev, _ := audit.New()
-	ev.CallerID = id.CallerID
-	ev.TeamID = id.TeamID
+	populateIdentityFields(&ev, id)
 	ev.Operation = "recovery_init"
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)

@@ -62,7 +62,7 @@ func (s *Server) handleWebAuthnRegisterFinish(w http.ResponseWriter, r *http.Req
 	}
 
 	ev, _ := audit.New()
-	ev.CallerID = id.CallerID
+	populateIdentityFields(&ev, id)
 	ev.Operation = "webauthn_register"
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)

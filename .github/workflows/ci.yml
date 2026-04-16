@@ -168,5 +168,8 @@ jobs:
             -tags=integration \
             ./internal/backend/...
         env:
-          OPENBAO_ADDR: http://127.0.0.1:8200
-          OPENBAO_TOKEN: root
+          # The integration test suite reads AGENTKMS_VAULT_ADDR/TOKEN;
+          # if empty, it falls back to spawning a `vault` subprocess, which
+          # doesn't exist on the runner. Point at the OpenBao service container.
+          AGENTKMS_VAULT_ADDR: http://127.0.0.1:8200
+          AGENTKMS_VAULT_TOKEN: root

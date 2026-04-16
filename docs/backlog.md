@@ -248,11 +248,11 @@
 | FO-B3 | P0 | T1 | [ ] | Emit expiry events when TTLs lapse | Currently implicit; needs explicit event. |
 | FO-B4 | P0 | T1 | [ ] | Add `InvalidationReason` enum to audit events | `expired` / `revoked-user` / `revoked-policy` / `revoked-leak`. |
 | FO-B5 | P0 | T1 | [ ] | Harden `cmd/mcp/main.go` — tests, docs, version handshake | 593-line scaffold exists; needs productionization. |
-| FO-B6 | P0 | T1 | [ ] | Dynamic Secrets engine: AWS STS AssumeRole adapter | Highest blast radius; demo writes itself. |
-| FO-B7 | P1 | T1 | [ ] | Dynamic Secrets engine: GitHub App ephemeral PAT adapter | Fits agent-workflow narrative. |
-| FO-B8 | P1 | T1 | [ ] | Dynamic Secrets engine: Anthropic Admin API adapter | Per-user attribution for LLM spend. |
-| FO-B9 | P1 | T1 | [ ] | Dynamic Secrets engine: Postgres dynamic roles | Vault parity; in v0.3 scope. |
-| FO-B10 | P1 | T1 | [ ] | Request-coalescing layer for upstream admin API calls | Rate-limit resilience. |
+| FO-B6 | P0 | T1 | [ ] | `dynsecrets-aws` plugin — AWS STS AssumeRole | OSS-bundled plugin (not monolithic core). Highest blast radius; demo writes itself. Depends on FO-D1/D2. |
+| FO-B7 | P1 | T1 | [ ] | `dynsecrets-github` plugin — GitHub App ephemeral PAT | OSS-bundled plugin. Fits agent-workflow narrative. |
+| FO-B8 | P1 | T1 | [ ] | `dynsecrets-anthropic` plugin — Anthropic Admin API | OSS-bundled plugin. Per-user attribution for LLM spend. |
+| FO-B9 | P1 | T1 | [ ] | `dynsecrets-postgres` plugin — Postgres dynamic roles | OSS-bundled plugin. Vault parity. |
+| FO-B10 | P1 | T1 | [ ] | Request-coalescing layer in `CredentialVender` plugin interface | Rate-limit resilience; shared infrastructure usable by all engines. |
 
 ### Bucket C — v0.3 Forensics UX & Launch
 
@@ -270,18 +270,25 @@
 | FO-C10 | P0 | T1 | [ ] | Corp VPC deployment guide — Terraform / Helm, IRSA / EC2 role examples | The artifact that sells "no hosted dependency". |
 | FO-C11 | P0 | T1 | [ ] | Blog posts 5-7 for v0.3 launch — Dynamic Secrets, Forensics, Incident Response | Bundle-publish with release. |
 
-### Bucket D — OSS/Pro Surface (all in v0.3)
+### Bucket D — Plugin Ecosystem (all in v0.3)
+
+> See `docs/design/2026-04-16-oss-vs-paid-surface.md`. **One `agentkms` binary, built-in plugin host, Pro = plugins.** Using `hashicorp/go-plugin` (same as Vault / Terraform / Packer — RPC over subprocess, process isolation, version independence).
 
 | ID | Pri | Phase | Status | Task | Notes |
 |----|-----|-------|--------|------|-------|
-| FO-D1 | P0 | T1 | [ ] | 24h audit-retention pruning + teaser footer in OSS `akms forensics inspect` | OSS constraint per design doc. |
-| FO-D2 | P0 | T1 | [ ] | Honeytoken hard-cap at 5 active in OSS with clear error on 6th | Hard limit; enforced, not nudged. |
-| FO-D3 | P0 | T1 | [ ] | Single-provider ingestion constraint + teaser on `akms ingest list` | OSS gets GitHub only. |
-| FO-D4 | P0 | T1 | [ ] | `--no-upgrade-hints` flag on every command + `AGENTKMS_HINTS=off` env var | Always respected; no loopholes. |
-| FO-D5 | P0 | T1 | [ ] | Static-HTML report generator (`akms report html`) — OSS dashboard alternative | Instead of live web UI. |
-| FO-D6 | P1 | T1 | [ ] | Teaser library (shared helper for footer placement, formatting, suppression) | One place to tune messaging. |
-| FO-D7 | P1 | T1 | [ ] | `agentkms-pro` binary scaffold — plugin interface docs + one reference plugin | Unblocks closed-source Pro development. |
-| FO-D8 | P2 | T1 | [ ] | License-file enabling (Pro feature unlock, zero phone-home) | Billing via customer-provided usage reports. |
+| FO-D1 | P0 | T1 | [ ] | Plugin host + discovery + lifecycle using `hashicorp/go-plugin` | Core infrastructure; everything else in Bucket D / Dynamic Secrets depends on this. |
+| FO-D2 | P0 | T1 | [ ] | Plugin API definitions — public interfaces (`CredentialVender`, `AuditSink`, `Anomaly`, `Ingester`, `Scope` extension points) | Locked forever at v0.3; breaking changes require major-version bump. |
+| FO-D3 | P0 | T1 | [ ] | Plugin versioning contract — semver on plugin API, load-time compatibility check | Plugins declare supported API range; core refuses mismatched plugins cleanly. |
+| FO-D4 | P0 | T1 | [ ] | 24h audit-retention pruning in OSS core + teaser footer on `akms forensics inspect` | OSS constraint; `c9-retention-unlimited` plugin lifts it. |
+| FO-D5 | P0 | T1 | [ ] | Honeytoken hard-cap at 5 active in OSS core with clear error on 6th | Hard limit; enforced, not nudged. |
+| FO-D6 | P0 | T1 | [ ] | Teaser library — shared helper for footer placement, formatting, suppression via `--no-upgrade-hints` / `AGENTKMS_HINTS=off` / config | Always respected; no loopholes. One place to tune messaging. |
+| FO-D7 | P0 | T1 | [ ] | `akms plugin` CLI — `list`, `install`, `remove`, `search` | User-facing plugin management. |
+| FO-D8 | P0 | T1 | [ ] | Plugin signing + verification (Catalyst9 plugins signed, third-party self-signed, unsigned works with warning) | Trust model for the registry. |
+| FO-D9 | P0 | T1 | [ ] | Static-HTML report generator plugin (`akms report html`) — OSS dashboard alternative | OSS-bundled; `c9-web-ui` is the Pro upgrade. |
+| FO-D10 | P0 | T1 | [ ] | Reference paid plugin — `c9-retention-unlimited` scaffold with license-file check | Proves the Pro plugin path end-to-end. Not necessarily shipped in v0.3 as a commercial product — just proves the seam. |
+| FO-D11 | P1 | T1 | [ ] | Plugin development guide (docs/plugin-developer.md) — how to write, build, sign, publish a plugin | Ecosystem accelerant. |
+| FO-D12 | P1 | T1 | [ ] | Plugin registry manifest format + static hosting at catalyst9.ai/plugins | JSON manifest + signatures on S3 for v0.3; upgrade to real registry later. |
+| FO-D13 | P2 | T1 | [ ] | License file format + validation library used by Pro plugins | Plugin-side self-enforcement; core has zero license awareness. |
 
 ---
 

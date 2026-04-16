@@ -9,10 +9,11 @@ Dated design decisions and strategy docs. Each file is a self-contained decision
 Conversation with Grok, review, strategic alignment. These four docs capture the pivot to forensics-as-the-announcement-target.
 
 - [**Forensics as the v0.3 Product Target**](2026-04-16-forensics-v0.3.md) — why v0.3 is the announcement, what the forensics report looks like, engineering-manager vs. security-engineer lenses.
-- [**Dynamic Secrets — AgentKMS as Secret-Issuing Authority**](2026-04-16-dynamic-secrets.md) — provider admin API landscape, three attribution granularities, v0.2 implementation priority.
+- [**Dynamic Secrets — AgentKMS as Secret-Issuing Authority**](2026-04-16-dynamic-secrets.md) — provider admin API landscape, three attribution granularities, implementation priority.
 - [**Deployment Model & Sovereignty Principle**](2026-04-16-deployment-model.md) — three tiers, why Catalyst9 never custodies customer secrets, Vault Enterprise business model.
 - [**Audit Schema Migration — v0.1 → v0.3 Forensics**](2026-04-16-audit-schema-migration.md) — gap analysis, Bucket A/B/C plan, migration strategy.
-- [**OSS vs Paid Surface**](2026-04-16-oss-vs-paid-surface.md) — concrete per-feature limits, teaser placement rules, what's locked-in OSS forever.
+- [**OSS Core + Plugin Ecosystem**](2026-04-16-oss-vs-paid-surface.md) — plugin architecture (`hashicorp/go-plugin`), concrete per-feature limits, teaser placement rules, what's locked-in OSS forever.
+- [**v0.3 Scope Lock**](2026-04-16-v0.3-scope-lock.md) — ring-fenced launch scope (what ships, what lands post-launch as monthly plugin releases), sharpened demo.
 
 ## Reading order for someone new
 

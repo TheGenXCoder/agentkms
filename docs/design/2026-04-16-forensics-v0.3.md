@@ -36,44 +36,43 @@ Single-credential query. Full lifecycle. Correlation to upstream events. Executi
 
 ## The forensics report, concretely
 
+Targets: **under 30 seconds end-to-end**, one-screen terminal output, every line lands. The money shot is "credential expired 63h before leak detection" — dynamic secrets plus forensic chain-of-custody equals leaks that don't matter.
+
 ```bash
-akms forensics inspect --provider-token-id ghp_ABCxyz
+$ akms forensics inspect ghp_ABCxyz
 
-  Credential:
-    Internal ID:        akms-cred-01HK8F...
-    Provider:           github
-    Type:               fine-grained PAT
-    Created:            2026-04-13 15:20:04 UTC (51h 27m before detection)
-    Invalidated:        2026-04-13 23:20:04 UTC (TTL expiry)
-    Detected leaked:    2026-04-16 10:47:12 UTC
+  Leaked credential found in audit ledger.  ✗ Blast radius: BOUNDED.
 
-  Issuance:
-    Requester:          frank@acmecorp  (cert: CN=frank, O=acmecorp, OU=platform-team, Serial=0x4a8c...)
-    Session:            claude-code-session-8f3a
-    Via:                MCP tool `vend_github_pat`
-    Policy matched:     allow-github-for-developers (rule #4)
-    Template:           infra-migrations.template:8
+  ──────────────────────────────────────────────────────────────────
+  Scope:         acmecorp/legacy-tool
+                 (1 repo; contents:write + pull_requests:write)
+  TTL applied:   8h
+  Lifecycle:     issued  2026-04-13 15:20 UTC  (to frank@acmecorp)
+                 expired 2026-04-13 23:20 UTC  ← credential already dead
+                 leaked  2026-04-16 10:47 UTC  ← reported 63h after expiry
 
-  Scope at issuance:
-    Repos:              acmecorp/legacy-tool (single repo, explicit)
-    Permissions:        contents:write, pull_requests:write
-    TTL:                8 hours
-    Actually expired:   2026-04-13 23:20:04 UTC
+  Usage during live window (8 hours):
+    15:22  clone acmecorp/legacy-tool       ✓ expected
+    15:47  push branch migration-v3          ✓ expected
+    16:31  open PR #47                       ✓ expected
 
-  Usage during exposure window:
-    2026-04-13 15:22:11  clone acmecorp/legacy-tool           (expected)
-    2026-04-13 15:47:02  push branch migration-v3              (expected)
-    2026-04-13 16:31:45  open PR #47                           (expected)
-    [credential expired at 23:20:04]
-    [no usage between expiry and detection — leak is post-expiry]
+  Post-expiry usage: NONE (credential was dead when leaked)
 
-  Assessment:
-    Exposure window:    8h (live) + 63h (expired, unusable)
-    Live-credential blast radius:  bounded (scope: 1 repo, 2 perms)
-    Actual damage:      none detected (all usage matches Frank's session)
+  ──────────────────────────────────────────────────────────────────
+  ✓ Assessment: no damage — credential expired 63h before leak detection.
+  ✓ Action required: none. GitHub has already revoked the dead token.
+
+  Full issuance context:
+    Requester:   frank@acmecorp  (CN=frank, O=acmecorp, OU=platform-team)
+    Session:     claude-code-session-8f3a
+    Via:         MCP tool `vend_github_pat`
+    Policy:      allow-github-for-developers (rule #4)
+
+  ℹ Single-credential inspect only on OSS. Install c9-forensics-plus
+    for correlated multi-credential queries and org-wide search.
 ```
 
-That report answers every forensic question a security engineer asks. Read in 30 seconds, ticket closed.
+That report answers every forensic question a security engineer asks — **who issued, who used, why, scope, exposure window** — and its structure foregrounds the decision the engineer has to make (act / don't act). The blast-radius assessment at top, dead-credential timing in the lifecycle block, and explicit "Action required: none" close the ticket in under a minute.
 
 ## Data substrate required
 

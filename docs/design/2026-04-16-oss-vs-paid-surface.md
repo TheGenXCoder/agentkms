@@ -10,6 +10,12 @@
 OSS ships a complete, fully-functional core. Pro and community capabilities are delivered as **independent plugins** that the core loads at runtime. There is no separate "Pro binary" to install — users run one `agentkms`, and plugins extend it.
 
 > **Mental model:** Go pro for plugins.
+>
+> **Dual framing for audiences** (per Grok review, 2026-04-16):
+> - DevOps / SRE / platform-engineer audience: "plugins — the same model that powers Terraform, Vault, and Packer." Positive ecosystem connotation; signals extensibility and third-party support.
+> - CISO / security-buyer audience: "Catalyst9 Enterprise Pack — managed plugins with security boundaries, signed releases, and support contracts." Reassures the "plugins = supply-chain risk" reflex without inventing a separate product line.
+>
+> Same binary, same plugin system, different emphasis in different surfaces (developer docs vs. enterprise sales pages).
 
 - OSS works completely for solo and small-team workflows out of the box.
 - Paid plugins surface upgrade nudges at the exact moment a paid buyer would feel a constraint — never blocking dialogs, never watermarks, never paywall-in-workflow.

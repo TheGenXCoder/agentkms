@@ -67,16 +67,25 @@ LLM provider keys are long-lived by provider design (no "AssumeRole" equivalent 
 
 Fallback: AgentKMS stores pre-provisioned static keys tagged by owner/client, vends them per-user after policy check. You get AgentKMS's audit trail but lose provider-side usage attribution. Good enough for the long tail.
 
-## v0.2 scope
+## v0.3 launch scope + post-launch cadence
 
-Implementation priority based on impact × feasibility:
+Implementation order revised 2026-04-16 per Grok's review — lead with the engine that serves the launch audience (Cursor/Claude vibe-coders), follow with the engine that demonstrates enterprise gravity.
 
-1. **AWS STS AssumeRole** — highest blast radius, loudest horror stories, demo writes itself ("Claude deployed to staging with 15-min creds that auto-revoked"). Starting point.
-2. **GitHub App ephemeral PATs** — tight fit for the "agent committed to wrong repo" narrative that resonates with vibe coders. Installation tokens + user-access tokens both supported.
-3. **Anthropic Admin API** — per-user key minting for attribution. Lower security win (keys are still long-lived), high operational win (billing + offboarding).
-4. **Postgres dynamic users** — matches Vault's DB secrets engine. Nice-to-have for v0.2, could slip to v0.3.
+### v0.3 (ring-fenced launch)
 
-Each engine has a pluggable interface so new providers can be added without touching core.
+1. **GitHub App ephemeral PATs** — launch demo lead. Fits the "AI agent committed to the wrong repo" narrative directly; resonates with Cursor/Claude users. Installation tokens + user-access tokens both supported.
+2. **AWS STS AssumeRole** — serious-enterprise follow-up in demo order. Highest blast radius; essential proof that the pattern scales to production infrastructure.
+
+### Post-launch month 1
+3. **Anthropic Admin API** — per-user key minting for LLM attribution. Its own news cycle: "Your CFO can see per-developer Claude spend."
+4. **Postgres dynamic users** — Vault parity for the DB secrets use case.
+
+### Post-launch month N
+- xAI / Grok when admin API matures
+- Cohere / Mistral
+- Third-party plugins for niche providers (Stripe, HashiCorp Cloud, etc.) — ecosystem-driven
+
+Each engine is a plugin against the `CredentialVender` interface (see the plugin architecture design doc), so new providers can be added without touching core. Catalyst9 maintains the first four; the ecosystem fills in the rest.
 
 ## MCP server
 

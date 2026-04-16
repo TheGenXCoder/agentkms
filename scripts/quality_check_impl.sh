@@ -141,12 +141,20 @@ else
           continue
         fi
 
-        # Determine threshold
+        # Determine threshold.  SECURITY_PACKAGES is a comma-separated list
+        # of glob patterns (e.g. "internal/auth*,internal/policy*").  We must
+        # split it and test each pattern individually — bash `case` with an
+        # unquoted variable does NOT treat comma as alternation, so the naive
+        # `case $pkg in $SECURITY_PACKAGES)` would never match and the
+        # security threshold would be silently ignored.
         min="$COVERAGE_MIN"
-        # shellcheck disable=SC2254
-        case "$pkg" in
-          $SECURITY_PACKAGES) min="$SECURITY_COVERAGE_MIN" ;;
-        esac
+        IFS=',' read -ra sec_pats <<< "$SECURITY_PACKAGES"
+        for sec_pat in "${sec_pats[@]}"; do
+          # shellcheck disable=SC2254
+          case "$pkg" in
+            $sec_pat) min="$SECURITY_COVERAGE_MIN"; break ;;
+          esac
+        done
 
         if awk "BEGIN{exit ($pct >= $min)?0:1}"; then
           ok "$(printf '%-42s' "$pkg") ${pct}% (min ${min}%)"

@@ -185,6 +185,22 @@ type Rule struct {
 	// current UTC time falls outside the window, the rule is skipped even
 	// if all other conditions match.
 	TimeWindow *TimeWindow `yaml:"time_window,omitempty" json:"time_window,omitempty"`
+
+	// Bounds optionally specifies the maximum scope this rule authorises.
+	// Only meaningful for allow rules.  When present on an allow decision,
+	// the engine populates Decision.AllowedBounds from these values.
+	Bounds *RuleBounds `yaml:"bounds,omitempty" json:"bounds,omitempty"`
+}
+
+// RuleBounds is the on-disk representation of a rule's scope bounds.
+// MaxTTL is stored as a Go duration string and parsed during Validate().
+type RuleBounds struct {
+	Kind      string         `yaml:"kind" json:"kind"`
+	MaxParams map[string]any `yaml:"max_params,omitempty" json:"max_params,omitempty"`
+	MaxTTL    string         `yaml:"max_ttl,omitempty" json:"max_ttl,omitempty"`
+
+	// MaxTTLDuration is the parsed form of MaxTTL.  Set by Validate().
+	MaxTTLDuration time.Duration `yaml:"-" json:"-"`
 }
 
 // Match defines the set of conditions that must all be true for a rule to
@@ -416,6 +432,20 @@ func (r *Rule) validate(idx int) []string {
 	if len(r.Match.KeyIDs) > 0 && r.Match.KeyPrefix != "" {
 		errs = append(errs, fmt.Sprintf("%s (%q): match.key_ids and match.key_prefix are mutually exclusive; specify only one",
 			prefix, r.ID))
+	}
+
+	if b := r.Bounds; b != nil {
+		if b.MaxTTL != "" {
+			if d, err := time.ParseDuration(b.MaxTTL); err != nil {
+				errs = append(errs, fmt.Sprintf("%s (%q): bounds.max_ttl %q is not a valid Go duration: %v",
+					prefix, r.ID, b.MaxTTL, err))
+			} else if d < 0 {
+				errs = append(errs, fmt.Sprintf("%s (%q): bounds.max_ttl must be positive, got %q",
+					prefix, r.ID, b.MaxTTL))
+			} else {
+				b.MaxTTLDuration = d
+			}
+		}
 	}
 
 	return errs

@@ -374,6 +374,13 @@ func (e *Engine) EvaluateAt(id identity.Identity, op Operation, keyID string, no
 				Allow:         true,
 				MatchedRuleID: rule.ID,
 			}
+			if rule.Bounds != nil {
+				decision.AllowedBounds = &ScopeBounds{
+					Kind:      rule.Bounds.Kind,
+					MaxParams: rule.Bounds.MaxParams,
+					MaxTTL:    rule.Bounds.MaxTTLDuration,
+				}
+			}
 			matched = true
 		default:
 			// Unreachable: Validate() rejects unknown effects.
@@ -602,6 +609,20 @@ func copyPolicy(p Policy) Policy {
 		if r.RateLimit != nil {
 			rl := *r.RateLimit // value copy; WindowDuration is a time.Duration (int64) — safe.
 			cr.RateLimit = &rl
+		}
+		if r.Bounds != nil {
+			b := RuleBounds{
+				Kind:           r.Bounds.Kind,
+				MaxTTL:         r.Bounds.MaxTTL,
+				MaxTTLDuration: r.Bounds.MaxTTLDuration,
+			}
+			if len(r.Bounds.MaxParams) > 0 {
+				b.MaxParams = make(map[string]any, len(r.Bounds.MaxParams))
+				for k, v := range r.Bounds.MaxParams {
+					b.MaxParams[k] = v
+				}
+			}
+			cr.Bounds = &b
 		}
 		if r.TimeWindow != nil {
 			tw := TimeWindow{

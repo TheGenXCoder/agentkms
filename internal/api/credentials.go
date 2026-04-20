@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -190,6 +191,20 @@ func (s *Server) handleGetLLMCredential(w http.ResponseWriter, r *http.Request) 
 	ev.ProviderTokenHash = cred.ProviderTokenHash
 	// ev.KeyID is already set to "llm/{provider}" — safe to audit
 	// The actual API key is deliberately absent from the audit event.
+
+	// B1 Step 5: Populate Scope and ScopeHash for vend audit events.
+	now := time.Now().UTC()
+	scope := credentials.Scope{
+		Kind:      credentials.TypeLLMSession,
+		Params:    map[string]any{"provider": provider},
+		TTL:       credentials.CredentialTTL,
+		IssuedAt:  now,
+		ExpiresAt: now.Add(credentials.CredentialTTL),
+	}
+	scopeJSON, _ := json.Marshal(scope)
+	ev.Scope = scopeJSON
+	ev.ScopeHash = credentials.ScopeHash(scope)
+
 	if auditErr := s.auditLog(ctx, ev); auditErr != nil {
 		// Credential was vended but audit failed — return 500.
 		// Compliance requires every vend to be audited.

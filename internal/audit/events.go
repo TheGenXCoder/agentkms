@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
@@ -229,6 +230,17 @@ type AuditEvent struct {
 	// and search the audit log to recover issuance, caller, and scope.  The
 	// hash is not key material; it cannot be inverted to recover the token.
 	ProviderTokenHash string `json:"provider_token_hash,omitempty"`
+
+	// Scope is the effective permissions granted at credential issuance.
+	// Populated by the scoped-vending pipeline (FO-B1).  Nil for non-vend
+	// operations (sign, encrypt, decrypt, etc.).  Serialized as structured
+	// JSON for queryability.
+	Scope json.RawMessage `json:"scope,omitempty"`
+
+	// ScopeHash is the SHA-256 hex of the canonical JSON Scope encoding.
+	// Enables correlation between vend and use events without full Scope
+	// parsing.  Empty when Scope is nil.
+	ScopeHash string `json:"scope_hash,omitempty"`
 }
 
 // ── EventID generation ────────────────────────────────────────────────────────

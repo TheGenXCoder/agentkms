@@ -122,6 +122,22 @@ type Decision struct {
 	// (unless the policy explicitly says so); they are intended to be
 	// logged to the audit system for further review.
 	Anomalies []AnomalyRecord
+
+	// AllowedBounds is the maximum scope the matched rule permits for this
+	// operation.  Nil when Allow is false (deny decisions have no scope).
+	// The credential vending pipeline uses this to narrow the caller's
+	// requested scope to what policy actually authorises.  Added in B1.
+	AllowedBounds *ScopeBounds
+}
+
+// ScopeBounds is the maximum scope a policy rule allows for a given
+// (identity, operation) pair.  Populated by the rule's `bounds:` section
+// when present; nil otherwise (meaning "no scope restriction beyond the
+// Kind's defaults").
+type ScopeBounds struct {
+	Kind      string         `json:"kind,omitempty"`
+	MaxParams map[string]any `json:"max_params,omitempty"`
+	MaxTTL    time.Duration  `json:"max_ttl,omitempty"`
 }
 
 // ── Rate limiter ──────────────────────────────────────────────────────────────

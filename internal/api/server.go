@@ -66,6 +66,11 @@ type Server struct {
 
 	mux *http.ServeMux
 
+	// credentialUUIDs tracks known credential UUIDs and their revocation state.
+	// Key: UUID string, Value: bool (true = revoked, false = active).
+	// Pre-seeded in dev mode with well-known test UUIDs.
+	credentialUUIDs sync.Map
+
 	// credRateLimit tracks the last vend time per caller+provider.
 	credRateLimit sync.Map
 
@@ -130,6 +135,10 @@ func NewServer(b backend.Backend, a audit.Auditor, p policy.EngineI, t *auth.Tok
 		env:                   env,
 		mux:                   http.NewServeMux(),
 		credRateLimitInterval: 60 * time.Second,
+	}
+	// Pre-seed known credential UUIDs in dev mode for testing.
+	if env == "dev" {
+		s.credentialUUIDs.Store("550e8400-e29b-41d4-a716-446655440000", false)
 	}
 	s.registerRoutes()
 	return s

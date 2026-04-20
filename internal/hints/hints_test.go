@@ -1,3 +1,6 @@
+// FO-D6: Acceptance tests for the teaser hint library.
+// These tests define the contract for Pro upgrade hints:
+// formatting, suppression via flag, and suppression via env var.
 package hints
 
 import (

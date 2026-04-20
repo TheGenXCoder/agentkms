@@ -343,6 +343,15 @@ func (e AuditEvent) Validate() error {
 			}
 		}
 	}
+	// InvalidationReason — must be empty or one of the defined constants.
+	if e.InvalidationReason != "" {
+		switch e.InvalidationReason {
+		case ReasonExpired, ReasonRevokedUser, ReasonRevokedAdmin, ReasonRevokedLeak:
+			// valid
+		default:
+			return fmt.Errorf("audit: invalid InvalidationReason %q", e.InvalidationReason)
+		}
+	}
 	return nil
 }
 

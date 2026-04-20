@@ -9,14 +9,16 @@ import (
 
 // Registry maps credential Kinds to their ScopeValidator implementations.
 type Registry struct {
-	mu         sync.RWMutex
-	validators map[string]credentials.ScopeValidator
+	mu          sync.RWMutex
+	validators  map[string]credentials.ScopeValidator
+	pluginInfos map[string]PluginInfo
 }
 
 // NewRegistry creates a new empty Registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		validators: make(map[string]credentials.ScopeValidator),
+		validators:  make(map[string]credentials.ScopeValidator),
+		pluginInfos: make(map[string]PluginInfo),
 	}
 }
 

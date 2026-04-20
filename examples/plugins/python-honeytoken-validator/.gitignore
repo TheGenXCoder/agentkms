@@ -1,0 +1,16 @@
+# Generated gRPC stubs (run `bash generate.sh` to produce these)
+plugin_pb2.py
+plugin_pb2_grpc.py
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# pytest
+.pytest_cache/

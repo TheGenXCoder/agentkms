@@ -1,6 +1,9 @@
 package credentials
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // ScopedVender orchestrates the scoped credential vending pipeline.
 // It resolves the appropriate ScopeValidator for the requested Kind,
@@ -30,6 +33,35 @@ type ScopedResult struct {
 
 // VendScoped runs the full scoped credential vending pipeline.
 func (sv *ScopedVender) VendScoped(ctx context.Context, req VendRequest) (*ScopedResult, error) {
-	// TODO: implement pipeline
-	return nil, nil
+	// Default empty Kind to "llm-session" for back-compat.
+	kind := req.DesiredScope.Kind
+	if kind == "" {
+		kind = "llm-session"
+		req.DesiredScope.Kind = kind
+	}
+
+	// Look up validator by Kind.
+	validator, ok := sv.validators[kind]
+	if !ok {
+		return nil, fmt.Errorf("unknown scope kind: %q", kind)
+	}
+
+	// Validate the requested scope.
+	if err := validator.Validate(ctx, req.DesiredScope); err != nil {
+		return nil, err
+	}
+
+	// Narrow the scope against policy bounds (empty bounds for now).
+	narrowedScope, err := validator.Narrow(ctx, req.DesiredScope, ScopeBounds{})
+	if err != nil {
+		return nil, err
+	}
+
+	// Compute canonical hash of the effective scope.
+	hash := ScopeHash(narrowedScope)
+
+	return &ScopedResult{
+		EffectiveScope: narrowedScope,
+		ScopeHash:      hash,
+	}, nil
 }

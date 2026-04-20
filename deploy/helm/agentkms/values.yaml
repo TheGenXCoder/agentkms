@@ -151,7 +151,8 @@ hpa:
 # ── Monitoring ────────────────────────────────────────────────────────────────
 monitoring:
   serviceMonitor:
-    enabled: true
+    # Requires Prometheus Operator CRDs — disable if not installed on target cluster.
+    enabled: false
     interval: 30s
     path: /metrics
     labels:

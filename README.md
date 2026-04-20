@@ -1,8 +1,47 @@
 # AgentKMS
 
-**Stop putting LLM API keys in .env files.**
+**AgentKMS is the secret-issuing authority for AI coding agents.** It vends scoped, short-lived credentials, enforces policy, and produces a forensic chain-of-custody when credentials leak.
 
-AgentKMS is a cryptographic proxy and credential vending service that keeps secrets out of your code, off your disk, and away from attackers. Works as an **MCP server** for AI coding tools or as a standalone REST API.
+Stop putting LLM API keys in `.env` files.
+
+## Quick Start (local dev — 5 minutes)
+
+```bash
+# Clone and build
+git clone https://github.com/TheGenXCoder/agentkms.git
+cd agentkms
+go build -o agentkms-dev ./cmd/dev/
+
+# Bootstrap local PKI (CA + server cert + client cert → ~/.agentkms/dev/)
+./agentkms-dev enroll
+
+# Start the server (mTLS on 127.0.0.1:8443)
+./agentkms-dev serve
+
+# In another terminal — verify
+curl -k https://localhost:8443/healthz
+```
+
+### Store secrets and fetch them
+
+```bash
+# Authenticate — uses client cert from ~/.agentkms/dev/
+TOKEN=$(curl -s \
+  --cert ~/.agentkms/dev/clients/default/client.crt \
+  --key  ~/.agentkms/dev/clients/default/client.key \
+  --cacert ~/.agentkms/dev/ca.crt \
+  -X POST https://127.0.0.1:8443/auth/session | jq -r .token)
+
+# Fetch a credential
+curl -s \
+  --cert ~/.agentkms/dev/clients/default/client.crt \
+  --key  ~/.agentkms/dev/clients/default/client.key \
+  --cacert ~/.agentkms/dev/ca.crt \
+  -H "Authorization: Bearer $TOKEN" \
+  https://127.0.0.1:8443/credentials/llm/anthropic
+
+# {"provider":"anthropic","api_key":"sk-ant-...","expires_at":"...","scope":"..."}
+```
 
 ## Use It in Claude Code (30 seconds)
 
@@ -17,33 +56,108 @@ AgentKMS is a cryptographic proxy and credential vending service that keeps secr
 }
 ```
 
-That's it. Claude Code can now securely fetch LLM keys, sign payloads, and encrypt data — all over mTLS, zero secrets on disk.
+That's it. Claude Code can now securely fetch LLM keys, sign payloads, and encrypt data — all over mTLS, zero secrets on disk. Also works with **Cursor**, **Windsurf**, and any MCP-compatible tool.
 
-Also works with **Cursor**, **Windsurf**, and any MCP-compatible tool.
-
-## How It Works
+## Architecture
 
 ```
-AI Tool  ──MCP/stdio──▶  agentkms-mcp  ──mTLS──▶  AgentKMS  ──▶  Vault Backend
-                                                       │
-                                                       ├── session token (15-min TTL)
-                                                       ├── short-lived LLM API keys
-                                                       ├── sign / encrypt / decrypt
-                                                       └── full audit trail
+AI Tool (Claude Code, Cursor, Windsurf)
+    ↓ MCP (stdio JSON-RPC)
+agentkms-mcp  (local binary, cmd/mcp)
+    ↓ mTLS
+AgentKMS  (laptop / corp VPC, cmd/server or cmd/dev)
+    ↓ plugin API (gRPC, api/plugin/v1/plugin.proto)
+dynsecrets-github | dynsecrets-aws | community plugins
+    ↓
+GitHub App API | AWS STS | ...
 ```
 
 **Private key material never leaves the backend. No exceptions.**
 
-### MCP Tools Available
+## Key Features (v0.3)
+
+### Dynamic Secrets
+Short-lived credentials generated on demand — not stored, not rotatable, not leakable in the traditional sense.
+- **GitHub App PAT** — scoped installation tokens, auto-expired
+- **AWS STS** — assumed-role session credentials with configurable TTL
+
+See [`docs/design/2026-04-16-dynamic-secrets.md`](docs/design/2026-04-16-dynamic-secrets.md).
+
+### Scoped Credential Vending Pipeline
+Every credential vend passes through scope binding, policy evaluation, and forensics tagging before it leaves the server. Deny-by-default, first-match-wins, bounds enforcement.
+
+See [`docs/design/2026-04-16-scoped-credential-vending.md`](docs/design/2026-04-16-scoped-credential-vending.md).
+
+### MCP Server
+Full MCP server (`cmd/mcp`) for Claude Code, Cursor, and any MCP-compatible tool.
 
 | Tool | What it does |
 |------|-------------|
 | `agentkms_get_credential` | Fetch a short-lived LLM API key (Anthropic, OpenAI, Google, etc.) |
 | `agentkms_list_providers` | List providers with stored credentials |
 | `agentkms_get_secret` | Fetch any generic secret by path |
-| `agentkms_sign` | Sign data — returns signature only, private key stays in vault |
+| `agentkms_sign` | Sign data — returns signature only, key stays in vault |
 | `agentkms_encrypt` | Encrypt data — returns ciphertext only |
 | `agentkms_decrypt` | Decrypt data — returns plaintext only |
+
+### Plugin Architecture
+Hashicorp `go-plugin` host with discovery, versioning, and signing. Multi-language support via protobuf — write plugins in Go, Python, or any language with gRPC support.
+
+- Plugin contract: [`api/plugin/v1/plugin.proto`](api/plugin/v1/plugin.proto)
+- Example plugin: [`examples/plugins/python-honeytoken-validator/`](examples/plugins/python-honeytoken-validator/)
+- Plugin SDK docs: [`api/plugin/v1/README.md`](api/plugin/v1/README.md)
+
+> **Pro feature.** Plugin discovery, signing enforcement, and the community plugin registry require a Catalyst9 Pro license.
+
+### Forensics Chain-of-Custody
+46µs credential inspection. Every vended credential carries `CredentialUUID`, `ProviderTokenHash`, `Scope`, and `ScopeHash` in the audit record. When a secret leaks, you know exactly which agent vended it and when.
+
+See [`docs/design/2026-04-16-forensics-v0.3.md`](docs/design/2026-04-16-forensics-v0.3.md).
+
+### Audit Ingestion & Webhook Receiver
+- HMAC-signed audit events to File (NDJSON), Elasticsearch, Splunk HEC, Datadog, generic SIEM webhook
+- Webhook receiver for real-time leak detection (GitHub secret scanning, etc.)
+
+### OSS vs Pro
+See [`docs/design/2026-04-16-oss-vs-paid-surface.md`](docs/design/2026-04-16-oss-vs-paid-surface.md) for the full split. Short version: local dev, self-hosted REST API, OSS backends, and single-node operation are free forever. Plugin signing, corp VPC HA, enterprise backends, and forensics dashboard are Pro.
+
+## Deployment
+
+### Local Dev
+`cmd/dev` is a single binary with an encrypted file store — no external dependencies.
+
+```bash
+./agentkms-dev enroll   # one-time PKI bootstrap
+./agentkms-dev serve    # starts mTLS server on 127.0.0.1:8443
+```
+
+**Sovereignty statement: Catalyst9 never custodies your secrets.** The server runs on your hardware. Keys never leave your environment.
+
+### Corp VPC
+See [`docs/deployment-guide.md`](docs/deployment-guide.md) for production deployment on Kubernetes with OpenBao or HashiCorp Vault.
+
+```bash
+# Quick Helm deploy (OpenBao backend)
+helm repo add openbao https://openbao.github.io/openbao-helm
+helm install openbao openbao/openbao --set server.ha.enabled=true
+
+helm install agentkms ./deploy/helm/agentkms/ \
+  --set backend.type=openbao \
+  --set backend.address=http://openbao:8200
+```
+
+## Backend Tiers
+
+AgentKMS uses dependency injection for its vault backend — swap without changing application code.
+
+| Tier | Backend | Use Case |
+|------|---------|----------|
+| **Dev** | Encrypted file store (built-in) | Local development, testing, CI |
+| **Self-Hosted** | [OpenBao](https://openbao.org) | OSS server deployments |
+| **Enterprise** | [HashiCorp Vault](https://www.vaultproject.io) | Existing Vault infrastructure |
+| **Cloud** | AWS KMS, GCP Cloud KMS, Azure Key Vault | Cloud-native *(coming soon)* |
+
+All backends implement the same 5-method interface — no method ever returns key material.
 
 ## KPM — The Local Secrets CLI
 
@@ -60,208 +174,30 @@ kpm quickstart
 kpm init --server https://agentkms.your-company.com
 ```
 
-KPM replaces `.env` files with encrypted templates. Secrets are ciphertext in your environment — decrypted only at the moment your app needs them.
+KPM replaces `.env` files with encrypted templates — secrets are ciphertext in your repo, decrypted only at the moment your app needs them.
 
-See the [KPM repo](https://github.com/TheGenXCoder/kpm) for full documentation.
-
-## Why
-
-Every team using LLMs has the same problem: API keys in environment variables, `.env` files, or config maps. One compromised laptop, one leaked container image, one careless `git push` — and those keys are gone.
-
-AgentKMS eliminates this by design:
-- **Zero secrets on disk** — credentials are vended at runtime, held in memory, and revoked when done
-- **mTLS everywhere** — every connection is mutually authenticated
-- **Short-lived tokens** — 15-minute session TTL, per-request credential scoping
-- **Deny-by-default policy** — no operation succeeds without an explicit allow rule
-- **Full audit trail** — every credential vend, every crypto operation, signed and logged
-
-## Quick Start (5 minutes)
-
-```bash
-# Clone and build
-git clone https://github.com/catalyst9ai/agentkms.git
-cd agentkms
-go build ./cmd/dev
-
-# Enroll (generates local dev PKI — CA, server cert, client cert)
-./dev enroll
-
-# Store an LLM API key securely
-./dev secrets set llm/anthropic api_key=sk-ant-your-key-here
-./dev secrets set llm/openai api_key=sk-your-key-here
-
-# Start the server (mTLS on 127.0.0.1:8443)
-./dev serve
-```
-
-That's it. Your keys are now vended over mTLS, not sitting in a file.
-
-### Make a request
-
-```bash
-# Authenticate (uses client cert from ~/.agentkms/dev/)
-TOKEN=$(curl -s --cert ~/.agentkms/dev/clients/default/client.crt \
-             --key ~/.agentkms/dev/clients/default/client.key \
-             --cacert ~/.agentkms/dev/ca.crt \
-             -X POST https://127.0.0.1:8443/auth/session | jq -r .token)
-
-# Fetch a credential
-curl -s --cert ~/.agentkms/dev/clients/default/client.crt \
-        --key ~/.agentkms/dev/clients/default/client.key \
-        --cacert ~/.agentkms/dev/ca.crt \
-        -H "Authorization: Bearer $TOKEN" \
-        https://127.0.0.1:8443/credentials/llm/anthropic
-
-# {"provider":"anthropic","api_key":"sk-ant-...","expires_at":"..."}
-```
-
-## Backend Tiers
-
-AgentKMS uses dependency injection for its vault backend. Swap backends without changing your application code.
-
-| Tier | Backend | Use Case |
-|------|---------|----------|
-| **Dev** | In-memory (built-in) | Local development, testing, CI |
-| **Self-Hosted** | [OpenBao](https://openbao.org) | Open source server deployments |
-| **Enterprise** | [HashiCorp Vault](https://www.vaultproject.io) | Production with existing Vault infrastructure |
-| **Cloud** | AWS KMS, GCP Cloud KMS, Azure Key Vault | Cloud-native deployments *(coming soon)* |
-
-All backends implement the same 5-method interface:
-
-```go
-type Backend interface {
-    Sign(ctx, keyID, payloadHash, alg)  → signature only
-    Encrypt(ctx, keyID, plaintext)      → ciphertext only
-    Decrypt(ctx, keyID, ciphertext)     → plaintext only
-    ListKeys(ctx, scope)                → metadata only
-    RotateKey(ctx, keyID)               → metadata only
-}
-```
-
-No method ever returns key material. This is enforced at the type level.
-
-## Features
-
-### Security
-- **mTLS with TLS 1.3** — client certificate required on every connection
-- **Session tokens** — HMAC-signed, 15-minute TTL, revocable
-- **Deny-by-default policy engine** — YAML rules with team, scope, key, and operation constraints
-- **Credential path protection** — blocks reads to `.env`, private keys, auth files
-- **Rate limiting** — per-caller, per-provider sliding window
-- **Anomaly detection** — statistical outlier flagging for unusual access patterns
-
-### Credential Vending
-- **LLM providers** — Anthropic, OpenAI, Google, Azure, Bedrock, Mistral, Groq, xAI
-- **Generic secrets** — vend any key/value secret via `GET /credentials/generic/{path}`
-- **Auto-rotation** — master key rotation on configurable schedule
-- **Zero persistence** — credentials exist in memory only, zeroed after HTTP response
-
-### Audit & Compliance
-- **HMAC-signed audit events** — tamper-evident logging on every operation
-- **Multiple sinks** — File (NDJSON), Elasticsearch, Splunk HEC, Datadog, generic SIEM webhook
-- **SOC 2 evidence export** — automated compliance report generation
-- **GDPR/CCPA endpoints** — data export, deletion, and anonymization
-
-### Operations
-- **Helm chart** — deploy to Kubernetes with `helm install`
-- **Health checks** — `/healthz` and `/readyz` for liveness/readiness probes
-- **Prometheus metrics** — built-in `/metrics` endpoint
-- **Dual-run mode** — migrate between backends with zero downtime
-
-## API Reference
-
-### Authentication
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/auth/session` | Authenticate via mTLS → receive session token |
-| `POST` | `/auth/refresh` | Refresh expiring session token |
-| `POST` | `/auth/revoke` | Revoke session token |
-| `POST` | `/auth/delegate` | Mint scoped sub-agent token |
-
-### Credentials
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/credentials/llm` | List supported LLM providers |
-| `GET` | `/credentials/llm/{provider}` | Vend short-lived LLM API key |
-| `POST` | `/credentials/llm/{provider}/refresh` | Refresh expiring credential |
-| `GET` | `/credentials/generic/{path}` | Vend arbitrary secret |
-
-### Cryptographic Operations
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/sign/{key-id}` | Sign payload hash → returns signature |
-| `POST` | `/encrypt/{key-id}` | Encrypt plaintext → returns ciphertext |
-| `POST` | `/decrypt/{key-id}` | Decrypt ciphertext → returns plaintext |
-| `GET` | `/keys` | List key metadata (never key material) |
-| `POST` | `/rotate/{key-id}` | Rotate key, retain historical versions |
-
-## Architecture
-
-```
-┌─────────────┐     mTLS      ┌──────────────┐            ┌─────────────────┐
-│  Your App   │──────────────▶│   AgentKMS   │───────────▶│  Vault Backend  │
-│  (any lang) │◀──────────────│              │◀───────────│  (OpenBao/HC/…) │
-└─────────────┘   tokens +    │  ┌─────────┐ │  Transit   └─────────────────┘
-                  credentials │  │ Policy  │ │  API only
-                              │  │ Engine  │ │
-                              │  └─────────┘ │
-                              │  ┌─────────┐ │
-                              │  │  Audit  │ │──▶ SIEM / ELK / Splunk
-                              │  │  Trail  │ │
-                              │  └─────────┘ │
-                              └──────────────┘
-```
-
-## Production Deployment
-
-### With OpenBao (recommended for self-hosted)
-
-```bash
-# Deploy OpenBao (Helm)
-helm repo add openbao https://openbao.github.io/openbao-helm
-helm install openbao openbao/openbao --set server.ha.enabled=true
-
-# Deploy AgentKMS
-helm install agentkms ./deploy/helm/agentkms/ \
-  --set backend.type=openbao \
-  --set backend.address=http://openbao:8200
-```
-
-### With HashiCorp Vault
-
-```bash
-helm install agentkms ./deploy/helm/agentkms/ \
-  --set backend.type=vault \
-  --set backend.address=https://vault.example.com:8200
-```
-
-## Integrations
-
-AgentKMS exposes a standard REST API over mTLS. Integrate from any language:
-
-- **Go** — see `examples/go-client/`
-- **Python** — see `examples/python-client/`
-- **curl** — see Quick Start above
-- **AI Agent Frameworks** — optional extensions available for specific frameworks
-
-## Documentation
-
-- [`docs/architecture.md`](docs/architecture.md) — design decisions and security model
-- [`docs/compliance-controls.md`](docs/compliance-controls.md) — SOC 2 / PCI-DSS / GDPR evidence
-- [`docs/security-runbook.md`](docs/security-runbook.md) — incident response procedures
-- [`docs/rotation-runbook.md`](docs/rotation-runbook.md) — key rotation guide
-
-## Security
-
-AgentKMS enforces these invariants at every layer:
+## Security Invariants
 
 1. No backend method returns, logs, or exposes private key material
-2. No credential is written to disk — in-memory only, zeroed after use
+2. No credential is written to disk — in-memory only, zeroed after response
 3. No operation succeeds without mTLS authentication + valid session token + policy allow
 4. Every operation is audit-logged with HMAC signature before the response is sent
 5. Error messages contain only key IDs and status codes — never key bytes
 
-Found a vulnerability? Email security@catalyst9.ai.
+Found a vulnerability? See [SECURITY.md](SECURITY.md) or email security@catalyst9.ai.
+
+## Documentation
+
+| Doc | Purpose |
+|-----|---------|
+| [`docs/design/README.md`](docs/design/README.md) | All v0.3 design decisions |
+| [`docs/deployment-guide.md`](docs/deployment-guide.md) | Corp VPC deployment (K8s, HA, TLS) |
+| [`docs/backlog.md`](docs/backlog.md) | Roadmap and known gaps |
+| [`docs/architecture.md`](docs/architecture.md) | Security model and component overview |
+| [`docs/compliance-controls.md`](docs/compliance-controls.md) | SOC 2 / PCI-DSS / GDPR evidence |
+| [`docs/security-runbook.md`](docs/security-runbook.md) | Incident response |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute |
+| [KPM client](https://github.com/TheGenXCoder/kpm) | Companion CLI |
 
 ## License
 

@@ -1,0 +1,237 @@
+syntax = "proto3";
+
+package agentkms.plugin.v1;
+
+option go_package = "github.com/agentkms/agentkms/api/plugin/v1;pluginv1";
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// ── Shared types ─────────────────────────────────────────────────────────────
+
+// Scope describes the effective permissions of a vended credential.
+// Mirrors internal/credentials.Scope.
+message Scope {
+  // Kind discriminates the structural shape of params.
+  // Core knows "llm-session" and "generic-vend".
+  // Plugins register additional kinds (e.g. "aws-sts", "github-pat").
+  string kind = 1;
+
+  // Params holds Kind-specific structured scope data.
+  // Shape is defined by the plugin that owns the Kind.
+  // google.protobuf.Struct maps cleanly to map[string]any in Go,
+  // dict in Python, serde_json::Value in Rust, etc.
+  google.protobuf.Struct params = 2;
+
+  // ttl_seconds is the effective lifetime from issuance, in seconds.
+  int64 ttl_seconds = 3;
+
+  // issued_at is the wall-clock time the scope became valid.
+  google.protobuf.Timestamp issued_at = 4;
+
+  // expires_at is issued_at + ttl.  Stored explicitly so audit queries
+  // do not have to reconstruct.
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+// ScopeBounds is the maximum scope a policy rule allows for a given
+// (identity, operation) pair.  Mirrors internal/credentials.ScopeBounds.
+message ScopeBounds {
+  // Kind of the scope this bounds applies to.
+  string kind = 1;
+
+  // MaxParams holds the maximum allowed parameters for the scope.
+  // Intersection semantics are Kind-specific and delegated to the plugin.
+  google.protobuf.Struct max_params = 2;
+
+  // max_ttl_seconds is the maximum allowed TTL, in seconds.
+  int64 max_ttl_seconds = 3;
+}
+
+// AnomalyLevel indicates the severity of a ScopeAnomaly.
+enum AnomalyLevel {
+  ANOMALY_LEVEL_UNSPECIFIED = 0;
+  ANOMALY_LEVEL_INFO        = 1;
+  ANOMALY_LEVEL_WARN        = 2;
+  ANOMALY_LEVEL_ALERT       = 3;
+}
+
+// ScopeAnomaly is a single risk signal from a ScopeAnalyzer.
+// Mirrors internal/credentials.ScopeAnomaly.
+message ScopeAnomaly {
+  AnomalyLevel level   = 1;
+  string       code    = 2;
+  string       message = 3;
+}
+
+// VendedCredential is the output of a CredentialVenderService.Vend call.
+message VendedCredential {
+  // api_key holds the raw credential bytes (e.g. a bearer token or API key).
+  // Handle with care — these bytes are secrets.
+  bytes api_key = 1;
+
+  // uuid is the unique identifier for this vended credential instance,
+  // used for audit correlation and revocation.
+  string uuid = 2;
+
+  // provider_token_hash is the SHA-256 hex digest of the upstream
+  // provider token, for audit logging without storing the secret.
+  string provider_token_hash = 3;
+
+  // expires_at is when the vended credential becomes invalid.
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+// PluginInfo describes a plugin implementation.
+// Returned by any service's Info RPC or embedded in management messages.
+message PluginInfo {
+  // kind is the scope Kind this plugin handles (e.g. "aws-sts").
+  string kind = 1;
+
+  // api_version is the plugin API version this implementation targets
+  // (e.g. "plugin.v1").
+  string api_version = 2;
+
+  // name is a human-readable plugin name (e.g. "AWS STS Scope Plugin").
+  string name = 3;
+
+  // version is the plugin's own semantic version (e.g. "0.1.0").
+  string version = 4;
+}
+
+// ── Kind RPC ─────────────────────────────────────────────────────────────────
+
+// KindRequest is the input to any Kind RPC.  Intentionally empty.
+message KindRequest {}
+
+// KindResponse carries the Kind string the plugin handles.
+message KindResponse {
+  string kind = 1;
+}
+
+// ── ScopeValidatorService RPCs ───────────────────────────────────────────────
+
+// ValidateRequest is the input to ScopeValidatorService.Validate.
+message ValidateRequest {
+  Scope scope = 1;
+}
+
+// ValidateResponse is the output of ScopeValidatorService.Validate.
+// An empty error string means success.
+message ValidateResponse {
+  // error is a human-readable error string.  Empty on success.
+  string error = 1;
+}
+
+// NarrowRequest is the input to ScopeValidatorService.Narrow.
+message NarrowRequest {
+  Scope       requested = 1;
+  ScopeBounds bounds    = 2;
+}
+
+// NarrowResponse is the output of ScopeValidatorService.Narrow.
+// On success, narrowed_scope contains the effective scope.
+// On failure, error is non-empty and narrowed_scope is unset.
+message NarrowResponse {
+  Scope  narrowed_scope = 1;
+  string error          = 2;
+}
+
+// ── ScopeAnalyzerService RPCs ────────────────────────────────────────────────
+
+// AnalyzeRequest is the input to ScopeAnalyzerService.Analyze.
+message AnalyzeRequest {
+  Scope scope = 1;
+}
+
+// AnalyzeResponse is the output of ScopeAnalyzerService.Analyze.
+// An empty anomalies list means no risk signals were detected.
+message AnalyzeResponse {
+  repeated ScopeAnomaly anomalies = 1;
+}
+
+// ── ScopeSerializerService RPCs ──────────────────────────────────────────────
+
+// SerializeRequest is the input to ScopeSerializerService.Serialize.
+message SerializeRequest {
+  Scope scope = 1;
+}
+
+// SerializeResponse is the output of ScopeSerializerService.Serialize.
+// provider_bytes contains the provider-native encoding of the scope
+// (e.g. an AWS IAM policy document, a GitHub permissions object).
+// Core never inspects or logs these bytes.
+message SerializeResponse {
+  bytes  provider_bytes = 1;
+  string error          = 2;
+}
+
+// ── CredentialVenderService RPCs ─────────────────────────────────────────────
+
+// VendRequest is the input to CredentialVenderService.Vend.
+message VendRequest {
+  Scope scope = 1;
+}
+
+// VendResponse is the output of CredentialVenderService.Vend.
+// On success, credential is populated.  On failure, error is non-empty.
+message VendResponse {
+  VendedCredential credential = 1;
+  string           error      = 2;
+}
+
+// ── Services ─────────────────────────────────────────────────────────────────
+
+// ScopeValidatorService mirrors the ScopeValidator Go interface.
+// Validates structural correctness and performs policy narrowing
+// for a specific scope Kind.  Required per-Kind plugin.
+service ScopeValidatorService {
+  // Kind returns the scope Kind this plugin handles.
+  rpc Kind(KindRequest) returns (KindResponse);
+
+  // Validate checks that the scope has a well-formed Params shape
+  // for this Kind.  Must not mutate the scope.
+  rpc Validate(ValidateRequest) returns (ValidateResponse);
+
+  // Narrow intersects a requested Scope with policy bounds and returns
+  // the effective Scope.  Returns an error if bounds are incompatible
+  // with the request.
+  rpc Narrow(NarrowRequest) returns (NarrowResponse);
+}
+
+// ScopeAnalyzerService mirrors the ScopeAnalyzer Go interface.
+// Assesses risk at vend time.  Optional per-Kind plugin.
+// Anomalies are recorded in the audit log but do not block vending.
+service ScopeAnalyzerService {
+  // Kind returns the scope Kind this plugin handles.
+  rpc Kind(KindRequest) returns (KindResponse);
+
+  // Analyze returns anomalies describing risky scope aspects.
+  // An empty list means no risk signals were detected.
+  rpc Analyze(AnalyzeRequest) returns (AnalyzeResponse);
+}
+
+// ScopeSerializerService mirrors the ScopeSerializer Go interface.
+// Converts a Scope to the provider-native request format.
+// Required per-Kind that vends real upstream credentials.
+service ScopeSerializerService {
+  // Kind returns the scope Kind this plugin handles.
+  rpc Kind(KindRequest) returns (KindResponse);
+
+  // Serialize converts the scope to the provider-native format
+  // (AWS IAM policy document, GitHub permissions object, etc.).
+  rpc Serialize(SerializeRequest) returns (SerializeResponse);
+}
+
+// CredentialVenderService is the plugin-side credential issuance interface.
+// Plugins that issue real upstream credentials implement this service.
+// Mirrors the CredentialVender Go interface (not yet in core source).
+service CredentialVenderService {
+  // Kind returns the scope Kind this plugin handles.
+  rpc Kind(KindRequest) returns (KindResponse);
+
+  // Vend issues a credential scoped to the provided Scope.
+  // The returned VendedCredential holds the secret bytes, a UUID for
+  // audit correlation, a hash for safe logging, and an expiry.
+  rpc Vend(VendRequest) returns (VendResponse);
+}

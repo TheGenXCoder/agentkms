@@ -18,6 +18,18 @@ data:
       enabled: {{ .Values.config.mtls.enabled }}
 
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentkms.fullname" . }}-policy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agentkms.labels" . | nindent 4 }}
+data:
+  policy.yaml: |
+{{ .Values.policy.rules | indent 4 }}
+
+---
 {{- if .Values.vaultAgent.enabled }}
 apiVersion: v1
 kind: ConfigMap

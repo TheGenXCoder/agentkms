@@ -3,17 +3,17 @@
 # =============================================================================
 
 image:
-  repository: 10.2.10.152:30500/agentkms/server
-  tag: latest
+  repository: localhost:30500/agentkms/server
+  tag: v0.3.0
   pullPolicy: Always
 
-replicaCount: 1   # T1 POC — scale to 3 for T2 production
+replicaCount: 3
 
 service:
   type: ClusterIP
-  port: 8200
+  port: 8443
 
-# Resource limits — sized for T1 POC single node
+# Resource limits
 resources:
   requests:
     cpu: 100m
@@ -22,34 +22,81 @@ resources:
     cpu: 500m
     memory: 256Mi
 
+# ── Server listen address ──────────────────────────────────────────────────────
+server:
+  # Port the agentkms binary listens on (set via AGENTKMS_ADDR env var).
+  port: 8443
+
 # ── OpenBao / Vault backend ───────────────────────────────────────────────────
 openbao:
-  # Address of the OpenBao service inside the cluster.
   address: "http://openbao.openbao.svc.cluster.local:8200"
-  # Mount path for the Transit secrets engine.
   transitMount: "transit"
-  # Mount path for the KV secrets engine (v2).
   kvMount: "kv"
-  # Mount path for the PKI secrets engine.
   pkiMount: "pki"
 
-# ── Authentication via Vault Agent sidecar ────────────────────────────────────
+# ── Vault token — injected via pre-existing external secret ──────────────────
+# The vault-agent init container pattern has been replaced with a static token
+# secret managed outside the chart (populated by OpenBao Kubernetes auth).
 vaultAgent:
+  enabled: false
+
+vaultToken:
+  # Name of the existing Secret that holds the vault token (key: token).
+  secretName: agentkms-vault-token
+
+# ── TLS ───────────────────────────────────────────────────────────────────────
+tls:
   enabled: true
-  # Kubernetes auth role — must match the role created in OpenBao.
-  role: agentkms
-  # Auth path for Kubernetes authentication.
-  authPath: auth/kubernetes
+  # Name of the existing TLS Secret for the server certificate.
+  serverSecretName: agentkms-server-tls
+  # Name of the existing TLS Secret that holds the CA certificate.
+  caSecretName: agentkms-ca-tls
+  certPath: /etc/agentkms/tls/tls.crt
+  keyPath: /etc/agentkms/tls/tls.key
+  caPath: /etc/agentkms/tls/ca.crt
+
+# ── ELK / Audit logging ───────────────────────────────────────────────────────
+elk:
+  address: "http://elasticsearch.logging.svc.cluster.local:9200"
+  index: "agentkms-audit"
 
 # ── Service configuration ─────────────────────────────────────────────────────
 config:
-  # Environment tier for audit events.
   environment: "dev"
-  # Log level: debug, info, warn, error.
   logLevel: "info"
-  # mTLS: disable for initial T1 POC (enable once cert-manager integration done)
   mtls:
     enabled: false
+
+# ── Policy ────────────────────────────────────────────────────────────────────
+policy:
+  path: /etc/agentkms/policy/policy.yaml
+  # Policy rules rendered into the agentkms-policy ConfigMap.
+  rules: |
+    version: 1
+    rules:
+      - id: platform-team-sign
+        effect: allow
+        match:
+          identity:
+            team_id: "platform-team"
+          operations: ["sign", "rotate_key", "list_keys"]
+        description: Platform team can sign and list keys
+
+      - id: platform-team-encrypt
+        effect: allow
+        match:
+          identity:
+            team_id: "platform-team"
+          operations: ["encrypt", "decrypt"]
+        description: Platform team can encrypt and decrypt
+
+      - id: stub-allow-all
+        effect: allow
+        match:
+          identity:
+            caller_id_pattern: "*"
+          operations: ["sign", "encrypt", "decrypt", "list_keys", "rotate_key", "credential_vend"]
+        description: T1 POC — allow all callers (replace when A-04 token auth is wired)
 
 # ── RBAC ──────────────────────────────────────────────────────────────────────
 serviceAccount:
@@ -74,26 +121,43 @@ securityContext:
   capabilities:
     drop: [ALL]
 
-# ── Horizontal Pod Autoscaler (IN-07) ──────────────────────────────────────────
+# ── Probes ────────────────────────────────────────────────────────────────────
+livenessProbe:
+  tcpSocket:
+    port: api
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  failureThreshold: 3
+  successThreshold: 1
+  timeoutSeconds: 1
+
+readinessProbe:
+  tcpSocket:
+    port: api
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+  successThreshold: 1
+  timeoutSeconds: 1
+
+# ── Horizontal Pod Autoscaler ─────────────────────────────────────────────────
 hpa:
   enabled: true
   minReplicas: 3
   maxReplicas: 10
   targetCPUUtilizationPercentage: 70
-  targetRPS: 500  # Requires Prometheus Adapter / Custom Metrics API
+  targetRPS: 500
 
-# ── Monitoring (IN-08) ────────────────────────────────────────────────────────
+# ── Monitoring ────────────────────────────────────────────────────────────────
 monitoring:
-  # Enable ServiceMonitor for Prometheus Operator
   serviceMonitor:
     enabled: true
     interval: 30s
     path: /metrics
-    # Labels to add to the ServiceMonitor, e.g. for selection by Prometheus
     labels:
       release: monitoring
 
-# ── Affinity / topology (T2: enable pod anti-affinity) ───────────────────────
+# ── Affinity / topology ───────────────────────────────────────────────────────
 affinity: {}
 tolerations: []
 nodeSelector: {}

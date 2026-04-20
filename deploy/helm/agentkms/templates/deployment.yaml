@@ -22,37 +22,6 @@ spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
 
-      {{- if .Values.vaultAgent.enabled }}
-      initContainers:
-        - name: vault-agent-init
-          image: hashicorp/vault:latest
-          command:
-            - vault
-            - agent
-            - -config=/vault/config/agent.hcl
-            - -exit-after-auth
-          env:
-            - name: VAULT_ADDR
-              value: {{ .Values.openbao.address | quote }}
-          volumeMounts:
-            - name: vault-agent-config
-              mountPath: /vault/config
-            - name: vault-token
-              mountPath: /vault/secrets
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: [ALL]
-          resources:
-            requests:
-              cpu: 50m
-              memory: 32Mi
-            limits:
-              cpu: 100m
-              memory: 64Mi
-      {{- end }}
-
       containers:
         - name: agentkms
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -61,7 +30,7 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           ports:
             - name: api
-              containerPort: 8200
+              containerPort: {{ .Values.server.port }}
               protocol: TCP
           env:
             - name: AGENTKMS_VAULT_ADDR
@@ -72,6 +41,22 @@ spec:
               value: {{ .Values.config.environment | quote }}
             - name: AGENTKMS_LOG_LEVEL
               value: {{ .Values.config.logLevel | quote }}
+            - name: AGENTKMS_POLICY
+              value: {{ .Values.policy.path | quote }}
+            - name: AGENTKMS_ELK_ADDR
+              value: {{ .Values.elk.address | quote }}
+            - name: AGENTKMS_ELK_INDEX
+              value: {{ .Values.elk.index | quote }}
+            - name: AGENTKMS_ADDR
+              value: ":{{ .Values.server.port }}"
+            {{- if .Values.tls.enabled }}
+            - name: AGENTKMS_TLS_CERT
+              value: {{ .Values.tls.certPath | quote }}
+            - name: AGENTKMS_TLS_KEY
+              value: {{ .Values.tls.keyPath | quote }}
+            - name: AGENTKMS_TLS_CA
+              value: {{ .Values.tls.caPath | quote }}
+            {{- end }}
           volumeMounts:
             - name: vault-token
               mountPath: /vault/secrets
@@ -81,37 +66,52 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            - name: policy
+              mountPath: /etc/agentkms/policy
+              readOnly: true
+            {{- if .Values.tls.enabled }}
+            - name: server-tls
+              mountPath: /etc/agentkms/tls
+              readOnly: true
+            {{- end }}
           livenessProbe:
-            httpGet:
-              path: /healthz
-              port: api
-              scheme: HTTP
-            initialDelaySeconds: 10
-            periodSeconds: 30
-            failureThreshold: 3
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
-            httpGet:
-              path: /readyz
-              port: api
-              scheme: HTTP
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
 
       volumes:
         - name: vault-token
-          emptyDir:
-            medium: Memory   # token lives only in memory, never on disk
+          secret:
+            secretName: {{ .Values.vaultToken.secretName }}
+            items:
+              - key: token
+                path: token
         - name: config
           configMap:
             name: {{ include "agentkms.fullname" . }}-config
         - name: tmp
           emptyDir: {}
-        {{- if .Values.vaultAgent.enabled }}
-        - name: vault-agent-config
+        - name: policy
           configMap:
-            name: {{ include "agentkms.fullname" . }}-vault-agent
+            name: {{ include "agentkms.fullname" . }}-policy
+        {{- if .Values.tls.enabled }}
+        - name: server-tls
+          projected:
+            sources:
+              - secret:
+                  name: {{ .Values.tls.serverSecretName }}
+                  items:
+                    - key: tls.crt
+                      path: tls.crt
+                    - key: tls.key
+                      path: tls.key
+              - secret:
+                  name: {{ .Values.tls.caSecretName }}
+                  items:
+                    - key: tls.crt
+                      path: ca.crt
         {{- end }}
 
       {{- with .Values.nodeSelector }}

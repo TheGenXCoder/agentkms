@@ -238,4 +238,7 @@ func (s *Server) registerRoutes() {
 
 	// FO-B2: credential revocation
 	s.mux.HandleFunc("POST /credentials/revoke", wrap(s.handleRevokeCredential))
+
+	// FO-C2: detection enrichment
+	s.mux.HandleFunc("POST /credentials/detect", wrap(s.handleDetectCredential))
 }

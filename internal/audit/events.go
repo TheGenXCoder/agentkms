@@ -241,6 +241,11 @@ type AuditEvent struct {
 	// Enables correlation between vend and use events without full Scope
 	// parsing.  Empty when Scope is nil.
 	ScopeHash string `json:"scope_hash,omitempty"`
+
+	// InvalidationReason records why a credential was revoked or invalidated.
+	// Conventional values: "revoked-user", "revoked-admin", "expired",
+	// "compromised".  Empty for non-revocation operations.
+	InvalidationReason string `json:"invalidation_reason,omitempty"`
 }
 
 // ── EventID generation ────────────────────────────────────────────────────────

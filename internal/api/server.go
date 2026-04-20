@@ -226,4 +226,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /metadata/{path...}", wrap(s.handleGetMetadata))
 	s.mux.HandleFunc("DELETE /secrets/{path...}", wrap(s.handleDeleteSecret))
 	s.mux.HandleFunc("GET /secrets/{path...}", wrap(s.handleGetSecretOrHistory))
+
+	// FO-B2: credential revocation
+	s.mux.HandleFunc("POST /credentials/revoke", wrap(s.handleRevokeCredential))
 }

@@ -65,6 +65,8 @@ type ScopeBounds struct {
 
 // ScopeValidator validates structural correctness and performs policy
 // narrowing for a specific Kind.  Required per-Kind.
+// //blog:part-5 references this interface in the dynamic-secrets architecture section.
+// //blog:part-7 references this interface in the "plugin API" section.
 type ScopeValidator interface {
 	// Kind returns the discriminator this validator owns.
 	Kind() string
@@ -81,6 +83,7 @@ type ScopeValidator interface {
 
 // ScopeAnalyzer assesses risk at vend time.  Optional per-Kind.
 // Flags anomalies recorded in audit but does not block vending.
+// //blog:part-7 references this interface in the "plugin API" section.
 type ScopeAnalyzer interface {
 	Kind() string
 
@@ -106,6 +109,7 @@ const (
 
 // ScopeSerializer converts a Scope to the provider-native request format.
 // Required per-Kind that vends real upstream credentials.
+// //blog:part-7 references this interface in the "plugin API" section.
 type ScopeSerializer interface {
 	Kind() string
 

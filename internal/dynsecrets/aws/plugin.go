@@ -20,6 +20,8 @@ var (
 // Plugin implements credentials.ScopeValidator for Kind="aws-sts".
 // It validates scope structure, narrows against policy bounds, and
 // (in production) calls AWS STS AssumeRole to issue temporary credentials.
+// //blog:part-5 references Kind="aws-sts" in the "mint, use, expire" section.
+// //blog:part-7 references this plugin as the "dynsecrets-aws" bundled plugin.
 type Plugin struct {
 	roleARN string
 	region  string

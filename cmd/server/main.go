@@ -329,6 +329,8 @@ func main() {
 		Env:     *env,
 	}
 	ui.RegisterHandlers(mux, uiHandlers, apiServer.AuthMiddleware)
+	// //blog:part-5 references POST /auth/session in claims (api_routes).
+	// //blog:part-6 references GET /auth/certificate/crl in claims (api_routes).
 	mux.HandleFunc("POST /auth/session", authHandler.Session)
 	mux.HandleFunc("POST /auth/refresh", authHandler.Refresh)
 	mux.HandleFunc("POST /auth/revoke", authHandler.Revoke)

@@ -25,6 +25,8 @@ var knownPermissions = map[string]bool{
 // Plugin implements credentials.ScopeValidator for Kind="github-pat".
 // It validates scope structure, narrows against policy bounds, and
 // (in production) vends ephemeral GitHub installation access tokens.
+// //blog:part-5 references Kind="github-pat" in the "GitHub App tokens" section.
+// //blog:part-7 references this plugin as the "dynsecrets-github" bundled plugin.
 type Plugin struct {
 	appID          int64
 	privateKey     *rsa.PrivateKey

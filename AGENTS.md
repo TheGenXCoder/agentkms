@@ -67,7 +67,47 @@ agentkms/
 1. Justification commit message citing what was evaluated and why this dep specifically.
 2. An entry below.
 
-### Approved deps
+### Build-time dependencies (not in go.mod / not runtime)
+
+These tools are required to regenerate code from `.proto` files. They are **not**
+runtime dependencies and do not appear in `go.mod`. Install them once per dev machine.
+
+- `protoc` — protobuf compiler. Install: `brew install protobuf`
+  Required by: multi-language plugin support (Go, Python, Rust plugins must share
+  the same wire format). Using standard protobuf binary encoding instead of a
+  custom JSON codec is the only way to make Python plugins work "with zero changes
+  on the Python side" (Blog Part 7 promise).
+
+- `protoc-gen-go` — Go protobuf code generator.
+  Install: `go install google.golang.org/protobuf/cmd/protoc-gen-go@latest`
+
+- `protoc-gen-go-grpc` — Go gRPC service stub generator.
+  Install: `go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest`
+
+To regenerate stubs after changing `api/plugin/v1/plugin.proto`:
+
+```bash
+protoc \
+  -I /opt/homebrew/Cellar/protobuf/34.1/include \
+  -I api/plugin/v1 \
+  --go_out=api/plugin/v1 \
+  --go_opt=paths=source_relative \
+  --go-grpc_out=api/plugin/v1 \
+  --go-grpc_opt=paths=source_relative \
+  api/plugin/v1/plugin.proto
+```
+
+Commit `plugin.pb.go` and `plugin_grpc.pb.go` — they are generated artifacts that
+belong in the repo so consumers do not need protoc to use the package.
+
+**Historical note:** `api/plugin/v1/plugin.go` previously contained a hand-written
+`jsonCodec` that overrode gRPC's default "proto" codec with JSON encoding to avoid
+the protoc build-time dep. That codec was removed in the commit that added this
+entry because it broke Python interop — Python plugins produced by `grpc_tools.protoc`
+use standard protobuf binary, not JSON. The custom codec made the "zero Python-side
+changes" promise false. Standard protoc stubs are the correct solution.
+
+### Approved runtime deps
 
 - `github.com/hashicorp/go-plugin` — P-01, plugin subprocess host. Adopted v1.6.2 in v0.3.1.
   Saves ~2 weeks of reimplementing subprocess lifecycle, address negotiation, magic cookie

@@ -64,7 +64,9 @@ var handshakeConfig = goplugin.HandshakeConfig{
 }
 
 func main() {
-	// The JSON codec is registered by importing the pluginv1 package (init()).
+	// Wire encoding is standard protobuf binary (proto3).
+	// hashicorp/go-plugin uses DefaultGRPCServer which registers the default
+	// protobuf codec — no custom codec registration needed.
 	goplugin.Serve(&goplugin.ServeConfig{
 		HandshakeConfig: handshakeConfig,
 		Plugins: goplugin.PluginSet{

@@ -40,9 +40,11 @@ import (
 // mockAuditStore implements webhooks.AuditStore for tests.
 // Callers seed it with CredentialRecords; FindByTokenHash does an in-memory scan.
 type mockAuditStore struct {
-	mu      sync.Mutex
-	records []webhooks.CredentialRecord
-	findErr error // if non-nil, returned by FindByTokenHash
+	mu                sync.Mutex
+	records           []webhooks.CredentialRecord
+	findErr           error // if non-nil, returned by FindByTokenHash
+	updateErr         error // if non-nil, returned by UpdateInvalidatedAt
+	updateCallCount   int
 }
 
 func (s *mockAuditStore) FindByTokenHash(_ context.Context, hash string) (*webhooks.CredentialRecord, error) {
@@ -57,6 +59,31 @@ func (s *mockAuditStore) FindByTokenHash(_ context.Context, hash string) (*webho
 		}
 	}
 	return nil, webhooks.ErrCredentialNotFound
+}
+
+// UpdateInvalidatedAt persists the InvalidatedAt timestamp for the credential
+// identified by credentialUUID. Maintains in-memory mutation semantics via the
+// explicit method, matching what a durable store would do.
+func (s *mockAuditStore) UpdateInvalidatedAt(_ context.Context, credentialUUID string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.updateCallCount++
+	if s.updateErr != nil {
+		return s.updateErr
+	}
+	for i := range s.records {
+		if s.records[i].CredentialUUID == credentialUUID {
+			s.records[i].InvalidatedAt = at
+			return nil
+		}
+	}
+	return nil
+}
+
+func (s *mockAuditStore) getUpdateCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.updateCallCount
 }
 
 func (s *mockAuditStore) seed(r webhooks.CredentialRecord) {
@@ -668,6 +695,114 @@ func TestOrchestration_Idempotency_DuplicateAlert(t *testing.T) {
 	if aud.count() != 2 {
 		t.Errorf("audit event count = %d, want 2 (one per ProcessAlert call)", aud.count())
 	}
+}
+
+// TestOrchestration_Idempotency_DurableStoreSemantics verifies that idempotency
+// works even when FindByTokenHash returns a fresh value on each call — simulating
+// durable-store semantics (disk/DB/NDJSON) where pointer-mutation of a previously
+// returned record is NOT propagated to subsequent reads.
+//
+// The test patches mockAuditStore so that FindByTokenHash always returns a
+// freshly-constructed copy of the stored record (as a durable store would), not
+// a pointer to the live slice element. Idempotency must be maintained via the
+// explicit UpdateInvalidatedAt path, not via pointer mutation.
+func TestOrchestration_Idempotency_DurableStoreSemantics(t *testing.T) {
+	store := &durableStyleAuditStore{}
+	store.seed(liveRecord())
+
+	revoker := &mockRevoker{
+		supportsRevocation: true,
+		revokeResult:       revocation.RevokeResult{Revoked: true},
+	}
+	aud := &orchestratorAuditor{}
+	notifier := &capturingNotifier{}
+
+	orch := newOrchestrator(t, store, revoker, aud, notifier)
+
+	alert := &webhooks.GitHubSecretAlert{
+		TokenHash:  orchTokenHash,
+		DetectedAt: time.Now().UTC(),
+	}
+
+	// First call — should route to LiveRevokedBranch and call UpdateInvalidatedAt.
+	result1, err := orch.ProcessAlert(context.Background(), alert)
+	if err != nil {
+		t.Fatalf("first ProcessAlert error: %v", err)
+	}
+	if result1.Branch != webhooks.LiveRevokedBranch {
+		t.Errorf("first call Branch = %v, want LiveRevokedBranch", result1.Branch)
+	}
+	if store.getUpdateCallCount() != 1 {
+		t.Errorf("UpdateInvalidatedAt call count after first alert = %d, want 1", store.getUpdateCallCount())
+	}
+
+	// Second call — FindByTokenHash now deserialises a fresh copy of the record.
+	// Because UpdateInvalidatedAt was called by the first ProcessAlert, the
+	// persisted record has InvalidatedAt set and the second call must route to
+	// ExpiredBranch — NOT re-enter LiveRevokedBranch.
+	result2, err := orch.ProcessAlert(context.Background(), alert)
+	if err != nil {
+		t.Fatalf("second ProcessAlert error: %v", err)
+	}
+	if result2.Branch != webhooks.ExpiredBranch {
+		t.Errorf("second call Branch = %v, want ExpiredBranch (durable-store idempotency)", result2.Branch)
+	}
+
+	// Revoke must only have been called once across both ProcessAlert invocations.
+	if aud.count() != 2 {
+		t.Errorf("audit event count = %d, want 2 (one per ProcessAlert call)", aud.count())
+	}
+	if store.getUpdateCallCount() != 1 {
+		t.Errorf("UpdateInvalidatedAt should have been called exactly once; got %d", store.getUpdateCallCount())
+	}
+}
+
+// durableStyleAuditStore simulates a durable-backend audit store: FindByTokenHash
+// always returns a fresh copy of the record (value semantics), never a pointer to
+// the live slice element. Idempotency can only work via UpdateInvalidatedAt.
+type durableStyleAuditStore struct {
+	mu              sync.Mutex
+	records         []webhooks.CredentialRecord
+	updateCallCount int
+}
+
+func (s *durableStyleAuditStore) FindByTokenHash(_ context.Context, hash string) (*webhooks.CredentialRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.records {
+		if r.ProviderTokenHash == hash {
+			// Return a copy, not a pointer to the slice element.
+			// This matches durable-store behaviour: each read deserialises fresh.
+			copy := r
+			return &copy, nil
+		}
+	}
+	return nil, webhooks.ErrCredentialNotFound
+}
+
+func (s *durableStyleAuditStore) UpdateInvalidatedAt(_ context.Context, credentialUUID string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.updateCallCount++
+	for i := range s.records {
+		if s.records[i].CredentialUUID == credentialUUID {
+			s.records[i].InvalidatedAt = at
+			return nil
+		}
+	}
+	return nil
+}
+
+func (s *durableStyleAuditStore) getUpdateCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.updateCallCount
+}
+
+func (s *durableStyleAuditStore) seed(r webhooks.CredentialRecord) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.records = append(s.records, r)
 }
 
 // TestOrchestration_HMACValidated_MalformedAlertBody verifies that a

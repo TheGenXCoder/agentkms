@@ -23,16 +23,23 @@ type CredentialRecord = revocation.CredentialRecord
 // AuditStore is the read/write interface the orchestrator uses to look up
 // credentials and update their invalidation state.
 //
-// v0.3.1: backed by an in-memory slice (same pattern as forensics.Inspector).
-// FindByTokenHash returns a pointer to the underlying record so the orchestrator
-// can mutate InvalidatedAt for idempotency without a separate UpdateInvalidatedAt
-// round-trip; this satisfies the idempotency tests without adding a method that
-// the test mock does not implement.
+// Implementations must be safe for durable backends (disk, DB, NDJSON) as well
+// as in-memory stores. The orchestrator never relies on pointer-mutation of a
+// returned record for idempotency; it always calls UpdateInvalidatedAt explicitly
+// so that the durable store can persist the change before an audit event is
+// emitted.
 type AuditStore interface {
 	// FindByTokenHash returns the CredentialRecord whose ProviderTokenHash
 	// matches hash. Returns ErrCredentialNotFound if not found.
-	// The returned pointer is to the live record; callers may mutate it.
+	// Implementations must NOT assume the caller will mutate the returned value
+	// to persist state — use UpdateInvalidatedAt for that.
 	FindByTokenHash(ctx context.Context, hash string) (*CredentialRecord, error)
+
+	// UpdateInvalidatedAt persists the InvalidatedAt timestamp for the
+	// credential identified by credentialUUID. Must be called (and succeed)
+	// before emitting the audit event so that durable stores reflect the
+	// change even if the process crashes between revocation and audit logging.
+	UpdateInvalidatedAt(ctx context.Context, credentialUUID string, at time.Time) error
 }
 
 // Notifier sends human-readable alerts after orchestration completes.
@@ -207,9 +214,20 @@ func (o *AlertOrchestrator) handleLiveRevokedBranch(ctx context.Context, record 
 		}
 		result.OrchestratorError = orchestratorErr
 	} else {
-		// Revocation succeeded — set InvalidatedAt on the live record pointer
-		// so that duplicate alerts route to ExpiredBranch (idempotency).
-		record.InvalidatedAt = time.Now().UTC()
+		// Revocation succeeded — persist InvalidatedAt via the store interface
+		// BEFORE emitting the audit event. This ensures durable backends (disk,
+		// DB, NDJSON) commit the state change so a second webhook arriving for
+		// the same credential will see InvalidatedAt != zero from a fresh read
+		// and route to ExpiredBranch — not re-enter the live-revoked branch.
+		// Pointer-mutation of the returned record is NOT sufficient for durable
+		// stores because FindByTokenHash deserialises a fresh struct on each call.
+		now := time.Now().UTC()
+		if updateErr := o.store.UpdateInvalidatedAt(ctx, record.CredentialUUID, now); updateErr != nil {
+			// Non-fatal: log the update failure but continue to emit the audit event.
+			orchestratorErr = fmt.Errorf("webhooks: UpdateInvalidatedAt failed: %w", updateErr)
+			result.OrchestratorError = orchestratorErr
+			outcome = audit.OutcomeError
+		}
 	}
 
 	ev, err := audit.New()
@@ -301,6 +319,8 @@ func (h *GitHubWebhookHandler) SetOrchestrator(orch *AlertOrchestrator) {
 // GitHub retries webhook deliveries on non-2xx responses. The handler returns:
 //   - 401 Unauthorized  — HMAC validation failed.
 //   - 422 Unprocessable — payload parsed but orchestration rejected it (bad alert).
+//   - 202 Accepted      — webhook received but credential not in audit ledger
+//     (unknown token alert forwarded to notifier; no retryable error).
 //   - 200 OK            — orchestration completed (including partial failures
 //     where OrchestratorError is set; GitHub must not retry these).
 func (h *GitHubWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -327,13 +347,18 @@ func (h *GitHubWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 	result, orchErr := h.orchestrator.ProcessAlert(r.Context(), alert)
 	_ = result
-	if orchErr != nil && !errors.Is(orchErr, ErrCredentialNotFound) {
+	if orchErr != nil {
+		if errors.Is(orchErr, ErrCredentialNotFound) {
+			// Credential not in ledger — per design spec return 202 Accepted.
+			// GitHub will not retry 2xx responses. 202 signals "received but not
+			// actionable" which is semantically correct for an unknown token alert.
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		// Orchestration failed in a way GitHub should retry (e.g. audit store down).
 		http.Error(w, "orchestration error", http.StatusInternalServerError)
 		return
 	}
 
-	// Return 200 for all successful orchestration paths including credential-not-found
-	// (202 is semantically correct but tests expect 200 for the end-to-end happy path).
 	w.WriteHeader(http.StatusOK)
 }

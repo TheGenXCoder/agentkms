@@ -115,6 +115,19 @@ type ScopeSerializer interface {
 	ProviderRequest(ctx context.Context, s Scope) ([]byte, error)
 }
 
+// CredentialVender issues real upstream credentials given a serialized scope.
+// Optional per-Kind — only needed for plugins that call upstream provider APIs.
+// The CredentialVender pipeline step is wired in v0.3.2; this interface lands
+// in v0.3.1 so all four services are subprocess-connectable.
+type CredentialVender interface {
+	// Kind returns the discriminator this vender owns.
+	Kind() string
+
+	// Vend issues a short-lived credential scoped to s.
+	// Returns a VendedCredential with secret bytes, UUID, hash, and TTL.
+	Vend(ctx context.Context, s Scope) (*VendedCredential, error)
+}
+
 // ── Canonical hash ──────────────────────────────────────────────────────────
 
 // ScopeHash returns the SHA-256 hex digest of the canonical JSON

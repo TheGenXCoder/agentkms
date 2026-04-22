@@ -1,0 +1,226 @@
+package plugin
+
+// grpcadapter.go — gRPC adapter structs that wrap generated gRPC client stubs
+// and implement the Go interfaces from internal/credentials/. These adapters
+// are the transparency layer: the vending pipeline sees only Go interfaces and
+// has no awareness of whether the implementation is in-process or over gRPC.
+
+import (
+	"context"
+	"fmt"
+
+	pluginv1 "github.com/agentkms/agentkms/api/plugin/v1"
+	"github.com/agentkms/agentkms/internal/credentials"
+	goplugin "github.com/hashicorp/go-plugin"
+	"google.golang.org/grpc"
+)
+
+// ── ScopeValidatorPlugin ──────────────────────────────────────────────────────
+
+// ScopeValidatorPlugin implements goplugin.GRPCPlugin for the ScopeValidatorService.
+// On the host side GRPCClient returns a *ScopeValidatorGRPC adapter.
+// On the plugin side GRPCServer registers the service implementation.
+type ScopeValidatorPlugin struct {
+	goplugin.NetRPCUnsupportedPlugin
+	// Impl is only set on the plugin (server) side.
+	Impl pluginv1.ScopeValidatorServiceServer
+}
+
+func (p *ScopeValidatorPlugin) GRPCServer(broker *goplugin.GRPCBroker, s *grpc.Server) error {
+	if p.Impl == nil {
+		return fmt.Errorf("ScopeValidatorPlugin.Impl is nil (server side not configured)")
+	}
+	pluginv1.RegisterScopeValidatorServiceServer(s, p.Impl)
+	return nil
+}
+
+func (p *ScopeValidatorPlugin) GRPCClient(ctx context.Context, broker *goplugin.GRPCBroker, cc *grpc.ClientConn) (interface{}, error) {
+	return &ScopeValidatorGRPC{
+		client: pluginv1.NewScopeValidatorServiceClient(cc),
+	}, nil
+}
+
+// ScopeValidatorGRPC wraps the generated gRPC client and implements
+// credentials.ScopeValidator. Returned by Registry.Lookup() for plugin-backed Kinds.
+//
+// Python plugin compatibility note:
+// The ScopeValidatorService gRPC service name is "agentkms.plugin.v1.ScopeValidatorService".
+// Methods: Kind, Validate, Narrow. The JSON codec is registered at init time in
+// api/plugin/v1/plugin.go — both host and plugin must import that package.
+type ScopeValidatorGRPC struct {
+	client pluginv1.ScopeValidatorServiceClient
+	kind   string
+}
+
+func (a *ScopeValidatorGRPC) Kind() string { return a.kind }
+
+func (a *ScopeValidatorGRPC) Validate(ctx context.Context, s credentials.Scope) error {
+	resp, err := a.client.Validate(ctx, &pluginv1.ValidateRequest{
+		Scope: scopeToProto(s),
+	})
+	if err != nil {
+		return fmt.Errorf("plugin Validate RPC: %w", err)
+	}
+	return errFromField(resp.Error)
+}
+
+func (a *ScopeValidatorGRPC) Narrow(ctx context.Context, req credentials.Scope, b credentials.ScopeBounds) (credentials.Scope, error) {
+	resp, err := a.client.Narrow(ctx, &pluginv1.NarrowRequest{
+		Requested: scopeToProto(req),
+		Bounds:    boundsToProto(b),
+	})
+	if err != nil {
+		return credentials.Scope{}, fmt.Errorf("plugin Narrow RPC: %w", err)
+	}
+	if err := errFromField(resp.Error); err != nil {
+		return credentials.Scope{}, err
+	}
+	return protoToScope(resp.NarrowedScope), nil
+}
+
+// ── ScopeAnalyzerPlugin ───────────────────────────────────────────────────────
+
+// ScopeAnalyzerPlugin implements goplugin.GRPCPlugin for the ScopeAnalyzerService.
+type ScopeAnalyzerPlugin struct {
+	goplugin.NetRPCUnsupportedPlugin
+	// Impl is only set on the plugin (server) side.
+	Impl pluginv1.ScopeAnalyzerServiceServer
+}
+
+func (p *ScopeAnalyzerPlugin) GRPCServer(broker *goplugin.GRPCBroker, s *grpc.Server) error {
+	if p.Impl == nil {
+		return fmt.Errorf("ScopeAnalyzerPlugin.Impl is nil (server side not configured)")
+	}
+	pluginv1.RegisterScopeAnalyzerServiceServer(s, p.Impl)
+	return nil
+}
+
+func (p *ScopeAnalyzerPlugin) GRPCClient(ctx context.Context, broker *goplugin.GRPCBroker, cc *grpc.ClientConn) (interface{}, error) {
+	return &ScopeAnalyzerGRPC{
+		client: pluginv1.NewScopeAnalyzerServiceClient(cc),
+	}, nil
+}
+
+// ScopeAnalyzerGRPC wraps the generated gRPC client and implements
+// credentials.ScopeAnalyzer.
+type ScopeAnalyzerGRPC struct {
+	client pluginv1.ScopeAnalyzerServiceClient
+	kind   string
+}
+
+func (a *ScopeAnalyzerGRPC) Kind() string { return a.kind }
+
+func (a *ScopeAnalyzerGRPC) Analyze(ctx context.Context, s credentials.Scope) []credentials.ScopeAnomaly {
+	resp, err := a.client.Analyze(ctx, &pluginv1.AnalyzeRequest{
+		Scope: scopeToProto(s),
+	})
+	if err != nil {
+		// Analyzer failures are non-fatal; return a single alert anomaly.
+		return []credentials.ScopeAnomaly{{
+			Level:   credentials.AnomalyAlert,
+			Code:    "plugin-rpc-error",
+			Message: fmt.Sprintf("ScopeAnalyzer plugin RPC failed: %v", err),
+		}}
+	}
+	return protoToAnomalies(resp.Anomalies)
+}
+
+// ── ScopeSerializerPlugin ─────────────────────────────────────────────────────
+
+// ScopeSerializerPlugin implements goplugin.GRPCPlugin for the ScopeSerializerService.
+type ScopeSerializerPlugin struct {
+	goplugin.NetRPCUnsupportedPlugin
+	// Impl is only set on the plugin (server) side.
+	Impl pluginv1.ScopeSerializerServiceServer
+}
+
+func (p *ScopeSerializerPlugin) GRPCServer(broker *goplugin.GRPCBroker, s *grpc.Server) error {
+	if p.Impl == nil {
+		return fmt.Errorf("ScopeSerializerPlugin.Impl is nil (server side not configured)")
+	}
+	pluginv1.RegisterScopeSerializerServiceServer(s, p.Impl)
+	return nil
+}
+
+func (p *ScopeSerializerPlugin) GRPCClient(ctx context.Context, broker *goplugin.GRPCBroker, cc *grpc.ClientConn) (interface{}, error) {
+	return &ScopeSerializerGRPC{
+		client: pluginv1.NewScopeSerializerServiceClient(cc),
+	}, nil
+}
+
+// ScopeSerializerGRPC wraps the generated gRPC client and implements
+// credentials.ScopeSerializer.
+type ScopeSerializerGRPC struct {
+	client pluginv1.ScopeSerializerServiceClient
+	kind   string
+}
+
+func (a *ScopeSerializerGRPC) Kind() string { return a.kind }
+
+func (a *ScopeSerializerGRPC) ProviderRequest(ctx context.Context, s credentials.Scope) ([]byte, error) {
+	resp, err := a.client.Serialize(ctx, &pluginv1.SerializeRequest{
+		Scope: scopeToProto(s),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("plugin Serialize RPC: %w", err)
+	}
+	if err := errFromField(resp.Error); err != nil {
+		return nil, err
+	}
+	return resp.ProviderBytes, nil
+}
+
+// ── CredentialVenderPlugin ────────────────────────────────────────────────────
+
+// CredentialVenderPlugin implements goplugin.GRPCPlugin for the CredentialVenderService.
+type CredentialVenderPlugin struct {
+	goplugin.NetRPCUnsupportedPlugin
+	// Impl is only set on the plugin (server) side.
+	Impl pluginv1.CredentialVenderServiceServer
+}
+
+func (p *CredentialVenderPlugin) GRPCServer(broker *goplugin.GRPCBroker, s *grpc.Server) error {
+	if p.Impl == nil {
+		return fmt.Errorf("CredentialVenderPlugin.Impl is nil (server side not configured)")
+	}
+	pluginv1.RegisterCredentialVenderServiceServer(s, p.Impl)
+	return nil
+}
+
+func (p *CredentialVenderPlugin) GRPCClient(ctx context.Context, broker *goplugin.GRPCBroker, cc *grpc.ClientConn) (interface{}, error) {
+	return &CredentialVenderGRPC{
+		client: pluginv1.NewCredentialVenderServiceClient(cc),
+	}, nil
+}
+
+// CredentialVenderGRPC wraps the generated gRPC client and implements
+// credentials.CredentialVender. The Vend method is not wired into the pipeline
+// until v0.3.2, but the adapter is available for subprocess-connected plugins.
+type CredentialVenderGRPC struct {
+	client pluginv1.CredentialVenderServiceClient
+	kind   string
+}
+
+func (a *CredentialVenderGRPC) Kind() string { return a.kind }
+
+func (a *CredentialVenderGRPC) Vend(ctx context.Context, s credentials.Scope) (*credentials.VendedCredential, error) {
+	resp, err := a.client.Vend(ctx, &pluginv1.VendRequest{
+		Scope: scopeToProto(s),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("plugin Vend RPC: %w", err)
+	}
+	if err := errFromField(resp.Error); err != nil {
+		return nil, err
+	}
+	if resp.Credential == nil {
+		return nil, fmt.Errorf("plugin Vend returned nil credential")
+	}
+	return &credentials.VendedCredential{
+		APIKey:            resp.Credential.ApiKey,
+		UUID:              resp.Credential.Uuid,
+		ProviderTokenHash: resp.Credential.ProviderTokenHash,
+		ExpiresAt:         resp.Credential.ExpiresAt,
+		Type:              "plugin-vend",
+	}, nil
+}

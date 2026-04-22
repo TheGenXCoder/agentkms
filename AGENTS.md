@@ -59,6 +59,23 @@ agentkms/
 - No `t.Skip()` without a linked issue and expiry date.
 - Integration tests use a local `agentkms-dev` instance, not mocks of the crypto backend.
 
+## Dependency Policy
+
+**Foundation layer (credentials, crypto, audit, policy engine) stays zero-dep.** Only the Go standard library.
+
+**Infrastructure layers** (plugin host, observability, webhooks, external integrations) may adopt battle-tested deps when necessary. Each addition requires:
+1. Justification commit message citing what was evaluated and why this dep specifically.
+2. An entry below.
+
+### Approved deps
+
+- `github.com/hashicorp/go-plugin` — P-01, plugin subprocess host. Adopted v1.6.2 in v0.3.1.
+  Saves ~2 weeks of reimplementing subprocess lifecycle, address negotiation, magic cookie
+  handshake, and health checking. Used by Terraform, Vault, Packer. The Python reference
+  plugin already speaks this protocol. Alternatives evaluated: raw gRPC (no handshake
+  protocol), net/rpc (deprecated path, no gRPC). go-plugin was the only choice that made
+  the Python plugin immediately connectable without Python-side changes.
+
 ## Validation Rule — Independent Review Required
 **Never validate your own work.** After completing any task, an independent Pi session running a different model must review the implementation before the backlog item is marked `[x]`. Self-review has the same blind spots as the code that produced the bug.
 

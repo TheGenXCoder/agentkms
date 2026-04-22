@@ -24,6 +24,7 @@ type GitHubSecretAlert struct {
 // GitHubWebhookHandler handles GitHub secret scanning webhook payloads.
 type GitHubWebhookHandler struct {
 	webhookSecret string
+	orchestrator  *AlertOrchestrator
 }
 
 // NewGitHubWebhookHandler creates a new handler with the given webhook secret

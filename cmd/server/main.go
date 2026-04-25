@@ -29,6 +29,7 @@ import (
 	"github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
+	"github.com/agentkms/agentkms/internal/credentials/binding"
 	"github.com/agentkms/agentkms/internal/policy"
 	"github.com/agentkms/agentkms/internal/ui"
 	"github.com/agentkms/agentkms/pkg/tlsutil"
@@ -315,7 +316,10 @@ func main() {
 	if *vaultAddr != "" {
 		kv := credentials.NewOpenBaoKV(*vaultAddr, vaultToken, vaultTLS)
 		apiServer.SetVender(credentials.NewVender(kv, "kv"))
-		slog.Info("credential vender ready")
+		// Wire registry writer and binding store now that OpenBaoKV implements KVWriter.
+		apiServer.SetRegistryWriter(kv)
+		apiServer.SetBindingStore(binding.NewKVBindingStore(kv))
+		slog.Info("credential vender, registry writer, and binding store ready")
 	}
 
 	mux := http.NewServeMux()

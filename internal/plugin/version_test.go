@@ -63,20 +63,21 @@ func TestVersion_RegisterWithInfo_TooNew(t *testing.T) {
 	}
 }
 
-func TestVersion_RegisterWithInfo_TooOld(t *testing.T) {
+func TestVersion_RegisterWithInfo_OlderVersionAccepted(t *testing.T) {
+	// Forward compatibility fix (OQ-8 / strict-equality bug):
+	// A plugin built against an older API version (APIVersion < CurrentAPIVersion)
+	// is now accepted by a newer host.  This test replaces the old "TooOld" test
+	// which expected rejection — that behaviour was the bug.
 	if CurrentAPIVersion <= 1 {
-		t.Skip("CurrentAPIVersion is 1; cannot test outdated version without a version < 1")
+		t.Skip("CurrentAPIVersion is 1; cannot test older version without a version < 1")
 	}
 	r := NewRegistry()
 	info := newTestPluginInfo("github-pat", CurrentAPIVersion-1)
 	v := &mockScopeValidator{kind: "github-pat"}
 
 	err := r.RegisterWithInfo(info, v)
-	if err == nil {
-		t.Fatal("RegisterWithInfo with APIVersion < CurrentAPIVersion should return error, got nil")
-	}
-	if !strings.Contains(err.Error(), "outdated") {
-		t.Errorf("error should mention 'outdated API version', got: %v", err)
+	if err != nil {
+		t.Fatalf("RegisterWithInfo with APIVersion < CurrentAPIVersion should be accepted (forward compat), got error: %v", err)
 	}
 }
 

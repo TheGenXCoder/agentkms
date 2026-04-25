@@ -109,6 +109,32 @@ message KindResponse {
   string kind = 1;
 }
 
+// ── Capabilities RPCs ─────────────────────────────────────────────────────────
+
+// CapabilitiesRequest is the input to any Capabilities RPC.  Intentionally empty.
+// The host sends this at startup after Kind() to negotiate supported features.
+message CapabilitiesRequest {}
+
+// CapabilitiesResponse is returned by each service's Capabilities RPC.
+// It lists the feature tokens the plugin supports and the API version it was
+// built against.  The host stores this on the adapter struct for later policy
+// decisions (e.g. require capability "revoke" before dispatching Revoke calls).
+message CapabilitiesResponse {
+  // capabilities is the list of feature tokens this plugin service supports.
+  // Examples: "health", "revoke", "audit", "streaming".
+  // An empty list means no optional features beyond the baseline RPCs.
+  repeated string capabilities = 1;
+
+  // api_version is the plugin API version this implementation targets
+  // (numeric, e.g. 1). Used by the host for minimum-version compatibility
+  // checks (host accepts any plugin where api_version >= host minimum).
+  uint32 api_version = 2;
+
+  // api_version_compat is a human-readable range string for display purposes
+  // only (e.g. ">=1").  Not used for programmatic checks.
+  string api_version_compat = 3;
+}
+
 // ── ScopeValidatorService RPCs ───────────────────────────────────────────────
 
 // ValidateRequest is the input to ScopeValidatorService.Validate.
@@ -189,6 +215,10 @@ service ScopeValidatorService {
   // Kind returns the scope Kind this plugin handles.
   rpc Kind(KindRequest) returns (KindResponse);
 
+  // Capabilities returns the feature set and API version this service supports.
+  // Called once at startup after Kind().
+  rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
+
   // Validate checks that the scope has a well-formed Params shape
   // for this Kind.  Must not mutate the scope.
   rpc Validate(ValidateRequest) returns (ValidateResponse);
@@ -206,6 +236,10 @@ service ScopeAnalyzerService {
   // Kind returns the scope Kind this plugin handles.
   rpc Kind(KindRequest) returns (KindResponse);
 
+  // Capabilities returns the feature set and API version this service supports.
+  // Called once at startup after Kind().
+  rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
+
   // Analyze returns anomalies describing risky scope aspects.
   // An empty list means no risk signals were detected.
   rpc Analyze(AnalyzeRequest) returns (AnalyzeResponse);
@@ -218,6 +252,10 @@ service ScopeSerializerService {
   // Kind returns the scope Kind this plugin handles.
   rpc Kind(KindRequest) returns (KindResponse);
 
+  // Capabilities returns the feature set and API version this service supports.
+  // Called once at startup after Kind().
+  rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
+
   // Serialize converts the scope to the provider-native format
   // (AWS IAM policy document, GitHub permissions object, etc.).
   rpc Serialize(SerializeRequest) returns (SerializeResponse);
@@ -229,6 +267,10 @@ service ScopeSerializerService {
 service CredentialVenderService {
   // Kind returns the scope Kind this plugin handles.
   rpc Kind(KindRequest) returns (KindResponse);
+
+  // Capabilities returns the feature set and API version this service supports.
+  // Called once at startup after Kind().
+  rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
 
   // Vend issues a credential scoped to the provided Scope.
   // The returned VendedCredential holds the secret bytes, a UUID for

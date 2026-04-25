@@ -19,6 +19,13 @@ type PluginInfo struct {
 
 // RegisterWithInfo registers a plugin with full metadata including API version.
 // Returns error if API version is incompatible.
+//
+// Version compatibility policy (fix for strict-equality bug):
+//   - Plugin APIVersion == 0: error (undeclared version).
+//   - Plugin APIVersion > CurrentAPIVersion: error (plugin requires a newer host).
+//   - Plugin APIVersion >= 1 and <= CurrentAPIVersion: accepted.
+//     Forward compatibility: a plugin built against an older minor version of the
+//     API is accepted by a newer host (>= minimum check, not strict equality).
 func (r *Registry) RegisterWithInfo(info PluginInfo, validator credentials.ScopeValidator) error {
 	if info.APIVersion == 0 {
 		return fmt.Errorf("plugin %q did not declare API version", info.Kind)
@@ -26,9 +33,8 @@ func (r *Registry) RegisterWithInfo(info PluginInfo, validator credentials.Scope
 	if info.APIVersion > CurrentAPIVersion {
 		return fmt.Errorf("plugin %q requires newer API version %d (host supports %d)", info.Kind, info.APIVersion, CurrentAPIVersion)
 	}
-	if info.APIVersion < CurrentAPIVersion {
-		return fmt.Errorf("plugin %q uses outdated API version %d (host requires %d)", info.Kind, info.APIVersion, CurrentAPIVersion)
-	}
+	// Plugin APIVersion < CurrentAPIVersion is now accepted for forward compatibility.
+	// (Prior code rejected this with "outdated" — that was the bug.)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()

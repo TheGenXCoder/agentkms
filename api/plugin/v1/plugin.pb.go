@@ -526,6 +526,116 @@ func (x *KindResponse) GetKind() string {
 	return ""
 }
 
+// CapabilitiesRequest is the input to any Capabilities RPC.  Intentionally empty.
+// The host sends this at startup after Kind() to negotiate supported features.
+type CapabilitiesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CapabilitiesRequest) Reset() {
+	*x = CapabilitiesRequest{}
+	mi := &file_plugin_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CapabilitiesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CapabilitiesRequest) ProtoMessage() {}
+
+func (x *CapabilitiesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CapabilitiesRequest.ProtoReflect.Descriptor instead.
+func (*CapabilitiesRequest) Descriptor() ([]byte, []int) {
+	return file_plugin_proto_rawDescGZIP(), []int{7}
+}
+
+// CapabilitiesResponse is returned by each service's Capabilities RPC.
+// It lists the feature tokens the plugin supports and the API version it was
+// built against.  The host stores this on the adapter struct for later policy
+// decisions (e.g. require capability "revoke" before dispatching Revoke calls).
+type CapabilitiesResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// capabilities is the list of feature tokens this plugin service supports.
+	// Examples: "health", "revoke", "audit", "streaming".
+	// An empty list means no optional features beyond the baseline RPCs.
+	Capabilities []string `protobuf:"bytes,1,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
+	// api_version is the plugin API version this implementation targets
+	// (numeric, e.g. 1). Used by the host for minimum-version compatibility
+	// checks (host accepts any plugin where api_version >= host minimum).
+	ApiVersion uint32 `protobuf:"varint,2,opt,name=api_version,json=apiVersion,proto3" json:"api_version,omitempty"`
+	// api_version_compat is a human-readable range string for display purposes
+	// only (e.g. ">=1").  Not used for programmatic checks.
+	ApiVersionCompat string `protobuf:"bytes,3,opt,name=api_version_compat,json=apiVersionCompat,proto3" json:"api_version_compat,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *CapabilitiesResponse) Reset() {
+	*x = CapabilitiesResponse{}
+	mi := &file_plugin_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CapabilitiesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CapabilitiesResponse) ProtoMessage() {}
+
+func (x *CapabilitiesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CapabilitiesResponse.ProtoReflect.Descriptor instead.
+func (*CapabilitiesResponse) Descriptor() ([]byte, []int) {
+	return file_plugin_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CapabilitiesResponse) GetCapabilities() []string {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
+}
+
+func (x *CapabilitiesResponse) GetApiVersion() uint32 {
+	if x != nil {
+		return x.ApiVersion
+	}
+	return 0
+}
+
+func (x *CapabilitiesResponse) GetApiVersionCompat() string {
+	if x != nil {
+		return x.ApiVersionCompat
+	}
+	return ""
+}
+
 // ValidateRequest is the input to ScopeValidatorService.Validate.
 type ValidateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -536,7 +646,7 @@ type ValidateRequest struct {
 
 func (x *ValidateRequest) Reset() {
 	*x = ValidateRequest{}
-	mi := &file_plugin_proto_msgTypes[7]
+	mi := &file_plugin_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -548,7 +658,7 @@ func (x *ValidateRequest) String() string {
 func (*ValidateRequest) ProtoMessage() {}
 
 func (x *ValidateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[7]
+	mi := &file_plugin_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -561,7 +671,7 @@ func (x *ValidateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateRequest.ProtoReflect.Descriptor instead.
 func (*ValidateRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{7}
+	return file_plugin_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ValidateRequest) GetScope() *Scope {
@@ -583,7 +693,7 @@ type ValidateResponse struct {
 
 func (x *ValidateResponse) Reset() {
 	*x = ValidateResponse{}
-	mi := &file_plugin_proto_msgTypes[8]
+	mi := &file_plugin_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -595,7 +705,7 @@ func (x *ValidateResponse) String() string {
 func (*ValidateResponse) ProtoMessage() {}
 
 func (x *ValidateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[8]
+	mi := &file_plugin_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -608,7 +718,7 @@ func (x *ValidateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateResponse.ProtoReflect.Descriptor instead.
 func (*ValidateResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{8}
+	return file_plugin_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ValidateResponse) GetError() string {
@@ -629,7 +739,7 @@ type NarrowRequest struct {
 
 func (x *NarrowRequest) Reset() {
 	*x = NarrowRequest{}
-	mi := &file_plugin_proto_msgTypes[9]
+	mi := &file_plugin_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -641,7 +751,7 @@ func (x *NarrowRequest) String() string {
 func (*NarrowRequest) ProtoMessage() {}
 
 func (x *NarrowRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[9]
+	mi := &file_plugin_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -654,7 +764,7 @@ func (x *NarrowRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NarrowRequest.ProtoReflect.Descriptor instead.
 func (*NarrowRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{9}
+	return file_plugin_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *NarrowRequest) GetRequested() *Scope {
@@ -684,7 +794,7 @@ type NarrowResponse struct {
 
 func (x *NarrowResponse) Reset() {
 	*x = NarrowResponse{}
-	mi := &file_plugin_proto_msgTypes[10]
+	mi := &file_plugin_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -696,7 +806,7 @@ func (x *NarrowResponse) String() string {
 func (*NarrowResponse) ProtoMessage() {}
 
 func (x *NarrowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[10]
+	mi := &file_plugin_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -709,7 +819,7 @@ func (x *NarrowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NarrowResponse.ProtoReflect.Descriptor instead.
 func (*NarrowResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{10}
+	return file_plugin_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *NarrowResponse) GetNarrowedScope() *Scope {
@@ -736,7 +846,7 @@ type AnalyzeRequest struct {
 
 func (x *AnalyzeRequest) Reset() {
 	*x = AnalyzeRequest{}
-	mi := &file_plugin_proto_msgTypes[11]
+	mi := &file_plugin_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -748,7 +858,7 @@ func (x *AnalyzeRequest) String() string {
 func (*AnalyzeRequest) ProtoMessage() {}
 
 func (x *AnalyzeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[11]
+	mi := &file_plugin_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -761,7 +871,7 @@ func (x *AnalyzeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnalyzeRequest.ProtoReflect.Descriptor instead.
 func (*AnalyzeRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{11}
+	return file_plugin_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *AnalyzeRequest) GetScope() *Scope {
@@ -782,7 +892,7 @@ type AnalyzeResponse struct {
 
 func (x *AnalyzeResponse) Reset() {
 	*x = AnalyzeResponse{}
-	mi := &file_plugin_proto_msgTypes[12]
+	mi := &file_plugin_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -794,7 +904,7 @@ func (x *AnalyzeResponse) String() string {
 func (*AnalyzeResponse) ProtoMessage() {}
 
 func (x *AnalyzeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[12]
+	mi := &file_plugin_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -807,7 +917,7 @@ func (x *AnalyzeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnalyzeResponse.ProtoReflect.Descriptor instead.
 func (*AnalyzeResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{12}
+	return file_plugin_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *AnalyzeResponse) GetAnomalies() []*ScopeAnomaly {
@@ -827,7 +937,7 @@ type SerializeRequest struct {
 
 func (x *SerializeRequest) Reset() {
 	*x = SerializeRequest{}
-	mi := &file_plugin_proto_msgTypes[13]
+	mi := &file_plugin_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -839,7 +949,7 @@ func (x *SerializeRequest) String() string {
 func (*SerializeRequest) ProtoMessage() {}
 
 func (x *SerializeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[13]
+	mi := &file_plugin_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -852,7 +962,7 @@ func (x *SerializeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SerializeRequest.ProtoReflect.Descriptor instead.
 func (*SerializeRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{13}
+	return file_plugin_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *SerializeRequest) GetScope() *Scope {
@@ -876,7 +986,7 @@ type SerializeResponse struct {
 
 func (x *SerializeResponse) Reset() {
 	*x = SerializeResponse{}
-	mi := &file_plugin_proto_msgTypes[14]
+	mi := &file_plugin_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -888,7 +998,7 @@ func (x *SerializeResponse) String() string {
 func (*SerializeResponse) ProtoMessage() {}
 
 func (x *SerializeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[14]
+	mi := &file_plugin_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -901,7 +1011,7 @@ func (x *SerializeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SerializeResponse.ProtoReflect.Descriptor instead.
 func (*SerializeResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{14}
+	return file_plugin_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SerializeResponse) GetProviderBytes() []byte {
@@ -928,7 +1038,7 @@ type VendRequest struct {
 
 func (x *VendRequest) Reset() {
 	*x = VendRequest{}
-	mi := &file_plugin_proto_msgTypes[15]
+	mi := &file_plugin_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -940,7 +1050,7 @@ func (x *VendRequest) String() string {
 func (*VendRequest) ProtoMessage() {}
 
 func (x *VendRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[15]
+	mi := &file_plugin_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -953,7 +1063,7 @@ func (x *VendRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VendRequest.ProtoReflect.Descriptor instead.
 func (*VendRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{15}
+	return file_plugin_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *VendRequest) GetScope() *Scope {
@@ -975,7 +1085,7 @@ type VendResponse struct {
 
 func (x *VendResponse) Reset() {
 	*x = VendResponse{}
-	mi := &file_plugin_proto_msgTypes[16]
+	mi := &file_plugin_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -987,7 +1097,7 @@ func (x *VendResponse) String() string {
 func (*VendResponse) ProtoMessage() {}
 
 func (x *VendResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[16]
+	mi := &file_plugin_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1000,7 +1110,7 @@ func (x *VendResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VendResponse.ProtoReflect.Descriptor instead.
 func (*VendResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{16}
+	return file_plugin_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *VendResponse) GetCredential() *VendedCredential {
@@ -1054,7 +1164,13 @@ const file_plugin_proto_rawDesc = "" +
 	"\aversion\x18\x04 \x01(\tR\aversion\"\r\n" +
 	"\vKindRequest\"\"\n" +
 	"\fKindResponse\x12\x12\n" +
-	"\x04kind\x18\x01 \x01(\tR\x04kind\"B\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\"\x15\n" +
+	"\x13CapabilitiesRequest\"\x89\x01\n" +
+	"\x14CapabilitiesResponse\x12\"\n" +
+	"\fcapabilities\x18\x01 \x03(\tR\fcapabilities\x12\x1f\n" +
+	"\vapi_version\x18\x02 \x01(\rR\n" +
+	"apiVersion\x12,\n" +
+	"\x12api_version_compat\x18\x03 \x01(\tR\x10apiVersionCompat\"B\n" +
 	"\x0fValidateRequest\x12/\n" +
 	"\x05scope\x18\x01 \x01(\v2\x19.agentkms.plugin.v1.ScopeR\x05scope\"(\n" +
 	"\x10ValidateResponse\x12\x14\n" +
@@ -1085,19 +1201,23 @@ const file_plugin_proto_rawDesc = "" +
 	"\x19ANOMALY_LEVEL_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12ANOMALY_LEVEL_INFO\x10\x01\x12\x16\n" +
 	"\x12ANOMALY_LEVEL_WARN\x10\x02\x12\x17\n" +
-	"\x13ANOMALY_LEVEL_ALERT\x10\x032\x8a\x02\n" +
+	"\x13ANOMALY_LEVEL_ALERT\x10\x032\xed\x02\n" +
 	"\x15ScopeValidatorService\x12I\n" +
-	"\x04Kind\x12\x1f.agentkms.plugin.v1.KindRequest\x1a .agentkms.plugin.v1.KindResponse\x12U\n" +
+	"\x04Kind\x12\x1f.agentkms.plugin.v1.KindRequest\x1a .agentkms.plugin.v1.KindResponse\x12a\n" +
+	"\fCapabilities\x12'.agentkms.plugin.v1.CapabilitiesRequest\x1a(.agentkms.plugin.v1.CapabilitiesResponse\x12U\n" +
 	"\bValidate\x12#.agentkms.plugin.v1.ValidateRequest\x1a$.agentkms.plugin.v1.ValidateResponse\x12O\n" +
-	"\x06Narrow\x12!.agentkms.plugin.v1.NarrowRequest\x1a\".agentkms.plugin.v1.NarrowResponse2\xb5\x01\n" +
+	"\x06Narrow\x12!.agentkms.plugin.v1.NarrowRequest\x1a\".agentkms.plugin.v1.NarrowResponse2\x98\x02\n" +
 	"\x14ScopeAnalyzerService\x12I\n" +
-	"\x04Kind\x12\x1f.agentkms.plugin.v1.KindRequest\x1a .agentkms.plugin.v1.KindResponse\x12R\n" +
-	"\aAnalyze\x12\".agentkms.plugin.v1.AnalyzeRequest\x1a#.agentkms.plugin.v1.AnalyzeResponse2\xbd\x01\n" +
+	"\x04Kind\x12\x1f.agentkms.plugin.v1.KindRequest\x1a .agentkms.plugin.v1.KindResponse\x12a\n" +
+	"\fCapabilities\x12'.agentkms.plugin.v1.CapabilitiesRequest\x1a(.agentkms.plugin.v1.CapabilitiesResponse\x12R\n" +
+	"\aAnalyze\x12\".agentkms.plugin.v1.AnalyzeRequest\x1a#.agentkms.plugin.v1.AnalyzeResponse2\xa0\x02\n" +
 	"\x16ScopeSerializerService\x12I\n" +
-	"\x04Kind\x12\x1f.agentkms.plugin.v1.KindRequest\x1a .agentkms.plugin.v1.KindResponse\x12X\n" +
-	"\tSerialize\x12$.agentkms.plugin.v1.SerializeRequest\x1a%.agentkms.plugin.v1.SerializeResponse2\xaf\x01\n" +
+	"\x04Kind\x12\x1f.agentkms.plugin.v1.KindRequest\x1a .agentkms.plugin.v1.KindResponse\x12a\n" +
+	"\fCapabilities\x12'.agentkms.plugin.v1.CapabilitiesRequest\x1a(.agentkms.plugin.v1.CapabilitiesResponse\x12X\n" +
+	"\tSerialize\x12$.agentkms.plugin.v1.SerializeRequest\x1a%.agentkms.plugin.v1.SerializeResponse2\x92\x02\n" +
 	"\x17CredentialVenderService\x12I\n" +
-	"\x04Kind\x12\x1f.agentkms.plugin.v1.KindRequest\x1a .agentkms.plugin.v1.KindResponse\x12I\n" +
+	"\x04Kind\x12\x1f.agentkms.plugin.v1.KindRequest\x1a .agentkms.plugin.v1.KindResponse\x12a\n" +
+	"\fCapabilities\x12'.agentkms.plugin.v1.CapabilitiesRequest\x1a(.agentkms.plugin.v1.CapabilitiesResponse\x12I\n" +
 	"\x04Vend\x12\x1f.agentkms.plugin.v1.VendRequest\x1a .agentkms.plugin.v1.VendResponseB5Z3github.com/agentkms/agentkms/api/plugin/v1;pluginv1b\x06proto3"
 
 var (
@@ -1113,7 +1233,7 @@ func file_plugin_proto_rawDescGZIP() []byte {
 }
 
 var file_plugin_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_plugin_proto_goTypes = []any{
 	(AnomalyLevel)(0),             // 0: agentkms.plugin.v1.AnomalyLevel
 	(*Scope)(nil),                 // 1: agentkms.plugin.v1.Scope
@@ -1123,26 +1243,28 @@ var file_plugin_proto_goTypes = []any{
 	(*PluginInfo)(nil),            // 5: agentkms.plugin.v1.PluginInfo
 	(*KindRequest)(nil),           // 6: agentkms.plugin.v1.KindRequest
 	(*KindResponse)(nil),          // 7: agentkms.plugin.v1.KindResponse
-	(*ValidateRequest)(nil),       // 8: agentkms.plugin.v1.ValidateRequest
-	(*ValidateResponse)(nil),      // 9: agentkms.plugin.v1.ValidateResponse
-	(*NarrowRequest)(nil),         // 10: agentkms.plugin.v1.NarrowRequest
-	(*NarrowResponse)(nil),        // 11: agentkms.plugin.v1.NarrowResponse
-	(*AnalyzeRequest)(nil),        // 12: agentkms.plugin.v1.AnalyzeRequest
-	(*AnalyzeResponse)(nil),       // 13: agentkms.plugin.v1.AnalyzeResponse
-	(*SerializeRequest)(nil),      // 14: agentkms.plugin.v1.SerializeRequest
-	(*SerializeResponse)(nil),     // 15: agentkms.plugin.v1.SerializeResponse
-	(*VendRequest)(nil),           // 16: agentkms.plugin.v1.VendRequest
-	(*VendResponse)(nil),          // 17: agentkms.plugin.v1.VendResponse
-	(*structpb.Struct)(nil),       // 18: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil), // 19: google.protobuf.Timestamp
+	(*CapabilitiesRequest)(nil),   // 8: agentkms.plugin.v1.CapabilitiesRequest
+	(*CapabilitiesResponse)(nil),  // 9: agentkms.plugin.v1.CapabilitiesResponse
+	(*ValidateRequest)(nil),       // 10: agentkms.plugin.v1.ValidateRequest
+	(*ValidateResponse)(nil),      // 11: agentkms.plugin.v1.ValidateResponse
+	(*NarrowRequest)(nil),         // 12: agentkms.plugin.v1.NarrowRequest
+	(*NarrowResponse)(nil),        // 13: agentkms.plugin.v1.NarrowResponse
+	(*AnalyzeRequest)(nil),        // 14: agentkms.plugin.v1.AnalyzeRequest
+	(*AnalyzeResponse)(nil),       // 15: agentkms.plugin.v1.AnalyzeResponse
+	(*SerializeRequest)(nil),      // 16: agentkms.plugin.v1.SerializeRequest
+	(*SerializeResponse)(nil),     // 17: agentkms.plugin.v1.SerializeResponse
+	(*VendRequest)(nil),           // 18: agentkms.plugin.v1.VendRequest
+	(*VendResponse)(nil),          // 19: agentkms.plugin.v1.VendResponse
+	(*structpb.Struct)(nil),       // 20: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil), // 21: google.protobuf.Timestamp
 }
 var file_plugin_proto_depIdxs = []int32{
-	18, // 0: agentkms.plugin.v1.Scope.params:type_name -> google.protobuf.Struct
-	19, // 1: agentkms.plugin.v1.Scope.issued_at:type_name -> google.protobuf.Timestamp
-	19, // 2: agentkms.plugin.v1.Scope.expires_at:type_name -> google.protobuf.Timestamp
-	18, // 3: agentkms.plugin.v1.ScopeBounds.max_params:type_name -> google.protobuf.Struct
+	20, // 0: agentkms.plugin.v1.Scope.params:type_name -> google.protobuf.Struct
+	21, // 1: agentkms.plugin.v1.Scope.issued_at:type_name -> google.protobuf.Timestamp
+	21, // 2: agentkms.plugin.v1.Scope.expires_at:type_name -> google.protobuf.Timestamp
+	20, // 3: agentkms.plugin.v1.ScopeBounds.max_params:type_name -> google.protobuf.Struct
 	0,  // 4: agentkms.plugin.v1.ScopeAnomaly.level:type_name -> agentkms.plugin.v1.AnomalyLevel
-	19, // 5: agentkms.plugin.v1.VendedCredential.expires_at:type_name -> google.protobuf.Timestamp
+	21, // 5: agentkms.plugin.v1.VendedCredential.expires_at:type_name -> google.protobuf.Timestamp
 	1,  // 6: agentkms.plugin.v1.ValidateRequest.scope:type_name -> agentkms.plugin.v1.Scope
 	1,  // 7: agentkms.plugin.v1.NarrowRequest.requested:type_name -> agentkms.plugin.v1.Scope
 	2,  // 8: agentkms.plugin.v1.NarrowRequest.bounds:type_name -> agentkms.plugin.v1.ScopeBounds
@@ -1153,25 +1275,33 @@ var file_plugin_proto_depIdxs = []int32{
 	1,  // 13: agentkms.plugin.v1.VendRequest.scope:type_name -> agentkms.plugin.v1.Scope
 	4,  // 14: agentkms.plugin.v1.VendResponse.credential:type_name -> agentkms.plugin.v1.VendedCredential
 	6,  // 15: agentkms.plugin.v1.ScopeValidatorService.Kind:input_type -> agentkms.plugin.v1.KindRequest
-	8,  // 16: agentkms.plugin.v1.ScopeValidatorService.Validate:input_type -> agentkms.plugin.v1.ValidateRequest
-	10, // 17: agentkms.plugin.v1.ScopeValidatorService.Narrow:input_type -> agentkms.plugin.v1.NarrowRequest
-	6,  // 18: agentkms.plugin.v1.ScopeAnalyzerService.Kind:input_type -> agentkms.plugin.v1.KindRequest
-	12, // 19: agentkms.plugin.v1.ScopeAnalyzerService.Analyze:input_type -> agentkms.plugin.v1.AnalyzeRequest
-	6,  // 20: agentkms.plugin.v1.ScopeSerializerService.Kind:input_type -> agentkms.plugin.v1.KindRequest
-	14, // 21: agentkms.plugin.v1.ScopeSerializerService.Serialize:input_type -> agentkms.plugin.v1.SerializeRequest
-	6,  // 22: agentkms.plugin.v1.CredentialVenderService.Kind:input_type -> agentkms.plugin.v1.KindRequest
-	16, // 23: agentkms.plugin.v1.CredentialVenderService.Vend:input_type -> agentkms.plugin.v1.VendRequest
-	7,  // 24: agentkms.plugin.v1.ScopeValidatorService.Kind:output_type -> agentkms.plugin.v1.KindResponse
-	9,  // 25: agentkms.plugin.v1.ScopeValidatorService.Validate:output_type -> agentkms.plugin.v1.ValidateResponse
-	11, // 26: agentkms.plugin.v1.ScopeValidatorService.Narrow:output_type -> agentkms.plugin.v1.NarrowResponse
-	7,  // 27: agentkms.plugin.v1.ScopeAnalyzerService.Kind:output_type -> agentkms.plugin.v1.KindResponse
-	13, // 28: agentkms.plugin.v1.ScopeAnalyzerService.Analyze:output_type -> agentkms.plugin.v1.AnalyzeResponse
-	7,  // 29: agentkms.plugin.v1.ScopeSerializerService.Kind:output_type -> agentkms.plugin.v1.KindResponse
-	15, // 30: agentkms.plugin.v1.ScopeSerializerService.Serialize:output_type -> agentkms.plugin.v1.SerializeResponse
-	7,  // 31: agentkms.plugin.v1.CredentialVenderService.Kind:output_type -> agentkms.plugin.v1.KindResponse
-	17, // 32: agentkms.plugin.v1.CredentialVenderService.Vend:output_type -> agentkms.plugin.v1.VendResponse
-	24, // [24:33] is the sub-list for method output_type
-	15, // [15:24] is the sub-list for method input_type
+	8,  // 16: agentkms.plugin.v1.ScopeValidatorService.Capabilities:input_type -> agentkms.plugin.v1.CapabilitiesRequest
+	10, // 17: agentkms.plugin.v1.ScopeValidatorService.Validate:input_type -> agentkms.plugin.v1.ValidateRequest
+	12, // 18: agentkms.plugin.v1.ScopeValidatorService.Narrow:input_type -> agentkms.plugin.v1.NarrowRequest
+	6,  // 19: agentkms.plugin.v1.ScopeAnalyzerService.Kind:input_type -> agentkms.plugin.v1.KindRequest
+	8,  // 20: agentkms.plugin.v1.ScopeAnalyzerService.Capabilities:input_type -> agentkms.plugin.v1.CapabilitiesRequest
+	14, // 21: agentkms.plugin.v1.ScopeAnalyzerService.Analyze:input_type -> agentkms.plugin.v1.AnalyzeRequest
+	6,  // 22: agentkms.plugin.v1.ScopeSerializerService.Kind:input_type -> agentkms.plugin.v1.KindRequest
+	8,  // 23: agentkms.plugin.v1.ScopeSerializerService.Capabilities:input_type -> agentkms.plugin.v1.CapabilitiesRequest
+	16, // 24: agentkms.plugin.v1.ScopeSerializerService.Serialize:input_type -> agentkms.plugin.v1.SerializeRequest
+	6,  // 25: agentkms.plugin.v1.CredentialVenderService.Kind:input_type -> agentkms.plugin.v1.KindRequest
+	8,  // 26: agentkms.plugin.v1.CredentialVenderService.Capabilities:input_type -> agentkms.plugin.v1.CapabilitiesRequest
+	18, // 27: agentkms.plugin.v1.CredentialVenderService.Vend:input_type -> agentkms.plugin.v1.VendRequest
+	7,  // 28: agentkms.plugin.v1.ScopeValidatorService.Kind:output_type -> agentkms.plugin.v1.KindResponse
+	9,  // 29: agentkms.plugin.v1.ScopeValidatorService.Capabilities:output_type -> agentkms.plugin.v1.CapabilitiesResponse
+	11, // 30: agentkms.plugin.v1.ScopeValidatorService.Validate:output_type -> agentkms.plugin.v1.ValidateResponse
+	13, // 31: agentkms.plugin.v1.ScopeValidatorService.Narrow:output_type -> agentkms.plugin.v1.NarrowResponse
+	7,  // 32: agentkms.plugin.v1.ScopeAnalyzerService.Kind:output_type -> agentkms.plugin.v1.KindResponse
+	9,  // 33: agentkms.plugin.v1.ScopeAnalyzerService.Capabilities:output_type -> agentkms.plugin.v1.CapabilitiesResponse
+	15, // 34: agentkms.plugin.v1.ScopeAnalyzerService.Analyze:output_type -> agentkms.plugin.v1.AnalyzeResponse
+	7,  // 35: agentkms.plugin.v1.ScopeSerializerService.Kind:output_type -> agentkms.plugin.v1.KindResponse
+	9,  // 36: agentkms.plugin.v1.ScopeSerializerService.Capabilities:output_type -> agentkms.plugin.v1.CapabilitiesResponse
+	17, // 37: agentkms.plugin.v1.ScopeSerializerService.Serialize:output_type -> agentkms.plugin.v1.SerializeResponse
+	7,  // 38: agentkms.plugin.v1.CredentialVenderService.Kind:output_type -> agentkms.plugin.v1.KindResponse
+	9,  // 39: agentkms.plugin.v1.CredentialVenderService.Capabilities:output_type -> agentkms.plugin.v1.CapabilitiesResponse
+	19, // 40: agentkms.plugin.v1.CredentialVenderService.Vend:output_type -> agentkms.plugin.v1.VendResponse
+	28, // [28:41] is the sub-list for method output_type
+	15, // [15:28] is the sub-list for method input_type
 	15, // [15:15] is the sub-list for extension type_name
 	15, // [15:15] is the sub-list for extension extendee
 	0,  // [0:15] is the sub-list for field type_name
@@ -1188,7 +1318,7 @@ func file_plugin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plugin_proto_rawDesc), len(file_plugin_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   17,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   4,
 		},

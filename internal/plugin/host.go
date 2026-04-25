@@ -13,6 +13,7 @@ import (
 	"time"
 
 	pluginv1 "github.com/agentkms/agentkms/api/plugin/v1"
+	"github.com/agentkms/agentkms/internal/destination"
 	hclog "github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
 )
@@ -213,6 +214,16 @@ func (h *Host) Start(name string) error {
 	}
 	adapter.kind = kindResp.Kind
 
+	// Negotiate capabilities. Plugins that predate this RPC return Unimplemented;
+	// treat that as an empty capability set (backwards compatible).
+	capsResp, err := adapter.client.Capabilities(ctx, &pluginv1.CapabilitiesRequest{})
+	if err != nil {
+		log.Printf("[plugin] %q: Capabilities() RPC failed (assuming legacy plugin, no capabilities): %v", name, err)
+		adapter.capabilities = nil
+	} else {
+		adapter.capabilities = capsResp.GetCapabilities()
+	}
+
 	// Register the adapter in the registry (if configured).
 	if h.registry != nil && adapter.kind != "" {
 		// Best-effort: ignore duplicate registration (plugin may have been
@@ -357,4 +368,214 @@ func (h *Host) healthLoop(name string, entry *pluginEntry) {
 // attemptRestart tries to restart a plugin that has exited or failed pings.
 func (h *Host) attemptRestart(name string) error {
 	return h.Start(name)
+}
+
+// ── Destination plugin startup ─────────────────────────────────────────────────
+
+// StartDestination launches a destination plugin subprocess, performs the
+// capability handshake (Kind → Capabilities → Validate), and registers the
+// adapter in the registry under the plugin's declared kind.
+//
+// The plugin binary must have been found by a prior Discover() call and must
+// implement DestinationDelivererService via the shared HandshakeConfig.
+//
+// Start is idempotent for the same name: if the subprocess is already running,
+// this is a no-op.
+func (h *Host) StartDestination(name string) error {
+	pluginPath, err := h.findPluginPath(name)
+	if err != nil {
+		return err
+	}
+
+	h.mu.Lock()
+	if entry, ok := h.clients[name]; ok {
+		if !entry.client.Exited() {
+			h.mu.Unlock()
+			return nil // already running
+		}
+		entry.cancel()
+		delete(h.clients, name)
+	}
+	h.mu.Unlock()
+
+	// Signature verification (before subprocess launch).
+	if h.verifier != nil {
+		sigPath := pluginPath + ".sig"
+		sig, err := os.ReadFile(sigPath)
+		if err != nil {
+			return fmt.Errorf("%w: cannot read .sig sidecar %q: %v", ErrUntrustedPlugin, sigPath, err)
+		}
+		if err := h.verifier.Verify(pluginPath, sig); err != nil {
+			return fmt.Errorf("%w: %v", ErrUntrustedPlugin, err)
+		}
+	} else {
+		log.Printf("[plugin] WARNING: no verifier configured for %q — running unsigned binary", name)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	client := goplugin.NewClient(&goplugin.ClientConfig{
+		HandshakeConfig:  HandshakeConfig,
+		Plugins:          PluginMap,
+		Cmd:              pluginCommand(pluginPath),
+		AllowedProtocols: []goplugin.Protocol{goplugin.ProtocolGRPC},
+		Logger:           newPluginLogger(name),
+		StartTimeout:     30 * time.Second,
+	})
+
+	rpcClient, err := client.Client()
+	if err != nil {
+		cancel()
+		client.Kill()
+		return fmt.Errorf("destination plugin %q handshake failed: %w", name, err)
+	}
+
+	raw, err := rpcClient.Dispense("destination_deliverer")
+	if err != nil {
+		cancel()
+		client.Kill()
+		return fmt.Errorf("destination plugin %q: dispense destination_deliverer: %w", name, err)
+	}
+
+	adapter, ok := raw.(*destination.DestinationDelivererGRPC)
+	if !ok {
+		cancel()
+		client.Kill()
+		return fmt.Errorf("destination plugin %q: dispensed value is %T, want *destination.DestinationDelivererGRPC", name, raw)
+	}
+
+	// Kind negotiation.
+	kindResp, err := adapter.Client().Kind(ctx, &pluginv1.KindRequest{})
+	if err != nil {
+		cancel()
+		client.Kill()
+		return fmt.Errorf("destination plugin %q: Kind() RPC failed: %w", name, err)
+	}
+	adapter.SetKind(kindResp.Kind)
+
+	// Capability negotiation.
+	capsResp, err := adapter.Client().Capabilities(ctx, &pluginv1.CapabilitiesRequest{})
+	if err != nil {
+		log.Printf("[plugin] destination %q: Capabilities() RPC failed (assuming legacy, no capabilities): %v", name, err)
+		adapter.SetCapabilities(nil)
+	} else {
+		adapter.SetCapabilities(capsResp.GetCapabilities())
+	}
+
+	// Startup health check via Validate (with nil params as a connectivity probe).
+	// Spec §4.2: Validate must complete in under 10 seconds. Use a dedicated
+	// timeout context so a hung plugin cannot block server startup indefinitely.
+	validateCtx, validateCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer validateCancel()
+	if err := adapter.Validate(validateCtx, nil); err != nil {
+		log.Printf("[plugin] destination %q: startup Validate failed — plugin not registered: %v", name, err)
+		cancel()
+		client.Kill()
+		return fmt.Errorf("destination plugin %q: startup Validate failed: %w", name, err)
+	}
+
+	// Register in the deliverer registry.
+	if h.registry != nil && adapter.Kind() != "" {
+		if err := h.registry.RegisterDeliverer(adapter.Kind(), adapter); err != nil {
+			log.Printf("[plugin] destination %q: RegisterDeliverer failed: %v", name, err)
+		}
+	}
+
+	entry := &pluginEntry{client: client, cancel: cancel}
+	h.mu.Lock()
+	h.clients[name] = entry
+	h.mu.Unlock()
+
+	go h.destinationHealthLoop(name, entry, adapter)
+
+	return nil
+}
+
+// destinationHealthErrorThreshold is the number of consecutive Health() RPC
+// failures that trigger a restart attempt, matching the provider healthLoop's
+// "one failure → restart" threshold (each ping failure is its own trigger).
+// For Health() failures we allow one failure before restarting, consistent
+// with the provider pattern of "one failure → attempt one restart → if that
+// fails, mark failed."
+const destinationHealthErrorThreshold = 1
+
+// destinationHealthLoop runs in a goroutine and calls Health() on the
+// destination plugin at healthCheckInterval. Mirrors the provider healthLoop
+// but calls the destination-specific Health() RPC in addition to the
+// protocol-level ping.
+//
+// Restart semantics mirror the provider healthLoop:
+//   - Subprocess exits   → attempt one restart; if restart fails, mark failed.
+//   - Protocol ping fails → attempt one restart; if restart fails, mark failed.
+//   - Health() RPC fails  → after destinationHealthErrorThreshold consecutive
+//     failures, attempt one restart; if restart fails, mark failed.
+//
+// The adapter parameter accepts any DestinationDeliverer so that tests can
+// inject a mock without forking a subprocess.
+func (h *Host) destinationHealthLoop(name string, entry *pluginEntry, adapter destination.DestinationDeliverer) {
+	ticker := time.NewTicker(healthCheckInterval)
+	defer ticker.Stop()
+
+	healthErrors := 0
+
+	for range ticker.C {
+		h.mu.Lock()
+		_, stillOurs := h.clients[name]
+		h.mu.Unlock()
+		if !stillOurs {
+			return
+		}
+
+		if entry.client.Exited() {
+			log.Printf("[plugin] destination %q exited unexpectedly — attempting restart", name)
+			if err := h.StartDestination(name); err != nil {
+				log.Printf("[plugin] destination %q restart failed: %v — marking failed", name, err)
+				h.mu.Lock()
+				delete(h.clients, name)
+				h.mu.Unlock()
+			}
+			return
+		}
+
+		// Protocol-level ping.
+		rpcClient, err := entry.client.Client()
+		if err != nil || rpcClient.Ping() != nil {
+			log.Printf("[plugin] destination %q protocol ping failed — attempting restart", name)
+			entry.client.Kill()
+			if err := h.StartDestination(name); err != nil {
+				log.Printf("[plugin] destination %q restart failed: %v — marking failed", name, err)
+				h.mu.Lock()
+				delete(h.clients, name)
+				h.mu.Unlock()
+			}
+			return
+		}
+
+		// Destination-level Health RPC.
+		healthCtx, healthCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		healthErr := adapter.Health(healthCtx)
+		healthCancel()
+		if healthErr != nil {
+			healthErrors++
+			log.Printf("[plugin] destination %q Health() failed (error #%d): %v", name, healthErrors, healthErr)
+
+			// After reaching the threshold, attempt one restart — same
+			// contract as the provider healthLoop.
+			if healthErrors >= destinationHealthErrorThreshold {
+				log.Printf("[plugin] destination %q Health() failure threshold reached — attempting restart", name)
+				entry.client.Kill()
+				if restartErr := h.StartDestination(name); restartErr != nil {
+					log.Printf("[plugin] destination %q restart after Health() failure failed: %v — marking failed", name, restartErr)
+					h.mu.Lock()
+					delete(h.clients, name)
+					h.mu.Unlock()
+				}
+				return
+			}
+		} else {
+			if healthErrors > 0 {
+				log.Printf("[plugin] destination %q Health() recovered after %d errors", name, healthErrors)
+			}
+			healthErrors = 0
+		}
+	}
 }

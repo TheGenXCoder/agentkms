@@ -46,8 +46,9 @@ var HandshakeConfig = goplugin.HandshakeConfig{
 // three services can be registered manually via the appropriate Register* methods
 // once capability negotiation (v0.3.2 .manifest files) is implemented.
 var PluginMap = map[string]goplugin.Plugin{
-	"scope_validator":   &ScopeValidatorPlugin{},
-	"scope_analyzer":    &ScopeAnalyzerPlugin{},
-	"scope_serializer":  &ScopeSerializerPlugin{},
-	"credential_vender": &CredentialVenderPlugin{},
+	"scope_validator":        &ScopeValidatorPlugin{},
+	"scope_analyzer":         &ScopeAnalyzerPlugin{},
+	"scope_serializer":       &ScopeSerializerPlugin{},
+	"credential_vender":      &CredentialVenderPlugin{},
+	"destination_deliverer":  &DestinationDelivererPlugin{},
 }

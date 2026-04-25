@@ -19,9 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ScopeValidatorService_Kind_FullMethodName     = "/agentkms.plugin.v1.ScopeValidatorService/Kind"
-	ScopeValidatorService_Validate_FullMethodName = "/agentkms.plugin.v1.ScopeValidatorService/Validate"
-	ScopeValidatorService_Narrow_FullMethodName   = "/agentkms.plugin.v1.ScopeValidatorService/Narrow"
+	ScopeValidatorService_Kind_FullMethodName         = "/agentkms.plugin.v1.ScopeValidatorService/Kind"
+	ScopeValidatorService_Capabilities_FullMethodName = "/agentkms.plugin.v1.ScopeValidatorService/Capabilities"
+	ScopeValidatorService_Validate_FullMethodName     = "/agentkms.plugin.v1.ScopeValidatorService/Validate"
+	ScopeValidatorService_Narrow_FullMethodName       = "/agentkms.plugin.v1.ScopeValidatorService/Narrow"
 )
 
 // ScopeValidatorServiceClient is the client API for ScopeValidatorService service.
@@ -34,6 +35,9 @@ const (
 type ScopeValidatorServiceClient interface {
 	// Kind returns the scope Kind this plugin handles.
 	Kind(ctx context.Context, in *KindRequest, opts ...grpc.CallOption) (*KindResponse, error)
+	// Capabilities returns the feature set and API version this service supports.
+	// Called once at startup after Kind().
+	Capabilities(ctx context.Context, in *CapabilitiesRequest, opts ...grpc.CallOption) (*CapabilitiesResponse, error)
 	// Validate checks that the scope has a well-formed Params shape
 	// for this Kind.  Must not mutate the scope.
 	Validate(ctx context.Context, in *ValidateRequest, opts ...grpc.CallOption) (*ValidateResponse, error)
@@ -55,6 +59,16 @@ func (c *scopeValidatorServiceClient) Kind(ctx context.Context, in *KindRequest,
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(KindResponse)
 	err := c.cc.Invoke(ctx, ScopeValidatorService_Kind_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scopeValidatorServiceClient) Capabilities(ctx context.Context, in *CapabilitiesRequest, opts ...grpc.CallOption) (*CapabilitiesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CapabilitiesResponse)
+	err := c.cc.Invoke(ctx, ScopeValidatorService_Capabilities_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +105,9 @@ func (c *scopeValidatorServiceClient) Narrow(ctx context.Context, in *NarrowRequ
 type ScopeValidatorServiceServer interface {
 	// Kind returns the scope Kind this plugin handles.
 	Kind(context.Context, *KindRequest) (*KindResponse, error)
+	// Capabilities returns the feature set and API version this service supports.
+	// Called once at startup after Kind().
+	Capabilities(context.Context, *CapabilitiesRequest) (*CapabilitiesResponse, error)
 	// Validate checks that the scope has a well-formed Params shape
 	// for this Kind.  Must not mutate the scope.
 	Validate(context.Context, *ValidateRequest) (*ValidateResponse, error)
@@ -110,6 +127,9 @@ type UnimplementedScopeValidatorServiceServer struct{}
 
 func (UnimplementedScopeValidatorServiceServer) Kind(context.Context, *KindRequest) (*KindResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Kind not implemented")
+}
+func (UnimplementedScopeValidatorServiceServer) Capabilities(context.Context, *CapabilitiesRequest) (*CapabilitiesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Capabilities not implemented")
 }
 func (UnimplementedScopeValidatorServiceServer) Validate(context.Context, *ValidateRequest) (*ValidateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Validate not implemented")
@@ -152,6 +172,24 @@ func _ScopeValidatorService_Kind_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ScopeValidatorServiceServer).Kind(ctx, req.(*KindRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ScopeValidatorService_Capabilities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CapabilitiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScopeValidatorServiceServer).Capabilities(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ScopeValidatorService_Capabilities_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScopeValidatorServiceServer).Capabilities(ctx, req.(*CapabilitiesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -204,6 +242,10 @@ var ScopeValidatorService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _ScopeValidatorService_Kind_Handler,
 		},
 		{
+			MethodName: "Capabilities",
+			Handler:    _ScopeValidatorService_Capabilities_Handler,
+		},
+		{
 			MethodName: "Validate",
 			Handler:    _ScopeValidatorService_Validate_Handler,
 		},
@@ -217,8 +259,9 @@ var ScopeValidatorService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	ScopeAnalyzerService_Kind_FullMethodName    = "/agentkms.plugin.v1.ScopeAnalyzerService/Kind"
-	ScopeAnalyzerService_Analyze_FullMethodName = "/agentkms.plugin.v1.ScopeAnalyzerService/Analyze"
+	ScopeAnalyzerService_Kind_FullMethodName         = "/agentkms.plugin.v1.ScopeAnalyzerService/Kind"
+	ScopeAnalyzerService_Capabilities_FullMethodName = "/agentkms.plugin.v1.ScopeAnalyzerService/Capabilities"
+	ScopeAnalyzerService_Analyze_FullMethodName      = "/agentkms.plugin.v1.ScopeAnalyzerService/Analyze"
 )
 
 // ScopeAnalyzerServiceClient is the client API for ScopeAnalyzerService service.
@@ -231,6 +274,9 @@ const (
 type ScopeAnalyzerServiceClient interface {
 	// Kind returns the scope Kind this plugin handles.
 	Kind(ctx context.Context, in *KindRequest, opts ...grpc.CallOption) (*KindResponse, error)
+	// Capabilities returns the feature set and API version this service supports.
+	// Called once at startup after Kind().
+	Capabilities(ctx context.Context, in *CapabilitiesRequest, opts ...grpc.CallOption) (*CapabilitiesResponse, error)
 	// Analyze returns anomalies describing risky scope aspects.
 	// An empty list means no risk signals were detected.
 	Analyze(ctx context.Context, in *AnalyzeRequest, opts ...grpc.CallOption) (*AnalyzeResponse, error)
@@ -248,6 +294,16 @@ func (c *scopeAnalyzerServiceClient) Kind(ctx context.Context, in *KindRequest, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(KindResponse)
 	err := c.cc.Invoke(ctx, ScopeAnalyzerService_Kind_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scopeAnalyzerServiceClient) Capabilities(ctx context.Context, in *CapabilitiesRequest, opts ...grpc.CallOption) (*CapabilitiesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CapabilitiesResponse)
+	err := c.cc.Invoke(ctx, ScopeAnalyzerService_Capabilities_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -274,6 +330,9 @@ func (c *scopeAnalyzerServiceClient) Analyze(ctx context.Context, in *AnalyzeReq
 type ScopeAnalyzerServiceServer interface {
 	// Kind returns the scope Kind this plugin handles.
 	Kind(context.Context, *KindRequest) (*KindResponse, error)
+	// Capabilities returns the feature set and API version this service supports.
+	// Called once at startup after Kind().
+	Capabilities(context.Context, *CapabilitiesRequest) (*CapabilitiesResponse, error)
 	// Analyze returns anomalies describing risky scope aspects.
 	// An empty list means no risk signals were detected.
 	Analyze(context.Context, *AnalyzeRequest) (*AnalyzeResponse, error)
@@ -289,6 +348,9 @@ type UnimplementedScopeAnalyzerServiceServer struct{}
 
 func (UnimplementedScopeAnalyzerServiceServer) Kind(context.Context, *KindRequest) (*KindResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Kind not implemented")
+}
+func (UnimplementedScopeAnalyzerServiceServer) Capabilities(context.Context, *CapabilitiesRequest) (*CapabilitiesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Capabilities not implemented")
 }
 func (UnimplementedScopeAnalyzerServiceServer) Analyze(context.Context, *AnalyzeRequest) (*AnalyzeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Analyze not implemented")
@@ -332,6 +394,24 @@ func _ScopeAnalyzerService_Kind_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ScopeAnalyzerService_Capabilities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CapabilitiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScopeAnalyzerServiceServer).Capabilities(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ScopeAnalyzerService_Capabilities_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScopeAnalyzerServiceServer).Capabilities(ctx, req.(*CapabilitiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ScopeAnalyzerService_Analyze_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AnalyzeRequest)
 	if err := dec(in); err != nil {
@@ -362,6 +442,10 @@ var ScopeAnalyzerService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _ScopeAnalyzerService_Kind_Handler,
 		},
 		{
+			MethodName: "Capabilities",
+			Handler:    _ScopeAnalyzerService_Capabilities_Handler,
+		},
+		{
 			MethodName: "Analyze",
 			Handler:    _ScopeAnalyzerService_Analyze_Handler,
 		},
@@ -371,8 +455,9 @@ var ScopeAnalyzerService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	ScopeSerializerService_Kind_FullMethodName      = "/agentkms.plugin.v1.ScopeSerializerService/Kind"
-	ScopeSerializerService_Serialize_FullMethodName = "/agentkms.plugin.v1.ScopeSerializerService/Serialize"
+	ScopeSerializerService_Kind_FullMethodName         = "/agentkms.plugin.v1.ScopeSerializerService/Kind"
+	ScopeSerializerService_Capabilities_FullMethodName = "/agentkms.plugin.v1.ScopeSerializerService/Capabilities"
+	ScopeSerializerService_Serialize_FullMethodName    = "/agentkms.plugin.v1.ScopeSerializerService/Serialize"
 )
 
 // ScopeSerializerServiceClient is the client API for ScopeSerializerService service.
@@ -385,6 +470,9 @@ const (
 type ScopeSerializerServiceClient interface {
 	// Kind returns the scope Kind this plugin handles.
 	Kind(ctx context.Context, in *KindRequest, opts ...grpc.CallOption) (*KindResponse, error)
+	// Capabilities returns the feature set and API version this service supports.
+	// Called once at startup after Kind().
+	Capabilities(ctx context.Context, in *CapabilitiesRequest, opts ...grpc.CallOption) (*CapabilitiesResponse, error)
 	// Serialize converts the scope to the provider-native format
 	// (AWS IAM policy document, GitHub permissions object, etc.).
 	Serialize(ctx context.Context, in *SerializeRequest, opts ...grpc.CallOption) (*SerializeResponse, error)
@@ -402,6 +490,16 @@ func (c *scopeSerializerServiceClient) Kind(ctx context.Context, in *KindRequest
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(KindResponse)
 	err := c.cc.Invoke(ctx, ScopeSerializerService_Kind_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scopeSerializerServiceClient) Capabilities(ctx context.Context, in *CapabilitiesRequest, opts ...grpc.CallOption) (*CapabilitiesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CapabilitiesResponse)
+	err := c.cc.Invoke(ctx, ScopeSerializerService_Capabilities_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -428,6 +526,9 @@ func (c *scopeSerializerServiceClient) Serialize(ctx context.Context, in *Serial
 type ScopeSerializerServiceServer interface {
 	// Kind returns the scope Kind this plugin handles.
 	Kind(context.Context, *KindRequest) (*KindResponse, error)
+	// Capabilities returns the feature set and API version this service supports.
+	// Called once at startup after Kind().
+	Capabilities(context.Context, *CapabilitiesRequest) (*CapabilitiesResponse, error)
 	// Serialize converts the scope to the provider-native format
 	// (AWS IAM policy document, GitHub permissions object, etc.).
 	Serialize(context.Context, *SerializeRequest) (*SerializeResponse, error)
@@ -443,6 +544,9 @@ type UnimplementedScopeSerializerServiceServer struct{}
 
 func (UnimplementedScopeSerializerServiceServer) Kind(context.Context, *KindRequest) (*KindResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Kind not implemented")
+}
+func (UnimplementedScopeSerializerServiceServer) Capabilities(context.Context, *CapabilitiesRequest) (*CapabilitiesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Capabilities not implemented")
 }
 func (UnimplementedScopeSerializerServiceServer) Serialize(context.Context, *SerializeRequest) (*SerializeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Serialize not implemented")
@@ -487,6 +591,24 @@ func _ScopeSerializerService_Kind_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ScopeSerializerService_Capabilities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CapabilitiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScopeSerializerServiceServer).Capabilities(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ScopeSerializerService_Capabilities_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScopeSerializerServiceServer).Capabilities(ctx, req.(*CapabilitiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ScopeSerializerService_Serialize_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SerializeRequest)
 	if err := dec(in); err != nil {
@@ -517,6 +639,10 @@ var ScopeSerializerService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _ScopeSerializerService_Kind_Handler,
 		},
 		{
+			MethodName: "Capabilities",
+			Handler:    _ScopeSerializerService_Capabilities_Handler,
+		},
+		{
 			MethodName: "Serialize",
 			Handler:    _ScopeSerializerService_Serialize_Handler,
 		},
@@ -526,8 +652,9 @@ var ScopeSerializerService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	CredentialVenderService_Kind_FullMethodName = "/agentkms.plugin.v1.CredentialVenderService/Kind"
-	CredentialVenderService_Vend_FullMethodName = "/agentkms.plugin.v1.CredentialVenderService/Vend"
+	CredentialVenderService_Kind_FullMethodName         = "/agentkms.plugin.v1.CredentialVenderService/Kind"
+	CredentialVenderService_Capabilities_FullMethodName = "/agentkms.plugin.v1.CredentialVenderService/Capabilities"
+	CredentialVenderService_Vend_FullMethodName         = "/agentkms.plugin.v1.CredentialVenderService/Vend"
 )
 
 // CredentialVenderServiceClient is the client API for CredentialVenderService service.
@@ -540,6 +667,9 @@ const (
 type CredentialVenderServiceClient interface {
 	// Kind returns the scope Kind this plugin handles.
 	Kind(ctx context.Context, in *KindRequest, opts ...grpc.CallOption) (*KindResponse, error)
+	// Capabilities returns the feature set and API version this service supports.
+	// Called once at startup after Kind().
+	Capabilities(ctx context.Context, in *CapabilitiesRequest, opts ...grpc.CallOption) (*CapabilitiesResponse, error)
 	// Vend issues a credential scoped to the provided Scope.
 	// The returned VendedCredential holds the secret bytes, a UUID for
 	// audit correlation, a hash for safe logging, and an expiry.
@@ -558,6 +688,16 @@ func (c *credentialVenderServiceClient) Kind(ctx context.Context, in *KindReques
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(KindResponse)
 	err := c.cc.Invoke(ctx, CredentialVenderService_Kind_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *credentialVenderServiceClient) Capabilities(ctx context.Context, in *CapabilitiesRequest, opts ...grpc.CallOption) (*CapabilitiesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CapabilitiesResponse)
+	err := c.cc.Invoke(ctx, CredentialVenderService_Capabilities_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -584,6 +724,9 @@ func (c *credentialVenderServiceClient) Vend(ctx context.Context, in *VendReques
 type CredentialVenderServiceServer interface {
 	// Kind returns the scope Kind this plugin handles.
 	Kind(context.Context, *KindRequest) (*KindResponse, error)
+	// Capabilities returns the feature set and API version this service supports.
+	// Called once at startup after Kind().
+	Capabilities(context.Context, *CapabilitiesRequest) (*CapabilitiesResponse, error)
 	// Vend issues a credential scoped to the provided Scope.
 	// The returned VendedCredential holds the secret bytes, a UUID for
 	// audit correlation, a hash for safe logging, and an expiry.
@@ -600,6 +743,9 @@ type UnimplementedCredentialVenderServiceServer struct{}
 
 func (UnimplementedCredentialVenderServiceServer) Kind(context.Context, *KindRequest) (*KindResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Kind not implemented")
+}
+func (UnimplementedCredentialVenderServiceServer) Capabilities(context.Context, *CapabilitiesRequest) (*CapabilitiesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Capabilities not implemented")
 }
 func (UnimplementedCredentialVenderServiceServer) Vend(context.Context, *VendRequest) (*VendResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Vend not implemented")
@@ -644,6 +790,24 @@ func _CredentialVenderService_Kind_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CredentialVenderService_Capabilities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CapabilitiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CredentialVenderServiceServer).Capabilities(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CredentialVenderService_Capabilities_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CredentialVenderServiceServer).Capabilities(ctx, req.(*CapabilitiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CredentialVenderService_Vend_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(VendRequest)
 	if err := dec(in); err != nil {
@@ -672,6 +836,10 @@ var CredentialVenderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Kind",
 			Handler:    _CredentialVenderService_Kind_Handler,
+		},
+		{
+			MethodName: "Capabilities",
+			Handler:    _CredentialVenderService_Capabilities_Handler,
 		},
 		{
 			MethodName: "Vend",

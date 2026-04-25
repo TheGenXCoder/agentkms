@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/agentkms/agentkms/internal/credentials"
+	"github.com/agentkms/agentkms/internal/destination"
 )
 
 // Registry maps credential Kinds to their implementations.
@@ -20,6 +21,7 @@ type Registry struct {
 	analyzers   map[string]credentials.ScopeAnalyzer
 	serializers map[string]credentials.ScopeSerializer
 	venders     map[string]credentials.CredentialVender
+	deliverers  map[string]destination.DestinationDeliverer
 	pluginInfos map[string]PluginInfo
 }
 
@@ -30,6 +32,7 @@ func NewRegistry() *Registry {
 		analyzers:   make(map[string]credentials.ScopeAnalyzer),
 		serializers: make(map[string]credentials.ScopeSerializer),
 		venders:     make(map[string]credentials.CredentialVender),
+		deliverers:  make(map[string]destination.DestinationDeliverer),
 		pluginInfos: make(map[string]PluginInfo),
 	}
 }
@@ -188,6 +191,46 @@ func (r *Registry) VenderKinds() []string {
 
 	kinds := make([]string, 0, len(r.venders))
 	for k := range r.venders {
+		kinds = append(kinds, k)
+	}
+	return kinds
+}
+
+// ── DestinationDeliverer ──────────────────────────────────────────────────────
+
+// RegisterDeliverer adds a DestinationDeliverer to the registry under the given kind.
+// Returns an error if the kind is already registered in the deliverer map.
+func (r *Registry) RegisterDeliverer(kind string, d destination.DestinationDeliverer) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.deliverers[kind]; exists {
+		return fmt.Errorf("deliverer kind %q already registered", kind)
+	}
+	r.deliverers[kind] = d
+	return nil
+}
+
+// LookupDeliverer returns the DestinationDeliverer for a given kind.
+// Returns an error if the kind is not registered.
+func (r *Registry) LookupDeliverer(kind string) (destination.DestinationDeliverer, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	d, ok := r.deliverers[kind]
+	if !ok {
+		return nil, fmt.Errorf("no destination deliverer for kind %q", kind)
+	}
+	return d, nil
+}
+
+// DelivererKinds returns all registered DestinationDeliverer kinds.
+func (r *Registry) DelivererKinds() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	kinds := make([]string, 0, len(r.deliverers))
+	for k := range r.deliverers {
 		kinds = append(kinds, k)
 	}
 	return kinds

@@ -53,6 +53,7 @@ import (
 	"github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
+	"github.com/agentkms/agentkms/internal/credentials/binding"
 	"github.com/agentkms/agentkms/internal/policy"
 	"github.com/agentkms/agentkms/pkg/tlsutil"
 )
@@ -494,6 +495,7 @@ func runServe(args []string) error {
 	apiServer := api.NewServer(devBackend, auditor, policy.AsEngineI(eng), tokenSvc, *envFlag)
 	apiServer.SetVender(vender)
 	apiServer.SetRegistryWriter(kv)
+	apiServer.SetBindingStore(binding.NewKVBindingStore(kv))
 	apiServer.SetRateLimitInterval(time.Duration(*rateLimitFlag) * time.Second)
 
 	// ── Routes ────────────────────────────────────────────────────────────

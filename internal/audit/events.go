@@ -50,6 +50,19 @@ const (
 	OperationMetadataWrite = "metadata_write"
 	OperationMetadataList  = "metadata_list"
 	OperationSecretHistory = "secret_history"
+
+	// Binding operations — T3 credential binding data model.
+	OperationBindingRegister = "binding_register"
+	OperationBindingRotate   = "binding_rotate"
+	OperationBindingDelete   = "binding_delete"
+
+	// OperationBindingRotateStub marks a rotation that used a stub credential
+	// value because no provider plugin was available for the binding's
+	// provider_kind. Forensics queries can filter on this constant to distinguish
+	// real rotations (OperationBindingRotate) from stub-path no-op rotations.
+	// This operation is emitted in addition to the normal OperationBindingRotate
+	// event whenever the stub path is taken.
+	OperationBindingRotateStub = "binding_rotate_stub"
 )
 
 // ── Outcome constants ─────────────────────────────────────────────────────────

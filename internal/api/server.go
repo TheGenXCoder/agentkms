@@ -18,6 +18,8 @@ import (
 	"github.com/agentkms/agentkms/internal/auth"
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
+	"github.com/agentkms/agentkms/internal/credentials/binding"
+	"github.com/agentkms/agentkms/internal/plugin"
 	"github.com/agentkms/agentkms/internal/policy"
 )
 
@@ -48,8 +50,10 @@ type Server struct {
 	backend    backend.Backend
 	auditor    audit.Auditor
 	policy     policy.EngineI
-	vender         *credentials.Vender    // nil until SetVender is called
-	registryWriter credentials.KVWriter   // nil until SetRegistryWriter is called
+	vender              *credentials.Vender    // nil until SetVender is called
+	registryWriter      credentials.KVWriter   // nil until SetRegistryWriter is called
+	bindingStore        binding.BindingStore   // nil until SetBindingStore is called
+	destinationRegistry *plugin.Registry       // nil until SetDestinationRegistry is called
 	authTokens *auth.TokenService
 
 	// recoveryStore handles Layer 1 recovery codes.
@@ -96,6 +100,15 @@ func (s *Server) SetVender(v *credentials.Vender) {
 // If not called, registry write/delete endpoints return 503 Service Unavailable.
 func (s *Server) SetRegistryWriter(w credentials.KVWriter) {
 	s.registryWriter = w
+}
+
+// SetDestinationRegistry wires in the destination plugin registry after construction.
+// Call this from cmd/server/main.go or cmd/dev/main.go once the plugin host has
+// started destination plugins.
+// If not called, the rotate endpoint will return "no deliverer" errors for every
+// destination.
+func (s *Server) SetDestinationRegistry(r *plugin.Registry) {
+	s.destinationRegistry = r
 }
 
 // SetRateLimitInterval overrides the minimum interval between credential vends
@@ -241,4 +254,11 @@ func (s *Server) registerRoutes() {
 
 	// FO-C2: detection enrichment
 	s.mux.HandleFunc("POST /credentials/detect", wrap(s.handleDetectCredential))
+
+	// T3: credential binding endpoints (OSS)
+	s.mux.HandleFunc("POST /bindings", wrap(s.handleRegisterBinding))
+	s.mux.HandleFunc("GET /bindings", wrap(s.handleListBindings))
+	s.mux.HandleFunc("GET /bindings/{name}", wrap(s.handleGetBinding))
+	s.mux.HandleFunc("DELETE /bindings/{name}", wrap(s.handleDeleteBinding))
+	s.mux.HandleFunc("POST /bindings/{name}/rotate", wrap(s.handleRotateBinding))
 }

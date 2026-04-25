@@ -18,3 +18,28 @@ Thumbs.db
 *.log
 *-prompt.txt
 cli
+
+# Local secrets and scratch
+.xai.key
+grok.txt
+.kpm/
+
+# Build artifacts at repo root (binaries from `go build`)
+/agentkms-dev
+/gh-secret-deliverer
+/kpm
+/server
+/stub-validator
+
+# Personal infra and dev scripts
+/deploy/k8s/
+/scripts/dashboard.sh
+/scripts/dashboard-t3.sh
+/scripts/monitor.sh
+/scripts/monitor-t3.sh
+/scripts/spawn-all.sh
+/scripts/spawn-all-t3.sh
+/scripts/spawn-webauthn-nbde.sh
+
+# Built plugin test binaries (rebuilt by test setup)
+**/testdata/**/agentkms-plugin-*

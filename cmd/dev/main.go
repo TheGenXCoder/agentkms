@@ -54,6 +54,7 @@ import (
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/credentials/binding"
+	"github.com/agentkms/agentkms/internal/plugin"
 	"github.com/agentkms/agentkms/internal/policy"
 	"github.com/agentkms/agentkms/pkg/tlsutil"
 )
@@ -388,6 +389,7 @@ func runServe(args []string) error {
 	auditFlag := fs.String("audit", "", "audit log file (default: <dir>/audit.ndjson)")
 	envFlag := fs.String("env", "dev", "environment tag in audit events")
 	rateLimitFlag := fs.Int("rate-limit", 60, "credential vend rate limit in seconds (0 to disable)")
+	pluginDirFlag := fs.String("plugin-dir", "", "plugin directory (default: AGENTKMS_PLUGIN_DIR or ~/.agentkms/plugins)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -484,6 +486,69 @@ func runServe(args []string) error {
 			},
 		},
 	})
+
+	// ── Orchestrator plugin (optional Pro feature) ────────────────────────
+	// Resolve the plugin directory: flag → env → default.
+	pluginDir := *pluginDirFlag
+	if pluginDir == "" {
+		if v := os.Getenv("AGENTKMS_PLUGIN_DIR"); v != "" {
+			pluginDir = v
+		} else {
+			home, err := os.UserHomeDir()
+			if err == nil {
+				pluginDir = filepath.Join(home, ".agentkms", "plugins")
+			}
+		}
+	}
+
+	if pluginDir != "" {
+		if _, statErr := os.Stat(pluginDir); statErr == nil {
+			slog.Info("[plugin] discovering plugins", "dir", pluginDir)
+			pluginHost, hostErr := plugin.NewHost(pluginDir)
+			if hostErr != nil {
+				slog.Warn("[plugin] orchestrator plugin discovery failed", "error", hostErr)
+			} else {
+				discovered, discErr := pluginHost.Discover()
+				if discErr != nil {
+					slog.Warn("[plugin] orchestrator plugin discovery failed", "error", discErr)
+				} else {
+					orchestratorFound := false
+					for _, meta := range discovered {
+						if meta.Name == "orchestrator" {
+							orchestratorFound = true
+							slog.Info("[plugin] found: orchestrator", "path", meta.Path)
+
+							deps := &plugin.HostServiceDeps{
+								Store:   binding.NewKVBindingStore(kv),
+								Auditor: auditor,
+								KV:      kv,
+							}
+							pluginHost.SetHostServiceDeps(deps)
+
+							orch, initErr := pluginHost.StartOrchestrator(meta.Name)
+							if initErr != nil {
+								slog.Error("[plugin] orchestrator plugin Init failed", "error", initErr)
+							} else {
+								_ = orch // rotation hook available for future AlertOrchestrator wiring
+								slog.Info("[plugin] orchestrator plugin loaded", "path", meta.Path)
+								slog.Info("[plugin] orchestrator registered as RotationHook")
+							}
+							break
+						}
+					}
+					if !orchestratorFound {
+						slog.Info("[plugin] no orchestrator plugin found — running OSS-only rotation path")
+					}
+				}
+			}
+		} else {
+			slog.Info("[plugin] no orchestrator plugin found — running OSS-only rotation path",
+				"reason", "plugin dir not present", "dir", pluginDir)
+		}
+	} else {
+		slog.Info("[plugin] no orchestrator plugin found — running OSS-only rotation path",
+			"reason", "no plugin dir configured")
+	}
 
 	// ── Handlers ──────────────────────────────────────────────────────────
 	// authHandler owns all /auth/* routes.

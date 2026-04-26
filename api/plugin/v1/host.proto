@@ -734,6 +734,20 @@ service HostService {
 // The host calls broker.AcceptAndServe for HostService BEFORE calling Init.
 // The plugin calls broker.Dial to connect to HostService inside its Init handler.
 
+// PingRequest is empty — the host probes the plugin's liveness only.
+message PingRequest {}
+
+// PingResponse confirms the plugin subprocess is responsive.
+//
+// Returned without depending on Init having completed; the host may use Ping
+// both before Init (during plugin startup) and after Init (in the periodic
+// orchestratorHealthLoop, every 30s).
+message PingResponse {
+  HostCallbackErrorCode error_code = 1;
+  string error_message = 2;
+  int64 latency_ms = 3;  // self-reported processing time (informational)
+}
+
 // OrchestratorInitRequest carries the HostService broker ID to the plugin.
 message OrchestratorInitRequest {
   // host_broker_id is the go-plugin GRPCBroker ID for the HostService side channel.
@@ -787,6 +801,13 @@ message BindingForCredentialResponse {
 // consumed by the OSS host. The OSS PluginMap entry "rotation_orchestrator"
 // maps to this service on the GRPCClient side.
 service OrchestratorService {
+  // Ping is the host's liveness probe. Called before Init (to confirm the
+  // plugin subprocess is responsive) and periodically after Init (every 30s
+  // in the orchestratorHealthLoop). Returns HOST_OK when the plugin is healthy.
+  // Deliberately does not depend on Init having completed so the host can
+  // probe early-startup liveness.
+  rpc Ping(PingRequest) returns (PingResponse);
+
   // Init performs the plugin startup handshake. The host calls Init after
   // dispensing the plugin, passing the host_broker_id so the plugin can
   // connect to HostService. The plugin verifies its license, dials the broker,

@@ -113,6 +113,17 @@ type BindingMetadata struct {
 	// which credential to revoke at the provider after the grace period.
 	// Empty until the first successful rotation.
 	LastCredentialUUID string `json:"last_credential_uuid,omitempty"`
+
+	// BindingState reflects the operational state of the binding from the
+	// rotation orchestrator's perspective. Possible values:
+	//   "ok"             — last rotation succeeded against all destinations
+	//   "degraded"       — last rotation partial-failure (some destinations live, some stale)
+	//   "rotation_failed"— last rotation failed before any destination was updated
+	//   ""               — no rotation has yet occurred (initial state for a fresh binding)
+	//
+	// Written by the Pro rotation orchestrator via SaveBindingMetadata.
+	// Empty on bindings managed only by manual one-shot rotation.
+	BindingState string `json:"binding_state,omitempty"`
 }
 
 // ── DestinationResult ─────────────────────────────────────────────────────────

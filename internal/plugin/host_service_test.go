@@ -334,6 +334,100 @@ func TestHostService_SaveBindingMetadata_HappyPath(t *testing.T) {
 	if updated.Metadata.LastCredentialUUID != "cred-uuid-1" {
 		t.Errorf("LastCredentialUUID = %q, want %q", updated.Metadata.LastCredentialUUID, "cred-uuid-1")
 	}
+
+	// B3: BindingState must be stored in the struct field, NOT as a tag.
+	if updated.Metadata.BindingState != "ok" {
+		t.Errorf("BindingState = %q, want %q", updated.Metadata.BindingState, "ok")
+	}
+	for _, tag := range updated.Metadata.Tags {
+		if strings.HasPrefix(tag, "state:") {
+			t.Errorf("found synthetic state tag %q in Tags — must NOT be added", tag)
+		}
+	}
+}
+
+// TestHostService_SaveBindingMetadata_BindingStateRoundTrips verifies that
+// the BindingState field persisted by SaveBindingMetadata is visible through
+// GetBinding's BindingState proto field — exercising the full store→proto path.
+func TestHostService_SaveBindingMetadata_BindingStateRoundTrips(t *testing.T) {
+	b := binding.CredentialBinding{
+		Name:         "state-binding",
+		ProviderKind: "stub",
+		Destinations: []binding.DestinationSpec{{Kind: "stub-dest", TargetID: "t"}},
+		Metadata:     binding.BindingMetadata{LastGeneration: 0},
+	}
+	store := newStubStore(b)
+	srv := makeServer(store, &stubAuditor{}, newStubKV())
+
+	_, err := srv.SaveBindingMetadata(context.Background(), &pluginv1.SaveBindingMetadataRequest{
+		Name: "state-binding",
+		Patch: &pluginv1.BindingMetadataPatch{
+			LastGeneration: 1,
+			BindingState:   "degraded",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveBindingMetadata error: %v", err)
+	}
+
+	getResp, err := srv.GetBinding(context.Background(), &pluginv1.GetBindingRequest{Name: "state-binding"})
+	if err != nil {
+		t.Fatalf("GetBinding error: %v", err)
+	}
+	if getResp.ErrorCode != pluginv1.HostCallbackErrorCode_HOST_OK {
+		t.Fatalf("GetBinding error_code = %v: %s", getResp.ErrorCode, getResp.ErrorMessage)
+	}
+	if got := getResp.Binding.GetBindingState(); got != "degraded" {
+		t.Errorf("binding_state in proto = %q, want %q", got, "degraded")
+	}
+}
+
+// TestHostService_SaveBindingMetadata_LegitimateStateTag_Preserved verifies
+// that a binding with a legitimate user tag "state:approved" is not clobbered
+// or misinterpreted after SaveBindingMetadata updates the BindingState field.
+// Regression test for the original B3 tag-hack bug.
+func TestHostService_SaveBindingMetadata_LegitimateStateTag_Preserved(t *testing.T) {
+	b := binding.CredentialBinding{
+		Name:         "tagged-binding",
+		ProviderKind: "stub",
+		Destinations: []binding.DestinationSpec{{Kind: "stub-dest", TargetID: "t"}},
+		Metadata: binding.BindingMetadata{
+			LastGeneration: 0,
+			Tags:           []string{"state:approved", "env:prod"},
+		},
+	}
+	store := newStubStore(b)
+	srv := makeServer(store, &stubAuditor{}, newStubKV())
+
+	// Update BindingState to "ok" — must NOT touch the "state:approved" tag.
+	_, err := srv.SaveBindingMetadata(context.Background(), &pluginv1.SaveBindingMetadataRequest{
+		Name: "tagged-binding",
+		Patch: &pluginv1.BindingMetadataPatch{
+			LastGeneration: 1,
+			BindingState:   "ok",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveBindingMetadata error: %v", err)
+	}
+
+	updated, _ := store.Get(context.Background(), "tagged-binding")
+
+	// User tags must pass through unchanged.
+	found := false
+	for _, tag := range updated.Metadata.Tags {
+		if tag == "state:approved" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("legitimate tag %q was lost after SaveBindingMetadata; tags = %v", "state:approved", updated.Metadata.Tags)
+	}
+
+	// BindingState struct field must hold "ok".
+	if updated.Metadata.BindingState != "ok" {
+		t.Errorf("BindingState = %q, want %q", updated.Metadata.BindingState, "ok")
+	}
 }
 
 func TestHostService_SaveBindingMetadata_GenerationRegression_Rejected(t *testing.T) {

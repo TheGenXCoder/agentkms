@@ -96,8 +96,9 @@ type BindingMetadata struct {
 | `last_generation` | uint64 | Monotonically increasing rotation counter. Zero until the first rotation. |
 | `tags` | []string | Free-form labels for filtering. |
 | `last_credential_uuid` | string | UUID of the most recent vended credential. Used by the Pro rotation orchestrator for grace-period revocation. Empty until first successful rotation. |
+| `binding_state` | string | Operational state from the rotation orchestrator's perspective. Values: `""` (initial/no rotation yet), `"ok"` (last rotation succeeded all destinations), `"degraded"` (partial failure), `"rotation_failed"` (failed before any destination was updated). Written by the Pro orchestrator via `SaveBindingMetadata`. Empty on OSS-only bindings. Stored directly in the struct field (`omitempty`); never as a synthetic tag. |
 
-`last_credential_uuid` is written by the rotation orchestrator (Pro tier) on each successful rotation and persisted via the standard `BindingStore.Save` call. OSS code does not write to this field.
+`last_credential_uuid` and `binding_state` are written by the rotation orchestrator (Pro tier) on each successful rotation and persisted via the standard `BindingStore.Save` call. OSS code does not write to these fields.
 
 **Validation rules:**
 - `name`: required, matches `^[a-z][a-z0-9-]{0,62}$`

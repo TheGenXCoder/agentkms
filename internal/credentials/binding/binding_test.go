@@ -147,6 +147,63 @@ func TestJSONRoundTrip_LastCredentialUUID_OmitEmpty(t *testing.T) {
 	}
 }
 
+// TestJSONRoundTrip_BindingState verifies that the BindingState field
+// survives a JSON marshal/unmarshal cycle and is omitted when empty.
+func TestJSONRoundTrip_BindingState(t *testing.T) {
+	// Non-empty: round-trips correctly.
+	b := validBinding("state-round-trip")
+	b.Metadata.BindingState = "ok"
+
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var b2 binding.CredentialBinding
+	if err := json.Unmarshal(data, &b2); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if b2.Metadata.BindingState != "ok" {
+		t.Errorf("BindingState: got %q want %q", b2.Metadata.BindingState, "ok")
+	}
+
+	// Empty: must be absent from JSON (omitempty).
+	b3 := validBinding("state-omitempty")
+	// BindingState intentionally left empty
+	data3, err := json.Marshal(b3)
+	if err != nil {
+		t.Fatalf("marshal empty: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data3, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+	meta, ok := raw["metadata"].(map[string]any)
+	if !ok {
+		t.Fatal("metadata not a map")
+	}
+	if _, present := meta["binding_state"]; present {
+		t.Error("binding_state should be absent from JSON when empty (omitempty)")
+	}
+
+	// All valid state strings round-trip.
+	for _, state := range []string{"ok", "degraded", "rotation_failed"} {
+		b4 := validBinding("state-" + state)
+		b4.Metadata.BindingState = state
+		d, err := json.Marshal(b4)
+		if err != nil {
+			t.Fatalf("marshal %q: %v", state, err)
+		}
+		var b5 binding.CredentialBinding
+		if err := json.Unmarshal(d, &b5); err != nil {
+			t.Fatalf("unmarshal %q: %v", state, err)
+		}
+		if b5.Metadata.BindingState != state {
+			t.Errorf("state %q: got %q after round-trip", state, b5.Metadata.BindingState)
+		}
+	}
+}
+
 // ── Storage round-trip ────────────────────────────────────────────────────────
 
 func TestKVBindingStore_SaveGetDeleteList(t *testing.T) {

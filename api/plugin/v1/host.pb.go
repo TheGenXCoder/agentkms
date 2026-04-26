@@ -2172,6 +2172,108 @@ func (x *AckRevocationResponse) GetErrorMessage() string {
 	return ""
 }
 
+// PingRequest is empty — the host probes the plugin's liveness only.
+type PingRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PingRequest) Reset() {
+	*x = PingRequest{}
+	mi := &file_host_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PingRequest) ProtoMessage() {}
+
+func (x *PingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_host_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
+func (*PingRequest) Descriptor() ([]byte, []int) {
+	return file_host_proto_rawDescGZIP(), []int{29}
+}
+
+// PingResponse confirms the plugin subprocess is responsive.
+//
+// Returned without depending on Init having completed; the host may use Ping
+// both before Init (during plugin startup) and after Init (in the periodic
+// orchestratorHealthLoop, every 30s).
+type PingResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ErrorCode     HostCallbackErrorCode  `protobuf:"varint,1,opt,name=error_code,json=errorCode,proto3,enum=agentkms.plugin.v1.HostCallbackErrorCode" json:"error_code,omitempty"`
+	ErrorMessage  string                 `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	LatencyMs     int64                  `protobuf:"varint,3,opt,name=latency_ms,json=latencyMs,proto3" json:"latency_ms,omitempty"` // self-reported processing time (informational)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PingResponse) Reset() {
+	*x = PingResponse{}
+	mi := &file_host_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PingResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PingResponse) ProtoMessage() {}
+
+func (x *PingResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_host_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PingResponse.ProtoReflect.Descriptor instead.
+func (*PingResponse) Descriptor() ([]byte, []int) {
+	return file_host_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *PingResponse) GetErrorCode() HostCallbackErrorCode {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return HostCallbackErrorCode_HOST_ERROR_UNSPECIFIED
+}
+
+func (x *PingResponse) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+func (x *PingResponse) GetLatencyMs() int64 {
+	if x != nil {
+		return x.LatencyMs
+	}
+	return 0
+}
+
 // OrchestratorInitRequest carries the HostService broker ID to the plugin.
 type OrchestratorInitRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2185,7 +2287,7 @@ type OrchestratorInitRequest struct {
 
 func (x *OrchestratorInitRequest) Reset() {
 	*x = OrchestratorInitRequest{}
-	mi := &file_host_proto_msgTypes[29]
+	mi := &file_host_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2197,7 +2299,7 @@ func (x *OrchestratorInitRequest) String() string {
 func (*OrchestratorInitRequest) ProtoMessage() {}
 
 func (x *OrchestratorInitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_host_proto_msgTypes[29]
+	mi := &file_host_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2210,7 +2312,7 @@ func (x *OrchestratorInitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OrchestratorInitRequest.ProtoReflect.Descriptor instead.
 func (*OrchestratorInitRequest) Descriptor() ([]byte, []int) {
-	return file_host_proto_rawDescGZIP(), []int{29}
+	return file_host_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *OrchestratorInitRequest) GetHostBrokerId() uint32 {
@@ -2233,7 +2335,7 @@ type OrchestratorInitResponse struct {
 
 func (x *OrchestratorInitResponse) Reset() {
 	*x = OrchestratorInitResponse{}
-	mi := &file_host_proto_msgTypes[30]
+	mi := &file_host_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2245,7 +2347,7 @@ func (x *OrchestratorInitResponse) String() string {
 func (*OrchestratorInitResponse) ProtoMessage() {}
 
 func (x *OrchestratorInitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_host_proto_msgTypes[30]
+	mi := &file_host_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2258,7 +2360,7 @@ func (x *OrchestratorInitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OrchestratorInitResponse.ProtoReflect.Descriptor instead.
 func (*OrchestratorInitResponse) Descriptor() ([]byte, []int) {
-	return file_host_proto_rawDescGZIP(), []int{30}
+	return file_host_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *OrchestratorInitResponse) GetErrorMessage() string {
@@ -2280,7 +2382,7 @@ type TriggerRotationRequest struct {
 
 func (x *TriggerRotationRequest) Reset() {
 	*x = TriggerRotationRequest{}
-	mi := &file_host_proto_msgTypes[31]
+	mi := &file_host_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2292,7 +2394,7 @@ func (x *TriggerRotationRequest) String() string {
 func (*TriggerRotationRequest) ProtoMessage() {}
 
 func (x *TriggerRotationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_host_proto_msgTypes[31]
+	mi := &file_host_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2305,7 +2407,7 @@ func (x *TriggerRotationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TriggerRotationRequest.ProtoReflect.Descriptor instead.
 func (*TriggerRotationRequest) Descriptor() ([]byte, []int) {
-	return file_host_proto_rawDescGZIP(), []int{31}
+	return file_host_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *TriggerRotationRequest) GetCredentialUuid() string {
@@ -2326,7 +2428,7 @@ type TriggerRotationResponse struct {
 
 func (x *TriggerRotationResponse) Reset() {
 	*x = TriggerRotationResponse{}
-	mi := &file_host_proto_msgTypes[32]
+	mi := &file_host_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2338,7 +2440,7 @@ func (x *TriggerRotationResponse) String() string {
 func (*TriggerRotationResponse) ProtoMessage() {}
 
 func (x *TriggerRotationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_host_proto_msgTypes[32]
+	mi := &file_host_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2351,7 +2453,7 @@ func (x *TriggerRotationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TriggerRotationResponse.ProtoReflect.Descriptor instead.
 func (*TriggerRotationResponse) Descriptor() ([]byte, []int) {
-	return file_host_proto_rawDescGZIP(), []int{32}
+	return file_host_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *TriggerRotationResponse) GetErrorMessage() string {
@@ -2372,7 +2474,7 @@ type BindingForCredentialRequest struct {
 
 func (x *BindingForCredentialRequest) Reset() {
 	*x = BindingForCredentialRequest{}
-	mi := &file_host_proto_msgTypes[33]
+	mi := &file_host_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2384,7 +2486,7 @@ func (x *BindingForCredentialRequest) String() string {
 func (*BindingForCredentialRequest) ProtoMessage() {}
 
 func (x *BindingForCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_host_proto_msgTypes[33]
+	mi := &file_host_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2397,7 +2499,7 @@ func (x *BindingForCredentialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BindingForCredentialRequest.ProtoReflect.Descriptor instead.
 func (*BindingForCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_host_proto_rawDescGZIP(), []int{33}
+	return file_host_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *BindingForCredentialRequest) GetCredentialUuid() string {
@@ -2424,7 +2526,7 @@ type BindingForCredentialResponse struct {
 
 func (x *BindingForCredentialResponse) Reset() {
 	*x = BindingForCredentialResponse{}
-	mi := &file_host_proto_msgTypes[34]
+	mi := &file_host_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2436,7 +2538,7 @@ func (x *BindingForCredentialResponse) String() string {
 func (*BindingForCredentialResponse) ProtoMessage() {}
 
 func (x *BindingForCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_host_proto_msgTypes[34]
+	mi := &file_host_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2449,7 +2551,7 @@ func (x *BindingForCredentialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BindingForCredentialResponse.ProtoReflect.Descriptor instead.
 func (*BindingForCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_host_proto_rawDescGZIP(), []int{34}
+	return file_host_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *BindingForCredentialResponse) GetBindingName() string {
@@ -2633,7 +2735,14 @@ const file_host_proto_rawDesc = "" +
 	"\x15AckRevocationResponse\x12H\n" +
 	"\n" +
 	"error_code\x18\x01 \x01(\x0e2).agentkms.plugin.v1.HostCallbackErrorCodeR\terrorCode\x12#\n" +
-	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"?\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"\r\n" +
+	"\vPingRequest\"\x9c\x01\n" +
+	"\fPingResponse\x12H\n" +
+	"\n" +
+	"error_code\x18\x01 \x01(\x0e2).agentkms.plugin.v1.HostCallbackErrorCodeR\terrorCode\x12#\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12\x1d\n" +
+	"\n" +
+	"latency_ms\x18\x03 \x01(\x03R\tlatencyMs\"?\n" +
 	"\x17OrchestratorInitRequest\x12$\n" +
 	"\x0ehost_broker_id\x18\x01 \x01(\rR\fhostBrokerId\"?\n" +
 	"\x18OrchestratorInitResponse\x12#\n" +
@@ -2667,8 +2776,9 @@ const file_host_proto_rawDesc = "" +
 	"\tEmitAudit\x12$.agentkms.plugin.v1.EmitAuditRequest\x1a%.agentkms.plugin.v1.EmitAuditResponse\x12p\n" +
 	"\x11EnqueueRevocation\x12,.agentkms.plugin.v1.EnqueueRevocationRequest\x1a-.agentkms.plugin.v1.EnqueueRevocationResponse\x12\x82\x01\n" +
 	"\x17DrainPendingRevocations\x122.agentkms.plugin.v1.DrainPendingRevocationsRequest\x1a3.agentkms.plugin.v1.DrainPendingRevocationsResponse\x12d\n" +
-	"\rAckRevocation\x12(.agentkms.plugin.v1.AckRevocationRequest\x1a).agentkms.plugin.v1.AckRevocationResponse2\xdf\x02\n" +
-	"\x13OrchestratorService\x12a\n" +
+	"\rAckRevocation\x12(.agentkms.plugin.v1.AckRevocationRequest\x1a).agentkms.plugin.v1.AckRevocationResponse2\xaa\x03\n" +
+	"\x13OrchestratorService\x12I\n" +
+	"\x04Ping\x12\x1f.agentkms.plugin.v1.PingRequest\x1a .agentkms.plugin.v1.PingResponse\x12a\n" +
 	"\x04Init\x12+.agentkms.plugin.v1.OrchestratorInitRequest\x1a,.agentkms.plugin.v1.OrchestratorInitResponse\x12j\n" +
 	"\x0fTriggerRotation\x12*.agentkms.plugin.v1.TriggerRotationRequest\x1a+.agentkms.plugin.v1.TriggerRotationResponse\x12y\n" +
 	"\x14BindingForCredential\x12/.agentkms.plugin.v1.BindingForCredentialRequest\x1a0.agentkms.plugin.v1.BindingForCredentialResponseB5Z3github.com/agentkms/agentkms/api/plugin/v1;pluginv1b\x06proto3"
@@ -2686,7 +2796,7 @@ func file_host_proto_rawDescGZIP() []byte {
 }
 
 var file_host_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_host_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_host_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_host_proto_goTypes = []any{
 	(HostCallbackErrorCode)(0),              // 0: agentkms.plugin.v1.HostCallbackErrorCode
 	(*BindingRotationPolicy)(nil),           // 1: agentkms.plugin.v1.BindingRotationPolicy
@@ -2718,85 +2828,90 @@ var file_host_proto_goTypes = []any{
 	(*DrainPendingRevocationsResponse)(nil), // 27: agentkms.plugin.v1.DrainPendingRevocationsResponse
 	(*AckRevocationRequest)(nil),            // 28: agentkms.plugin.v1.AckRevocationRequest
 	(*AckRevocationResponse)(nil),           // 29: agentkms.plugin.v1.AckRevocationResponse
-	(*OrchestratorInitRequest)(nil),         // 30: agentkms.plugin.v1.OrchestratorInitRequest
-	(*OrchestratorInitResponse)(nil),        // 31: agentkms.plugin.v1.OrchestratorInitResponse
-	(*TriggerRotationRequest)(nil),          // 32: agentkms.plugin.v1.TriggerRotationRequest
-	(*TriggerRotationResponse)(nil),         // 33: agentkms.plugin.v1.TriggerRotationResponse
-	(*BindingForCredentialRequest)(nil),     // 34: agentkms.plugin.v1.BindingForCredentialRequest
-	(*BindingForCredentialResponse)(nil),    // 35: agentkms.plugin.v1.BindingForCredentialResponse
-	(*structpb.Struct)(nil),                 // 36: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil),           // 37: google.protobuf.Timestamp
-	(*Scope)(nil),                           // 38: agentkms.plugin.v1.Scope
-	(*VendedCredential)(nil),                // 39: agentkms.plugin.v1.VendedCredential
+	(*PingRequest)(nil),                     // 30: agentkms.plugin.v1.PingRequest
+	(*PingResponse)(nil),                    // 31: agentkms.plugin.v1.PingResponse
+	(*OrchestratorInitRequest)(nil),         // 32: agentkms.plugin.v1.OrchestratorInitRequest
+	(*OrchestratorInitResponse)(nil),        // 33: agentkms.plugin.v1.OrchestratorInitResponse
+	(*TriggerRotationRequest)(nil),          // 34: agentkms.plugin.v1.TriggerRotationRequest
+	(*TriggerRotationResponse)(nil),         // 35: agentkms.plugin.v1.TriggerRotationResponse
+	(*BindingForCredentialRequest)(nil),     // 36: agentkms.plugin.v1.BindingForCredentialRequest
+	(*BindingForCredentialResponse)(nil),    // 37: agentkms.plugin.v1.BindingForCredentialResponse
+	(*structpb.Struct)(nil),                 // 38: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil),           // 39: google.protobuf.Timestamp
+	(*Scope)(nil),                           // 40: agentkms.plugin.v1.Scope
+	(*VendedCredential)(nil),                // 41: agentkms.plugin.v1.VendedCredential
 }
 var file_host_proto_depIdxs = []int32{
-	36, // 0: agentkms.plugin.v1.BindingDestinationSpec.params:type_name -> google.protobuf.Struct
-	37, // 1: agentkms.plugin.v1.BindingMetadataPatch.last_rotated_at:type_name -> google.protobuf.Timestamp
-	36, // 2: agentkms.plugin.v1.Binding.provider_params:type_name -> google.protobuf.Struct
-	38, // 3: agentkms.plugin.v1.Binding.scope:type_name -> agentkms.plugin.v1.Scope
+	38, // 0: agentkms.plugin.v1.BindingDestinationSpec.params:type_name -> google.protobuf.Struct
+	39, // 1: agentkms.plugin.v1.BindingMetadataPatch.last_rotated_at:type_name -> google.protobuf.Timestamp
+	38, // 2: agentkms.plugin.v1.Binding.provider_params:type_name -> google.protobuf.Struct
+	40, // 3: agentkms.plugin.v1.Binding.scope:type_name -> agentkms.plugin.v1.Scope
 	2,  // 4: agentkms.plugin.v1.Binding.destinations:type_name -> agentkms.plugin.v1.BindingDestinationSpec
 	1,  // 5: agentkms.plugin.v1.Binding.rotation_policy:type_name -> agentkms.plugin.v1.BindingRotationPolicy
-	37, // 6: agentkms.plugin.v1.Binding.created_at:type_name -> google.protobuf.Timestamp
-	37, // 7: agentkms.plugin.v1.Binding.last_rotated_at:type_name -> google.protobuf.Timestamp
+	39, // 6: agentkms.plugin.v1.Binding.created_at:type_name -> google.protobuf.Timestamp
+	39, // 7: agentkms.plugin.v1.Binding.last_rotated_at:type_name -> google.protobuf.Timestamp
 	4,  // 8: agentkms.plugin.v1.BindingList.bindings:type_name -> agentkms.plugin.v1.Binding
 	0,  // 9: agentkms.plugin.v1.BindingList.error_code:type_name -> agentkms.plugin.v1.HostCallbackErrorCode
-	37, // 10: agentkms.plugin.v1.PendingRevocation.scheduled_at:type_name -> google.protobuf.Timestamp
+	39, // 10: agentkms.plugin.v1.PendingRevocation.scheduled_at:type_name -> google.protobuf.Timestamp
 	5,  // 11: agentkms.plugin.v1.ListBindingsRequest.filter:type_name -> agentkms.plugin.v1.BindingFilter
 	4,  // 12: agentkms.plugin.v1.GetBindingResponse.binding:type_name -> agentkms.plugin.v1.Binding
 	0,  // 13: agentkms.plugin.v1.GetBindingResponse.error_code:type_name -> agentkms.plugin.v1.HostCallbackErrorCode
 	3,  // 14: agentkms.plugin.v1.SaveBindingMetadataRequest.patch:type_name -> agentkms.plugin.v1.BindingMetadataPatch
 	0,  // 15: agentkms.plugin.v1.SaveBindingMetadataResponse.error_code:type_name -> agentkms.plugin.v1.HostCallbackErrorCode
-	38, // 16: agentkms.plugin.v1.VendCredentialRequest.scope:type_name -> agentkms.plugin.v1.Scope
-	36, // 17: agentkms.plugin.v1.VendCredentialRequest.provider_params:type_name -> google.protobuf.Struct
-	39, // 18: agentkms.plugin.v1.VendCredentialResponse.credential:type_name -> agentkms.plugin.v1.VendedCredential
+	40, // 16: agentkms.plugin.v1.VendCredentialRequest.scope:type_name -> agentkms.plugin.v1.Scope
+	38, // 17: agentkms.plugin.v1.VendCredentialRequest.provider_params:type_name -> google.protobuf.Struct
+	41, // 18: agentkms.plugin.v1.VendCredentialResponse.credential:type_name -> agentkms.plugin.v1.VendedCredential
 	0,  // 19: agentkms.plugin.v1.VendCredentialResponse.error_code:type_name -> agentkms.plugin.v1.HostCallbackErrorCode
-	36, // 20: agentkms.plugin.v1.DeliverToDestinationRequest.params:type_name -> google.protobuf.Struct
-	37, // 21: agentkms.plugin.v1.DeliverToDestinationRequest.expires_at:type_name -> google.protobuf.Timestamp
+	38, // 20: agentkms.plugin.v1.DeliverToDestinationRequest.params:type_name -> google.protobuf.Struct
+	39, // 21: agentkms.plugin.v1.DeliverToDestinationRequest.expires_at:type_name -> google.protobuf.Timestamp
 	0,  // 22: agentkms.plugin.v1.DeliverToDestinationResponse.error_code:type_name -> agentkms.plugin.v1.HostCallbackErrorCode
-	36, // 23: agentkms.plugin.v1.RevokeAtDestinationRequest.params:type_name -> google.protobuf.Struct
+	38, // 23: agentkms.plugin.v1.RevokeAtDestinationRequest.params:type_name -> google.protobuf.Struct
 	0,  // 24: agentkms.plugin.v1.RevokeAtDestinationResponse.error_code:type_name -> agentkms.plugin.v1.HostCallbackErrorCode
 	0,  // 25: agentkms.plugin.v1.RevokeCredentialResponse.error_code:type_name -> agentkms.plugin.v1.HostCallbackErrorCode
 	8,  // 26: agentkms.plugin.v1.EmitAuditRequest.event:type_name -> agentkms.plugin.v1.AuditEventProto
 	0,  // 27: agentkms.plugin.v1.EmitAuditResponse.error_code:type_name -> agentkms.plugin.v1.HostCallbackErrorCode
-	37, // 28: agentkms.plugin.v1.EnqueueRevocationRequest.scheduled_at:type_name -> google.protobuf.Timestamp
+	39, // 28: agentkms.plugin.v1.EnqueueRevocationRequest.scheduled_at:type_name -> google.protobuf.Timestamp
 	0,  // 29: agentkms.plugin.v1.EnqueueRevocationResponse.error_code:type_name -> agentkms.plugin.v1.HostCallbackErrorCode
-	37, // 30: agentkms.plugin.v1.DrainPendingRevocationsRequest.now:type_name -> google.protobuf.Timestamp
+	39, // 30: agentkms.plugin.v1.DrainPendingRevocationsRequest.now:type_name -> google.protobuf.Timestamp
 	7,  // 31: agentkms.plugin.v1.DrainPendingRevocationsResponse.revocations:type_name -> agentkms.plugin.v1.PendingRevocation
 	0,  // 32: agentkms.plugin.v1.DrainPendingRevocationsResponse.error_code:type_name -> agentkms.plugin.v1.HostCallbackErrorCode
 	0,  // 33: agentkms.plugin.v1.AckRevocationResponse.error_code:type_name -> agentkms.plugin.v1.HostCallbackErrorCode
-	9,  // 34: agentkms.plugin.v1.HostService.ListBindings:input_type -> agentkms.plugin.v1.ListBindingsRequest
-	10, // 35: agentkms.plugin.v1.HostService.GetBinding:input_type -> agentkms.plugin.v1.GetBindingRequest
-	12, // 36: agentkms.plugin.v1.HostService.SaveBindingMetadata:input_type -> agentkms.plugin.v1.SaveBindingMetadataRequest
-	14, // 37: agentkms.plugin.v1.HostService.VendCredential:input_type -> agentkms.plugin.v1.VendCredentialRequest
-	16, // 38: agentkms.plugin.v1.HostService.DeliverToDestination:input_type -> agentkms.plugin.v1.DeliverToDestinationRequest
-	18, // 39: agentkms.plugin.v1.HostService.RevokeAtDestination:input_type -> agentkms.plugin.v1.RevokeAtDestinationRequest
-	20, // 40: agentkms.plugin.v1.HostService.RevokeCredential:input_type -> agentkms.plugin.v1.RevokeCredentialRequest
-	22, // 41: agentkms.plugin.v1.HostService.EmitAudit:input_type -> agentkms.plugin.v1.EmitAuditRequest
-	24, // 42: agentkms.plugin.v1.HostService.EnqueueRevocation:input_type -> agentkms.plugin.v1.EnqueueRevocationRequest
-	26, // 43: agentkms.plugin.v1.HostService.DrainPendingRevocations:input_type -> agentkms.plugin.v1.DrainPendingRevocationsRequest
-	28, // 44: agentkms.plugin.v1.HostService.AckRevocation:input_type -> agentkms.plugin.v1.AckRevocationRequest
-	30, // 45: agentkms.plugin.v1.OrchestratorService.Init:input_type -> agentkms.plugin.v1.OrchestratorInitRequest
-	32, // 46: agentkms.plugin.v1.OrchestratorService.TriggerRotation:input_type -> agentkms.plugin.v1.TriggerRotationRequest
-	34, // 47: agentkms.plugin.v1.OrchestratorService.BindingForCredential:input_type -> agentkms.plugin.v1.BindingForCredentialRequest
-	6,  // 48: agentkms.plugin.v1.HostService.ListBindings:output_type -> agentkms.plugin.v1.BindingList
-	11, // 49: agentkms.plugin.v1.HostService.GetBinding:output_type -> agentkms.plugin.v1.GetBindingResponse
-	13, // 50: agentkms.plugin.v1.HostService.SaveBindingMetadata:output_type -> agentkms.plugin.v1.SaveBindingMetadataResponse
-	15, // 51: agentkms.plugin.v1.HostService.VendCredential:output_type -> agentkms.plugin.v1.VendCredentialResponse
-	17, // 52: agentkms.plugin.v1.HostService.DeliverToDestination:output_type -> agentkms.plugin.v1.DeliverToDestinationResponse
-	19, // 53: agentkms.plugin.v1.HostService.RevokeAtDestination:output_type -> agentkms.plugin.v1.RevokeAtDestinationResponse
-	21, // 54: agentkms.plugin.v1.HostService.RevokeCredential:output_type -> agentkms.plugin.v1.RevokeCredentialResponse
-	23, // 55: agentkms.plugin.v1.HostService.EmitAudit:output_type -> agentkms.plugin.v1.EmitAuditResponse
-	25, // 56: agentkms.plugin.v1.HostService.EnqueueRevocation:output_type -> agentkms.plugin.v1.EnqueueRevocationResponse
-	27, // 57: agentkms.plugin.v1.HostService.DrainPendingRevocations:output_type -> agentkms.plugin.v1.DrainPendingRevocationsResponse
-	29, // 58: agentkms.plugin.v1.HostService.AckRevocation:output_type -> agentkms.plugin.v1.AckRevocationResponse
-	31, // 59: agentkms.plugin.v1.OrchestratorService.Init:output_type -> agentkms.plugin.v1.OrchestratorInitResponse
-	33, // 60: agentkms.plugin.v1.OrchestratorService.TriggerRotation:output_type -> agentkms.plugin.v1.TriggerRotationResponse
-	35, // 61: agentkms.plugin.v1.OrchestratorService.BindingForCredential:output_type -> agentkms.plugin.v1.BindingForCredentialResponse
-	48, // [48:62] is the sub-list for method output_type
-	34, // [34:48] is the sub-list for method input_type
-	34, // [34:34] is the sub-list for extension type_name
-	34, // [34:34] is the sub-list for extension extendee
-	0,  // [0:34] is the sub-list for field type_name
+	0,  // 34: agentkms.plugin.v1.PingResponse.error_code:type_name -> agentkms.plugin.v1.HostCallbackErrorCode
+	9,  // 35: agentkms.plugin.v1.HostService.ListBindings:input_type -> agentkms.plugin.v1.ListBindingsRequest
+	10, // 36: agentkms.plugin.v1.HostService.GetBinding:input_type -> agentkms.plugin.v1.GetBindingRequest
+	12, // 37: agentkms.plugin.v1.HostService.SaveBindingMetadata:input_type -> agentkms.plugin.v1.SaveBindingMetadataRequest
+	14, // 38: agentkms.plugin.v1.HostService.VendCredential:input_type -> agentkms.plugin.v1.VendCredentialRequest
+	16, // 39: agentkms.plugin.v1.HostService.DeliverToDestination:input_type -> agentkms.plugin.v1.DeliverToDestinationRequest
+	18, // 40: agentkms.plugin.v1.HostService.RevokeAtDestination:input_type -> agentkms.plugin.v1.RevokeAtDestinationRequest
+	20, // 41: agentkms.plugin.v1.HostService.RevokeCredential:input_type -> agentkms.plugin.v1.RevokeCredentialRequest
+	22, // 42: agentkms.plugin.v1.HostService.EmitAudit:input_type -> agentkms.plugin.v1.EmitAuditRequest
+	24, // 43: agentkms.plugin.v1.HostService.EnqueueRevocation:input_type -> agentkms.plugin.v1.EnqueueRevocationRequest
+	26, // 44: agentkms.plugin.v1.HostService.DrainPendingRevocations:input_type -> agentkms.plugin.v1.DrainPendingRevocationsRequest
+	28, // 45: agentkms.plugin.v1.HostService.AckRevocation:input_type -> agentkms.plugin.v1.AckRevocationRequest
+	30, // 46: agentkms.plugin.v1.OrchestratorService.Ping:input_type -> agentkms.plugin.v1.PingRequest
+	32, // 47: agentkms.plugin.v1.OrchestratorService.Init:input_type -> agentkms.plugin.v1.OrchestratorInitRequest
+	34, // 48: agentkms.plugin.v1.OrchestratorService.TriggerRotation:input_type -> agentkms.plugin.v1.TriggerRotationRequest
+	36, // 49: agentkms.plugin.v1.OrchestratorService.BindingForCredential:input_type -> agentkms.plugin.v1.BindingForCredentialRequest
+	6,  // 50: agentkms.plugin.v1.HostService.ListBindings:output_type -> agentkms.plugin.v1.BindingList
+	11, // 51: agentkms.plugin.v1.HostService.GetBinding:output_type -> agentkms.plugin.v1.GetBindingResponse
+	13, // 52: agentkms.plugin.v1.HostService.SaveBindingMetadata:output_type -> agentkms.plugin.v1.SaveBindingMetadataResponse
+	15, // 53: agentkms.plugin.v1.HostService.VendCredential:output_type -> agentkms.plugin.v1.VendCredentialResponse
+	17, // 54: agentkms.plugin.v1.HostService.DeliverToDestination:output_type -> agentkms.plugin.v1.DeliverToDestinationResponse
+	19, // 55: agentkms.plugin.v1.HostService.RevokeAtDestination:output_type -> agentkms.plugin.v1.RevokeAtDestinationResponse
+	21, // 56: agentkms.plugin.v1.HostService.RevokeCredential:output_type -> agentkms.plugin.v1.RevokeCredentialResponse
+	23, // 57: agentkms.plugin.v1.HostService.EmitAudit:output_type -> agentkms.plugin.v1.EmitAuditResponse
+	25, // 58: agentkms.plugin.v1.HostService.EnqueueRevocation:output_type -> agentkms.plugin.v1.EnqueueRevocationResponse
+	27, // 59: agentkms.plugin.v1.HostService.DrainPendingRevocations:output_type -> agentkms.plugin.v1.DrainPendingRevocationsResponse
+	29, // 60: agentkms.plugin.v1.HostService.AckRevocation:output_type -> agentkms.plugin.v1.AckRevocationResponse
+	31, // 61: agentkms.plugin.v1.OrchestratorService.Ping:output_type -> agentkms.plugin.v1.PingResponse
+	33, // 62: agentkms.plugin.v1.OrchestratorService.Init:output_type -> agentkms.plugin.v1.OrchestratorInitResponse
+	35, // 63: agentkms.plugin.v1.OrchestratorService.TriggerRotation:output_type -> agentkms.plugin.v1.TriggerRotationResponse
+	37, // 64: agentkms.plugin.v1.OrchestratorService.BindingForCredential:output_type -> agentkms.plugin.v1.BindingForCredentialResponse
+	50, // [50:65] is the sub-list for method output_type
+	35, // [35:50] is the sub-list for method input_type
+	35, // [35:35] is the sub-list for extension type_name
+	35, // [35:35] is the sub-list for extension extendee
+	0,  // [0:35] is the sub-list for field type_name
 }
 
 func init() { file_host_proto_init() }
@@ -2811,7 +2926,7 @@ func file_host_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_host_proto_rawDesc), len(file_host_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   35,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

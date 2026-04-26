@@ -737,6 +737,10 @@ func (h *Host) StartOrchestrator(name string) (*OrchestratorGRPC, error) {
 	h.clients[name] = entry
 	h.mu.Unlock()
 
+	// Start background health loop. The loop calls Ping on the orchestrator's
+	// gRPC client every 30s, mirroring the destinationHealthLoop contract.
+	go h.orchestratorHealthLoop(name, entry, orchestrator.client)
+
 	log.Printf("[plugin] orchestrator %q started successfully", name)
 	return orchestrator, nil
 }
@@ -787,11 +791,26 @@ func (h *orchestratorRotationHook) BindingForCredential(ctx context.Context, cre
 	return resp.GetBindingName(), nil
 }
 
-// orchestratorHealthLoop is similar to destinationHealthLoop but for the orchestrator.
-// For now it uses basic process liveness — the orchestrator doesn't expose a Health RPC.
-func (h *Host) orchestratorHealthLoop(name string, entry *pluginEntry) {
+// orchestratorHealthErrorThreshold is the number of consecutive Ping failures
+// that trigger a restart attempt. Matches destinationHealthErrorThreshold (1):
+// one failure → attempt one restart → if restart fails, mark unavailable.
+const orchestratorHealthErrorThreshold = 1
+
+// orchestratorHealthLoop runs in a goroutine and calls Ping on the orchestrator
+// plugin's gRPC client at healthCheckInterval (30s). Mirrors the
+// destinationHealthLoop restart pattern:
+//   - Subprocess exits        → attempt one restart; on restart fail, mark failed.
+//   - Protocol ping fails     → attempt one restart; on restart fail, mark failed.
+//   - Ping RPC fails          → after orchestratorHealthErrorThreshold consecutive
+//     failures, attempt one restart; on restart fail, mark failed.
+//
+// The adapter parameter accepts any OrchestratorServiceClient so tests can
+// inject a mock without forking a subprocess.
+func (h *Host) orchestratorHealthLoop(name string, entry *pluginEntry, adapter pluginv1.OrchestratorServiceClient) {
 	ticker := time.NewTicker(healthCheckInterval)
 	defer ticker.Stop()
+
+	pingErrors := 0
 
 	for range ticker.C {
 		h.mu.Lock()
@@ -802,23 +821,54 @@ func (h *Host) orchestratorHealthLoop(name string, entry *pluginEntry) {
 		}
 
 		if entry.client.Exited() {
-			log.Printf("[plugin] orchestrator %q exited unexpectedly", name)
-			// Do not attempt automatic restart for the orchestrator —
-			// the host operator should restart the whole server or investigate.
-			h.mu.Lock()
-			delete(h.clients, name)
-			h.mu.Unlock()
+			log.Printf("[plugin] orchestrator %q exited unexpectedly — attempting restart", name)
+			if _, err := h.StartOrchestrator(name); err != nil {
+				log.Printf("[plugin] orchestrator %q restart failed: %v — marking failed", name, err)
+				h.mu.Lock()
+				delete(h.clients, name)
+				h.mu.Unlock()
+			}
 			return
 		}
 
+		// Protocol-level ping (go-plugin keepalive).
 		rpcClient, err := entry.client.Client()
 		if err != nil || rpcClient.Ping() != nil {
-			log.Printf("[plugin] orchestrator %q protocol ping failed", name)
+			log.Printf("[plugin] orchestrator %q protocol ping failed — attempting restart", name)
 			entry.client.Kill()
-			h.mu.Lock()
-			delete(h.clients, name)
-			h.mu.Unlock()
+			if _, err := h.StartOrchestrator(name); err != nil {
+				log.Printf("[plugin] orchestrator %q restart failed: %v — marking failed", name, err)
+				h.mu.Lock()
+				delete(h.clients, name)
+				h.mu.Unlock()
+			}
 			return
+		}
+
+		// OrchestratorService-level Ping RPC.
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		pingResp, pingErr := adapter.Ping(pingCtx, &pluginv1.PingRequest{})
+		pingCancel()
+		if pingErr != nil || (pingResp != nil && pingResp.ErrorCode != pluginv1.HostCallbackErrorCode_HOST_OK) {
+			pingErrors++
+			log.Printf("[plugin] orchestrator %q Ping RPC failed (error #%d): %v", name, pingErrors, pingErr)
+
+			if pingErrors >= orchestratorHealthErrorThreshold {
+				log.Printf("[plugin] orchestrator %q Ping failure threshold reached — attempting restart", name)
+				entry.client.Kill()
+				if _, restartErr := h.StartOrchestrator(name); restartErr != nil {
+					log.Printf("[plugin] orchestrator %q restart after Ping failure failed: %v — marking failed", name, restartErr)
+					h.mu.Lock()
+					delete(h.clients, name)
+					h.mu.Unlock()
+				}
+				return
+			}
+		} else {
+			if pingErrors > 0 {
+				log.Printf("[plugin] orchestrator %q Ping recovered after %d errors", name, pingErrors)
+			}
+			pingErrors = 0
 		}
 	}
 }

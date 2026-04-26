@@ -838,6 +838,7 @@ var HostService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	OrchestratorService_Ping_FullMethodName                 = "/agentkms.plugin.v1.OrchestratorService/Ping"
 	OrchestratorService_Init_FullMethodName                 = "/agentkms.plugin.v1.OrchestratorService/Init"
 	OrchestratorService_TriggerRotation_FullMethodName      = "/agentkms.plugin.v1.OrchestratorService/TriggerRotation"
 	OrchestratorService_BindingForCredential_FullMethodName = "/agentkms.plugin.v1.OrchestratorService/BindingForCredential"
@@ -851,6 +852,12 @@ const (
 // consumed by the OSS host. The OSS PluginMap entry "rotation_orchestrator"
 // maps to this service on the GRPCClient side.
 type OrchestratorServiceClient interface {
+	// Ping is the host's liveness probe. Called before Init (to confirm the
+	// plugin subprocess is responsive) and periodically after Init (every 30s
+	// in the orchestratorHealthLoop). Returns HOST_OK when the plugin is healthy.
+	// Deliberately does not depend on Init having completed so the host can
+	// probe early-startup liveness.
+	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 	// Init performs the plugin startup handshake. The host calls Init after
 	// dispensing the plugin, passing the host_broker_id so the plugin can
 	// connect to HostService. The plugin verifies its license, dials the broker,
@@ -874,6 +881,16 @@ type orchestratorServiceClient struct {
 
 func NewOrchestratorServiceClient(cc grpc.ClientConnInterface) OrchestratorServiceClient {
 	return &orchestratorServiceClient{cc}
+}
+
+func (c *orchestratorServiceClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PingResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_Ping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *orchestratorServiceClient) Init(ctx context.Context, in *OrchestratorInitRequest, opts ...grpc.CallOption) (*OrchestratorInitResponse, error) {
@@ -914,6 +931,12 @@ func (c *orchestratorServiceClient) BindingForCredential(ctx context.Context, in
 // consumed by the OSS host. The OSS PluginMap entry "rotation_orchestrator"
 // maps to this service on the GRPCClient side.
 type OrchestratorServiceServer interface {
+	// Ping is the host's liveness probe. Called before Init (to confirm the
+	// plugin subprocess is responsive) and periodically after Init (every 30s
+	// in the orchestratorHealthLoop). Returns HOST_OK when the plugin is healthy.
+	// Deliberately does not depend on Init having completed so the host can
+	// probe early-startup liveness.
+	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	// Init performs the plugin startup handshake. The host calls Init after
 	// dispensing the plugin, passing the host_broker_id so the plugin can
 	// connect to HostService. The plugin verifies its license, dials the broker,
@@ -939,6 +962,9 @@ type OrchestratorServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedOrchestratorServiceServer struct{}
 
+func (UnimplementedOrchestratorServiceServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Ping not implemented")
+}
 func (UnimplementedOrchestratorServiceServer) Init(context.Context, *OrchestratorInitRequest) (*OrchestratorInitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Init not implemented")
 }
@@ -967,6 +993,24 @@ func RegisterOrchestratorServiceServer(s grpc.ServiceRegistrar, srv Orchestrator
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&OrchestratorService_ServiceDesc, srv)
+}
+
+func _OrchestratorService_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).Ping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_Ping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).Ping(ctx, req.(*PingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _OrchestratorService_Init_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -1030,6 +1074,10 @@ var OrchestratorService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "agentkms.plugin.v1.OrchestratorService",
 	HandlerType: (*OrchestratorServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Ping",
+			Handler:    _OrchestratorService_Ping_Handler,
+		},
 		{
 			MethodName: "Init",
 			Handler:    _OrchestratorService_Init_Handler,

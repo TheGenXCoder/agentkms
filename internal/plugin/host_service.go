@@ -186,12 +186,9 @@ func matchesFilter(b binding.CredentialBinding, f *pluginv1.BindingFilter) bool 
 		return false
 	}
 	if bs := f.GetBindingState(); bs != "" {
-		// BindingState is stored in BindingMetadata but not in RotationPolicy.
-		// We check via the Tags field which carries binding_state as a tag
-		// (stored by the orchestrator via SaveBindingMetadata).
-		// TODO(T5): When BindingMetadata gains a BindingState field directly,
-		// update this to check that field instead.
-		_ = bs // accept all states until BindingState field is on BindingMetadata
+		if b.Metadata.BindingState != bs {
+			return false
+		}
 	}
 	for _, tag := range f.GetTags() {
 		if !containsTag(b.Metadata.Tags, tag) {
@@ -291,9 +288,7 @@ func (s *hostServiceServer) SaveBindingMetadata(ctx context.Context, req *plugin
 		b.Metadata.LastRotatedAt = ts.AsTime().UTC().Format(time.RFC3339)
 	}
 	if bs := patch.GetBindingState(); bs != "" {
-		// Store binding_state in the Tags list as "state:<value>" for now.
-		// When BindingMetadata gains a BindingState field, migrate this.
-		b.Metadata.Tags = setStateTag(b.Metadata.Tags, bs)
+		b.Metadata.BindingState = bs
 	}
 	if uuid := patch.GetLastCredentialUuid(); uuid != "" {
 		b.Metadata.LastCredentialUUID = uuid
@@ -309,19 +304,6 @@ func (s *hostServiceServer) SaveBindingMetadata(ctx context.Context, req *plugin
 	return &pluginv1.SaveBindingMetadataResponse{
 		ErrorCode: pluginv1.HostCallbackErrorCode_HOST_OK,
 	}, nil
-}
-
-// setStateTag replaces or adds "state:<value>" in the tags list.
-func setStateTag(tags []string, state string) []string {
-	const prefix = "state:"
-	newTag := prefix + state
-	for i, t := range tags {
-		if strings.HasPrefix(t, prefix) {
-			tags[i] = newTag
-			return tags
-		}
-	}
-	return append(tags, newTag)
 }
 
 // ── Provider invocation ───────────────────────────────────────────────────────
@@ -775,13 +757,8 @@ func bindingToProto(b binding.CredentialBinding) (*pluginv1.Binding, error) {
 		}
 	}
 
-	// Extract binding_state from tags.
-	for _, tag := range b.Metadata.Tags {
-		if strings.HasPrefix(tag, "state:") {
-			pb.BindingState = strings.TrimPrefix(tag, "state:")
-			break
-		}
-	}
+	// Read binding_state directly from the struct field.
+	pb.BindingState = b.Metadata.BindingState
 
 	return pb, nil
 }

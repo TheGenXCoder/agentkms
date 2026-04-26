@@ -1,33 +1,40 @@
-// Subprocess destination plugin binary for AgentKMS integration tests and
-// local development.
+// agentkms-plugin-gh-secret is the OSS GitHub Secret destination plugin for AgentKMS.
 //
-// DEPRECATED LOCATION: The canonical production entry point has moved to
-// cmd/agentkms-plugin-gh-secret/main.go. This file is retained as a
-// subprocess test fixture (analogous to noop-deliverer). Do not add new
-// production features here — add them to the cmd/ entry point instead.
+// It implements the DestinationDelivererService gRPC service (defined in
+// api/plugin/v1/destination.proto) and is loaded by the AgentKMS host as a
+// hashicorp/go-plugin subprocess under the PluginMap key "destination_deliverer".
 //
-// Implements DestinationDelivererService for Kind="github-secret" using the
-// hashicorp/go-plugin gRPC transport and the agentkms_plugin_v1 magic cookie.
+// This binary wires the ghsecret.Deliverer to the gRPC server-side stub.
+// The binary is signed and placed in the plugin directory; the host loads it
+// via StartDestination().
 //
-// This binary wires the ghsecret.Deliverer to the gRPC server-side stub. In
-// tests it is built on-demand and used as a subprocess fixture.
-//
-// Build this binary for tests:
-//
-//	go build -o internal/destination/testdata/gh-secret-deliverer/agentkms-plugin-gh-secret \
-//	    ./internal/destination/testdata/gh-secret-deliverer/
-//
-// For production deployment, use the canonical entry point instead:
+// Build and install with:
 //
 //	./scripts/deploy-oss-plugins.sh --no-sign
+//
+// Or build manually:
+//
+//	go build -o ~/.agentkms/plugins/agentkms-plugin-gh-secret \
+//	    ./cmd/agentkms-plugin-gh-secret/
 //
 // The binary reports:
 //   - Kind = "github-secret"
 //   - Capabilities = ["health", "revoke"]
 //
 // Authentication, encryption, and GitHub API calls behave identically to the
-// production ghsecret.Deliverer. Override AGENTKMS_GH_BASE_URL in the
-// environment to redirect API calls to an httptest server.
+// ghsecret.Deliverer. Override AGENTKMS_GH_BASE_URL in the environment to
+// redirect API calls to an httptest server (useful for integration tests).
+//
+// Note: The original source for this binary lived at
+// internal/destination/testdata/gh-secret-deliverer/main.go. That file has
+// been superseded by this canonical location; the testdata copy is retained
+// only for historical reference.
+//
+// HandshakeConfig matches the OSS host (internal/plugin/plugins.go):
+//
+//	ProtocolVersion:  1
+//	MagicCookieKey:   "PLUGIN_MAGIC_COOKIE"
+//	MagicCookieValue: "agentkms_plugin_v1"
 package main
 
 import (
@@ -142,7 +149,7 @@ func (p *ghDelivererPlugin) GRPCClient(_ context.Context, _ *goplugin.GRPCBroker
 	panic("GRPCClient called on server-side plugin binary")
 }
 
-// HandshakeConfig must match the host exactly.
+// handshakeConfig must match the host exactly (internal/plugin/plugins.go).
 var handshakeConfig = goplugin.HandshakeConfig{
 	ProtocolVersion:  1,
 	MagicCookieKey:   "PLUGIN_MAGIC_COOKIE",

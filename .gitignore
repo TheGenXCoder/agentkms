@@ -27,6 +27,7 @@ grok.txt
 # Build artifacts at repo root (binaries from `go build`)
 /agentkms-dev
 /agentkms-license
+/dev
 /gh-secret-deliverer
 /kpm
 /server

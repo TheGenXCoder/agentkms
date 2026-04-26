@@ -31,7 +31,9 @@ import (
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/credentials/binding"
 	"github.com/agentkms/agentkms/internal/policy"
+	"github.com/agentkms/agentkms/internal/revocation"
 	"github.com/agentkms/agentkms/internal/ui"
+	"github.com/agentkms/agentkms/internal/webhooks"
 	"github.com/agentkms/agentkms/pkg/tlsutil"
 )
 
@@ -71,6 +73,9 @@ func main() {
 	// LV-05: Master key rotation flags
 	masterKeys := flag.String("master-keys", envOr("AGENTKMS_MASTER_KEYS", ""), "Comma-separated list of master keys to rotate")
 	rotateInterval := flag.Duration("rotation-interval", credentials.MasterKeyRotationInterval, "Rotation interval for master keys")
+
+	// Webhook flags
+	webhookSecret := flag.String("webhook-secret", envOr("AGENTKMS_WEBHOOK_SECRET", ""), "HMAC secret for GitHub secret-scanning webhooks (enables /webhooks/github/secret-scanning)")
 
 	flag.Parse()
 
@@ -320,6 +325,27 @@ func main() {
 		apiServer.SetRegistryWriter(kv)
 		apiServer.SetBindingStore(binding.NewKVBindingStore(kv))
 		slog.Info("credential vender, registry writer, and binding store ready")
+	}
+
+	// ── AlertOrchestrator (webhook-triggered rotation) ────────────────────────
+	// Wire the AlertOrchestrator so that GitHub secret-scanning webhook events
+	// flow through the three-branch orchestration decision tree (T5/T6 design).
+	// In production, ConsoleNotifier is used (Slack integration is v0.4).
+	// The revoker is NoopRevoker for now; a production GitHubPATRevoker is wired
+	// during the v0.4 release when live PAT revocation is enabled.
+	alertOrch := webhooks.NewAlertOrchestrator(
+		webhooks.NewDevAuditStore(), // TODO(T7): replace with NDJSON-backed AuditStore
+		revocation.NewNoopRevoker(), // TODO(T7): replace with GitHubPATRevoker
+		auditor,
+		webhooks.NewConsoleNotifier(),
+	)
+	apiServer.SetAlertOrchestrator(alertOrch)
+	if *webhookSecret != "" {
+		apiServer.RegisterGitHubWebhookHandler(*webhookSecret)
+		slog.Info("GitHub secret-scanning webhook handler registered",
+			"route", "POST /webhooks/github/secret-scanning")
+	} else {
+		slog.Info("GitHub secret-scanning webhook handler not registered (set --webhook-secret or AGENTKMS_WEBHOOK_SECRET to enable)")
 	}
 
 	mux := http.NewServeMux()

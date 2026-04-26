@@ -10,6 +10,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/agentkms/agentkms/internal/credentials/binding"
 	"github.com/agentkms/agentkms/internal/plugin"
 	"github.com/agentkms/agentkms/internal/policy"
+	"github.com/agentkms/agentkms/internal/webhooks"
 )
 
 // Server holds the dependencies for all API handlers and owns the HTTP mux.
@@ -54,6 +56,8 @@ type Server struct {
 	registryWriter      credentials.KVWriter   // nil until SetRegistryWriter is called
 	bindingStore        binding.BindingStore   // nil until SetBindingStore is called
 	destinationRegistry *plugin.Registry       // nil until SetDestinationRegistry is called
+	alertOrchestrator   *webhooks.AlertOrchestrator // nil until SetAlertOrchestrator is called
+	githubWebhookHandler *webhooks.GitHubWebhookHandler // nil until RegisterGitHubWebhookHandler is called
 	authTokens *auth.TokenService
 
 	// recoveryStore handles Layer 1 recovery codes.
@@ -109,6 +113,51 @@ func (s *Server) SetRegistryWriter(w credentials.KVWriter) {
 // destination.
 func (s *Server) SetDestinationRegistry(r *plugin.Registry) {
 	s.destinationRegistry = r
+}
+
+// SetAlertOrchestrator wires an AlertOrchestrator into the Server so that the
+// GitHub secret-scanning webhook handler can dispatch alerts through it.
+// Must be called before Listen/Serve to take effect on incoming webhooks.
+// If not called, the webhook endpoint still accepts requests but is a no-op
+// (returns 200 OK without triggering any orchestration).
+func (s *Server) SetAlertOrchestrator(orch *webhooks.AlertOrchestrator) {
+	s.alertOrchestrator = orch
+}
+
+// SetRotationHook registers a RotationHook implementation with the underlying
+// AlertOrchestrator. If the AlertOrchestrator has not been set (via
+// SetAlertOrchestrator), this is a no-op with a warning log.
+// Safe to call after Listen because the AlertOrchestrator's SetRotationHook
+// uses a single-writer startup pattern (no concurrent webhook processing
+// expected during startup).
+func (s *Server) SetRotationHook(hook webhooks.RotationHook) {
+	if s.alertOrchestrator == nil {
+		slog.Warn("SetRotationHook called but AlertOrchestrator is nil; webhook-triggered rotation will not work")
+		return
+	}
+	s.alertOrchestrator.SetRotationHook(hook)
+}
+
+// RegisterGitHubWebhookHandler registers the GitHub secret-scanning webhook handler
+// on the server's internal mux. The handler is wired to the AlertOrchestrator if one
+// has been set via SetAlertOrchestrator. Must be called before the server starts
+// serving; calling it after Listen has no effect because the mux is already bound.
+//
+// The route registered is: POST /webhooks/github/secret-scanning
+// This path matches the test expectations in github_orchestration_test.go and the T6
+// runbook §4.2. The handler verifies HMAC-SHA256 (X-Hub-Signature-256 header) using
+// webhookSecret before dispatching to the orchestrator.
+func (s *Server) RegisterGitHubWebhookHandler(webhookSecret string) {
+	h := webhooks.NewGitHubWebhookHandler(webhookSecret)
+	if s.alertOrchestrator != nil {
+		h.SetOrchestrator(s.alertOrchestrator)
+	} else {
+		slog.Warn("RegisterGitHubWebhookHandler called before SetAlertOrchestrator; webhook events will be accepted but no orchestration will run")
+	}
+	s.githubWebhookHandler = h
+	// Register without the authMiddleware chain: GitHub webhooks are authenticated
+	// by HMAC signature in the handler itself, not by session tokens.
+	s.mux.Handle("POST /webhooks/github/secret-scanning", h)
 }
 
 // SetRateLimitInterval overrides the minimum interval between credential vends

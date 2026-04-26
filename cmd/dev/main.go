@@ -56,6 +56,8 @@ import (
 	"github.com/agentkms/agentkms/internal/credentials/binding"
 	"github.com/agentkms/agentkms/internal/plugin"
 	"github.com/agentkms/agentkms/internal/policy"
+	"github.com/agentkms/agentkms/internal/revocation"
+	"github.com/agentkms/agentkms/internal/webhooks"
 	"github.com/agentkms/agentkms/pkg/tlsutil"
 )
 
@@ -390,6 +392,7 @@ func runServe(args []string) error {
 	envFlag := fs.String("env", "dev", "environment tag in audit events")
 	rateLimitFlag := fs.Int("rate-limit", 60, "credential vend rate limit in seconds (0 to disable)")
 	pluginDirFlag := fs.String("plugin-dir", "", "plugin directory (default: AGENTKMS_PLUGIN_DIR or ~/.agentkms/plugins)")
+	webhookSecretFlag := fs.String("webhook-secret", envOrDev("AGENTKMS_WEBHOOK_SECRET", ""), "HMAC secret for GitHub secret-scanning webhooks (enables /webhooks/github/secret-scanning)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -487,8 +490,48 @@ func runServe(args []string) error {
 		},
 	})
 
+	// ── Handlers ──────────────────────────────────────────────────────────
+	// authHandler owns all /auth/* routes.
+	authHandler := api.NewAuthHandler(tokenSvc, auditor, policy.AsEngineI(eng), *envFlag)
+
+	// apiServer owns all other routes (crypto ops, credential vending).
+	// It registers its own internal routes in NewServer; we call SetVender
+	// to wire in credential vending before any requests arrive.
+	apiServer := api.NewServer(devBackend, auditor, policy.AsEngineI(eng), tokenSvc, *envFlag)
+	apiServer.SetVender(vender)
+	apiServer.SetRegistryWriter(kv)
+	apiServer.SetBindingStore(binding.NewKVBindingStore(kv))
+	apiServer.SetRateLimitInterval(time.Duration(*rateLimitFlag) * time.Second)
+
+	// ── AlertOrchestrator (OSS webhook orchestration) ─────────────────────
+	// Construct the AlertOrchestrator unconditionally. In dev mode we use
+	// ConsoleNotifier (writes structured lines to stderr) and NoopRevoker
+	// (no live provider credentials in dev). The orchestrator is wired to
+	// apiServer and optionally extended with a RotationHook from the Pro
+	// orchestrator plugin (below).
+	alertOrch := webhooks.NewAlertOrchestrator(
+		webhooks.NewDevAuditStore(), // dev-only in-memory AuditStore
+		revocation.NewNoopRevoker(), // no live provider in dev
+		auditor,
+		webhooks.NewConsoleNotifier(),
+	)
+	apiServer.SetAlertOrchestrator(alertOrch)
+
+	// Register the GitHub secret-scanning webhook endpoint if a secret is configured.
+	// In dev mode the secret can be set via --webhook-secret or AGENTKMS_WEBHOOK_SECRET.
+	// Without a secret the endpoint is not registered (operator must opt in).
+	if *webhookSecretFlag != "" {
+		apiServer.RegisterGitHubWebhookHandler(*webhookSecretFlag)
+		slog.Info("[webhook] GitHub secret-scanning handler registered",
+			"route", "POST /webhooks/github/secret-scanning")
+	} else {
+		slog.Info("[webhook] GitHub secret-scanning handler not registered (set --webhook-secret or AGENTKMS_WEBHOOK_SECRET to enable)")
+	}
+
 	// ── Orchestrator plugin (optional Pro feature) ────────────────────────
 	// Resolve the plugin directory: flag → env → default.
+	// Must run after apiServer + AlertOrchestrator are wired so the rotation
+	// hook can be registered directly on the already-constructed apiServer.
 	pluginDir := *pluginDirFlag
 	if pluginDir == "" {
 		if v := os.Getenv("AGENTKMS_PLUGIN_DIR"); v != "" {
@@ -529,8 +572,9 @@ func runServe(args []string) error {
 							if initErr != nil {
 								slog.Error("[plugin] orchestrator plugin Init failed", "error", initErr)
 							} else {
-								_ = orch // rotation hook available for future AlertOrchestrator wiring
 								slog.Info("[plugin] orchestrator plugin loaded", "path", meta.Path)
+								rotationHook := pluginHost.RotationHookFor(orch)
+								apiServer.SetRotationHook(rotationHook)
 								slog.Info("[plugin] orchestrator registered as RotationHook")
 							}
 							break
@@ -549,19 +593,6 @@ func runServe(args []string) error {
 		slog.Info("[plugin] no orchestrator plugin found — running OSS-only rotation path",
 			"reason", "no plugin dir configured")
 	}
-
-	// ── Handlers ──────────────────────────────────────────────────────────
-	// authHandler owns all /auth/* routes.
-	authHandler := api.NewAuthHandler(tokenSvc, auditor, policy.AsEngineI(eng), *envFlag)
-
-	// apiServer owns all other routes (crypto ops, credential vending).
-	// It registers its own internal routes in NewServer; we call SetVender
-	// to wire in credential vending before any requests arrive.
-	apiServer := api.NewServer(devBackend, auditor, policy.AsEngineI(eng), tokenSvc, *envFlag)
-	apiServer.SetVender(vender)
-	apiServer.SetRegistryWriter(kv)
-	apiServer.SetBindingStore(binding.NewKVBindingStore(kv))
-	apiServer.SetRateLimitInterval(time.Duration(*rateLimitFlag) * time.Second)
 
 	// ── Routes ────────────────────────────────────────────────────────────
 	// Top-level mux: auth routes go to authHandler; everything else to apiServer.
@@ -675,4 +706,13 @@ func resolveDir(flagVal string) (string, error) {
 		return "", fmt.Errorf("cannot determine home directory (use --dir or AGENTKMS_DIR): %w", err)
 	}
 	return filepath.Join(home, ".agentkms", "dev"), nil
+}
+
+// envOrDev returns the environment variable value or the fallback.
+// Avoids shadowing the envOr helper in cmd/server/main.go.
+func envOrDev(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

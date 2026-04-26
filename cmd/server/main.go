@@ -76,6 +76,7 @@ func main() {
 
 	// Webhook flags
 	webhookSecret := flag.String("webhook-secret", envOr("AGENTKMS_WEBHOOK_SECRET", ""), "HMAC secret for GitHub secret-scanning webhooks (enables /webhooks/github/secret-scanning)")
+	webhookAuditPath := flag.String("webhook-audit-path", envOr("AGENTKMS_WEBHOOK_AUDIT_PATH", ""), "Path to NDJSON audit log used by the AlertOrchestrator AuditStore (defaults to --audit-log)")
 
 	flag.Parse()
 
@@ -331,11 +332,25 @@ func main() {
 	// Wire the AlertOrchestrator so that GitHub secret-scanning webhook events
 	// flow through the three-branch orchestration decision tree (T5/T6 design).
 	// In production, ConsoleNotifier is used (Slack integration is v0.4).
-	// The revoker is NoopRevoker for now; a production GitHubPATRevoker is wired
-	// during the v0.4 release when live PAT revocation is enabled.
+	//
+	// AuditStore: NDJSONAuditStore reads the same audit log written by
+	// audit.FileAuditSink. FindByTokenHash scans by provider_token_hash;
+	// UpdateInvalidatedAt appends a synthetic revoke event (append-only
+	// durability). The path defaults to --audit-log and can be overridden via
+	// --webhook-audit-path / AGENTKMS_WEBHOOK_AUDIT_PATH.
+	//
+	// Revoker: RevokerRegistry dispatches by CredentialType. v0.3.1 covers:
+	//   "github-pat" → GitHubPATRevoker (DELETE /installation/token, fine-grained only)
+	//   "aws-sts"    → AWSSTSRevoker (no programmatic revocation; manual escalation)
+	//   <unknown>    → NoopRevoker (manual revocation URL emitted)
+	// Classic PAT support and Slack/Anthropic revokers are v0.4.
+	orchAuditPath := *webhookAuditPath
+	if orchAuditPath == "" {
+		orchAuditPath = *auditLog
+	}
 	alertOrch := webhooks.NewAlertOrchestrator(
-		webhooks.NewDevAuditStore(), // TODO(T7): replace with NDJSON-backed AuditStore
-		revocation.NewNoopRevoker(), // TODO(T7): replace with GitHubPATRevoker
+		webhooks.NewNDJSONAuditStore(orchAuditPath),
+		revocation.NewDefaultRegistry().For("github-pat"),
 		auditor,
 		webhooks.NewConsoleNotifier(),
 	)

@@ -84,14 +84,30 @@ type AlertResult struct {
 //	ProcessAlert
 //	  → AuditStore.FindByTokenHash
 //	  → branch on InvalidatedAt / SupportsRevocation
-//	  → Revoker.Revoke (Branch 2 only)
+//	  → RotationHook.TriggerRotation (Branch 2, if hook registered and binding found)
+//	  → Revoker.Revoke (Branch 2 fallback: no hook, no binding, or hook trigger failure)
 //	  → audit.Auditor.Log
 //	  → Notifier.Notify
 type AlertOrchestrator struct {
-	store    AuditStore
-	revoker  revocation.Revoker
-	auditor  audit.Auditor
-	notifier Notifier
+	store        AuditStore
+	revoker      revocation.Revoker
+	auditor      audit.Auditor
+	notifier     Notifier
+	rotationHook RotationHook // nil until SetRotationHook is called
+}
+
+// SetRotationHook registers a RotationHook implementation on the orchestrator.
+// When set, the hook is consulted during LiveRevokedBranch processing: if the
+// credential is managed by a binding, the hook owns the full
+// rotate-then-revoke-old lifecycle and direct Revoker.Revoke is skipped.
+// If the hook is nil, or returns ErrNoBinding, or fails to trigger rotation,
+// the orchestrator falls back to the existing Revoker.Revoke path.
+//
+// SetRotationHook is intended to be called once at plugin startup before any
+// webhooks are processed. It is not safe to call concurrently with
+// ProcessAlert — the orchestrator assumes a single-writer startup pattern.
+func (o *AlertOrchestrator) SetRotationHook(hook RotationHook) {
+	o.rotationHook = hook
 }
 
 // NewAlertOrchestrator constructs an AlertOrchestrator with the given dependencies.
@@ -191,6 +207,15 @@ func (o *AlertOrchestrator) handleExpiredBranch(ctx context.Context, record *Cre
 }
 
 // handleLiveRevokedBranch processes Branch 2: live credential, provider supports revocation.
+//
+// Hook dispatch (T5 §3.3 / §5):
+//  1. If rotationHook is registered, call BindingForCredential.
+//     a. If the credential is managed by a binding (err == nil), call TriggerRotation.
+//        - On success: rotation hook owns the revoke-old lifecycle; return immediately.
+//          The hook emits its own audit chain; we do NOT emit a duplicate audit event here.
+//        - On failure: log in OrchestratorError, fall through to revoker-only path for safety.
+//     b. If ErrNoBinding (or any error): credential not managed; fall through to revoker-only.
+//  2. If rotationHook is nil, or the hook path fell through: call revoker.Revoke as before.
 func (o *AlertOrchestrator) handleLiveRevokedBranch(ctx context.Context, record *CredentialRecord) (AlertResult, error) {
 	result := AlertResult{
 		Branch:         LiveRevokedBranch,
@@ -199,6 +224,29 @@ func (o *AlertOrchestrator) handleLiveRevokedBranch(ctx context.Context, record 
 		Escalated:      true,
 	}
 
+	// ── Hook dispatch ────────────────────────────────────────────────────────
+	if o.rotationHook != nil {
+		_, bindingErr := o.rotationHook.BindingForCredential(ctx, record.CredentialUUID)
+		if bindingErr == nil {
+			// Credential is managed by a binding — delegate to the rotation hook.
+			if triggerErr := o.rotationHook.TriggerRotation(ctx, record.CredentialUUID); triggerErr != nil {
+				// Hook failed to trigger rotation. Fall back to revoker for safety:
+				// a broken hook must not leave the credential live and unrevoked.
+				result.OrchestratorError = fmt.Errorf("webhooks: rotation hook TriggerRotation failed, falling back to revoker: %w", triggerErr)
+				// Fall through to revoker.Revoke below.
+			} else {
+				// Rotation triggered successfully. The hook owns revocation of the
+				// old credential after delivery. Skip revoker.Revoke and audit event
+				// here — the rotation audit chain is emitted by the hook.
+				_ = o.notifier.Notify(ctx, result)
+				return result, nil
+			}
+		}
+		// bindingErr != nil (ErrNoBinding or other): credential not managed by a
+		// binding — fall through to the existing revoker-only path unchanged.
+	}
+
+	// ── Revoker-only path (OSS default) ─────────────────────────────────────
 	revokeResult, revokeErr := o.revoker.Revoke(ctx, *record)
 
 	outcome := audit.OutcomeSuccess

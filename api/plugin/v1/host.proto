@@ -1,0 +1,807 @@
+syntax = "proto3";
+
+// Package agentkms.plugin.v1 — Host Callback Service (HostService)
+//
+// This file defines the HostService wire protocol. HostService is served by
+// the OSS host process and consumed by the Pro rotation orchestrator plugin.
+// It is the callback half of the bidirectional gRPC pattern described in
+// docs/specs/2026-04-26-T5-host-callback-design.md.
+//
+// Only "rotation_orchestrator" plugins receive a HostService handle.
+// Provider plugins and destination plugins are NOT affected by this file.
+//
+// Transport: the host uses go-plugin's GRPCBroker to open a side channel
+// within the existing plugin subprocess pair. The broker ID is passed to the
+// plugin during Init. The plugin dials back and obtains a HostServiceClient
+// before returning from Init. See internal/plugin/host_service.go for the
+// server implementation and agentkms-pro/internal/host/client.go for the
+// consumer.
+//
+// Regenerate Go bindings after editing:
+//
+//   protoc \
+//     -I /opt/homebrew/Cellar/protobuf/34.1/include \
+//     -I api/plugin/v1 \
+//     --go_out=api/plugin/v1 \
+//     --go_opt=paths=source_relative \
+//     --go-grpc_out=api/plugin/v1 \
+//     --go-grpc_opt=paths=source_relative \
+//     api/plugin/v1/host.proto
+//
+// Wire encoding: standard protobuf binary (proto3). Same as plugin.proto and
+// destination.proto. Do NOT introduce JSON codec.
+
+package agentkms.plugin.v1;
+
+option go_package = "github.com/agentkms/agentkms/api/plugin/v1;pluginv1";
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "plugin.proto";
+
+// ── Error classification ──────────────────────────────────────────────────────
+
+// HostCallbackErrorCode classifies errors returned by HostService methods.
+// Mirrors the DestinationErrorCode pattern from destination.proto so callers
+// can make retry decisions without parsing error strings.
+//
+// Every response message carries an error_code field. The absence of an
+// explicit error (HOST_OK) is the success condition; error_message must be
+// empty in that case.
+enum HostCallbackErrorCode {
+  // HOST_ERROR_UNSPECIFIED must not appear in real responses.
+  // A host that returns this code is violating the contract.
+  HOST_ERROR_UNSPECIFIED = 0;
+
+  // HOST_OK indicates success. error_message must be empty.
+  HOST_OK = 1;
+
+  // HOST_NOT_FOUND: the referenced resource does not exist.
+  // Examples: binding name unknown, credential UUID unregistered,
+  // destination kind not loaded, provider kind not loaded.
+  // Always permanent — do not retry.
+  HOST_NOT_FOUND = 2;
+
+  // HOST_TRANSIENT: a temporary failure the caller may retry after backoff.
+  // Examples: KV layer temporarily unavailable, plugin subprocess restart
+  // in progress, binding store mutex contention timeout.
+  HOST_TRANSIENT = 3;
+
+  // HOST_PERMANENT: a validation or semantic error. Do not retry.
+  // Examples: malformed binding name, generation regression in metadata patch,
+  // invalid audit event shape (failed AuditEvent.Validate).
+  HOST_PERMANENT = 4;
+
+  // HOST_PERMISSION_DENIED: the caller lacks authority for the operation.
+  // In practice this should never occur because the gRPC connection lives
+  // within the established plugin process pair and the handshake cookie
+  // gates admission. Plumbed for defence-in-depth.
+  HOST_PERMISSION_DENIED = 5;
+}
+
+// ── Shared sub-message types ──────────────────────────────────────────────────
+
+// BindingRotationPolicy mirrors the Pro-extended RotationPolicy fields.
+// The OSS RotationPolicy (internal/credentials/binding/binding.go, line 83)
+// stores TTLHintSeconds and ManualOnly. The Pro orchestrator extends this with
+// Schedule, GracePeriodSeconds, and MaxDeliveryAttempts (T5 §3.1). All five
+// fields are included here so the orchestrator has a complete view from a
+// single GetBinding call.
+message BindingRotationPolicy {
+  // ttl_hint_seconds is the desired credential lifetime in seconds.
+  // Zero means "use provider default".
+  int64 ttl_hint_seconds = 1;
+
+  // manual_only, when true, disables cron and webhook triggers for this binding.
+  bool manual_only = 2;
+
+  // schedule is an optional cron expression (standard 5-field, UTC).
+  // When empty and manual_only is false and ttl_hint_seconds > 0, the
+  // orchestrator derives a schedule: rotate at ttl_hint_seconds * 0.8 elapsed.
+  string schedule = 3;
+
+  // grace_period_seconds is how long to wait after a successful rotation
+  // before revoking the previous credential at the provider.
+  // Zero means revoke immediately.
+  int64 grace_period_seconds = 4;
+
+  // max_delivery_attempts overrides the default retry limit (5) for this
+  // binding. Zero means use the default.
+  int32 max_delivery_attempts = 5;
+}
+
+// BindingDestinationSpec describes a single credential delivery target.
+// Mirrors internal/credentials/binding/binding.go DestinationSpec (line 68).
+message BindingDestinationSpec {
+  // kind is the destination plugin kind (e.g. "github-secret", "k8s-secret").
+  string kind = 1;
+
+  // target_id is the opaque kind-scoped identifier for the specific secret
+  // slot. Format is kind-specific; see destination.proto DeliverRequest
+  // target_id field for examples.
+  string target_id = 2;
+
+  // params holds kind-specific delivery parameters (visibility, namespace, etc.).
+  google.protobuf.Struct params = 3;
+}
+
+// BindingMetadataPatch carries only the fields the orchestrator is permitted
+// to update via SaveBindingMetadata. Restricting to a patch message (rather
+// than the full Binding) prevents the orchestrator from accidentally
+// overwriting provider_kind, destinations, or other operator-set fields.
+//
+// The host serializes this as a partial update: only non-zero/non-empty fields
+// are written; zero values for int64 and uint64 are deliberately excluded via
+// has_* sentinel fields rather than protobuf presence, because proto3 cannot
+// distinguish "not set" from "set to zero" for scalar fields. See SaveBindingMetadata
+// for the authoritative field list.
+message BindingMetadataPatch {
+  // last_generation is the new monotonically increasing rotation counter.
+  // The host rejects a patch where last_generation < current LastGeneration
+  // with HOST_PERMANENT (generation regression).
+  uint64 last_generation = 1;
+
+  // last_rotated_at is the wall-clock time of the completed rotation (UTC).
+  google.protobuf.Timestamp last_rotated_at = 2;
+
+  // binding_state is the new state string.
+  // Valid values: "ok", "degraded", "rotation_failed".
+  string binding_state = 3;
+
+  // last_credential_uuid is the UUID of the newly vended credential.
+  // Empty string is valid here only when clearing the field is intentional
+  // (not expected in normal rotation flow).
+  string last_credential_uuid = 4;
+}
+
+// Binding is the full credential binding record returned by GetBinding and
+// inside BindingList. Mirrors internal/credentials/binding/binding.go
+// CredentialBinding (line 38).
+//
+// ProviderParams and destination Params are google.protobuf.Struct because
+// their shape is opaque to the binding layer — each plugin interprets them.
+message Binding {
+  // name is the unique human-friendly identifier for this binding.
+  string name = 1;
+
+  // provider_kind identifies the credential provider plugin kind.
+  // Examples: "github-app-token", "anthropic-api-key", "aws-sts".
+  string provider_kind = 2;
+
+  // provider_params holds provider-specific configuration (opaque to the
+  // binding layer).
+  google.protobuf.Struct provider_params = 3;
+
+  // scope is the effective permissions scope requested from the provider.
+  // Reuses the Scope message from plugin.proto (same package, no import needed).
+  Scope scope = 4;
+
+  // destinations is the ordered list of delivery targets.
+  repeated BindingDestinationSpec destinations = 5;
+
+  // rotation_policy controls rotation behaviour, including Pro-extended fields.
+  BindingRotationPolicy rotation_policy = 6;
+
+  // created_at is the wall-clock time this binding was first registered.
+  google.protobuf.Timestamp created_at = 7;
+
+  // last_rotated_at is the wall-clock time of the most recent successful
+  // rotation. Zero until the first rotation completes.
+  google.protobuf.Timestamp last_rotated_at = 8;
+
+  // last_generation is the monotonically increasing rotation counter.
+  // Zero until the first rotation.
+  uint64 last_generation = 9;
+
+  // tags is a free-form list of labels for filtering.
+  repeated string tags = 10;
+
+  // last_credential_uuid is the UUID of the most recently vended credential.
+  // Used by the orchestrator to identify which credential to revoke at the
+  // provider after the grace period (T5 §4.2 step 7, OQ-T5-6 resolved: field
+  // is stored in BindingMetadata, confirmed in binding.go line 114).
+  string last_credential_uuid = 11;
+
+  // binding_state is the current operational state string.
+  // Values: "", "ok", "degraded", "rotation_failed".
+  // Empty means no rotation has completed yet.
+  string binding_state = 12;
+}
+
+// BindingFilter is the filter input to ListBindings.
+message BindingFilter {
+  // tags filters bindings to those containing ALL specified tags.
+  // Empty means no tag filter (return all).
+  repeated string tags = 1;
+
+  // provider_kind filters bindings to those with the specified provider_kind.
+  // Empty means no filter.
+  string provider_kind = 2;
+
+  // binding_state filters bindings to those with the specified state.
+  // Empty means no filter.
+  string binding_state = 3;
+
+  // page_size is the maximum number of bindings to return per page.
+  // Zero means use the server default (50). Maximum is 200.
+  int32 page_size = 4;
+
+  // page_token is the opaque continuation token from a prior ListBindings
+  // response. Empty means start from the beginning.
+  string page_token = 5;
+}
+
+// BindingList is the paginated response from ListBindings.
+message BindingList {
+  // bindings contains the Binding records for this page.
+  repeated Binding bindings = 1;
+
+  // next_page_token is the continuation token for the next page.
+  // Empty when there are no more pages.
+  string next_page_token = 2;
+
+  // total_count is the total number of bindings matching the filter (not just
+  // this page). Informational; may be an approximation under concurrent writes.
+  int32 total_count = 3;
+
+  // error_code is HOST_OK on success. Any other value means the list failed.
+  HostCallbackErrorCode error_code = 4;
+
+  // error_message is a human-readable failure description. Empty on success.
+  string error_message = 5;
+}
+
+// PendingRevocation is one entry in the delayed-revocation queue.
+// The host persists these in EncryptedKV under
+// "orchestrator/pending-revocations/<credential_uuid>" (T5 §4.2 step 7,
+// OQ-T5-5 resolved: KV approach confirmed).
+message PendingRevocation {
+  // credential_uuid is the UUID of the credential to revoke.
+  string credential_uuid = 1;
+
+  // scheduled_at is the wall-clock time at or after which revocation should
+  // be attempted.
+  google.protobuf.Timestamp scheduled_at = 2;
+
+  // retry_count is the number of revocation attempts made so far.
+  // The host increments this on each DrainPendingRevocations response;
+  // it does not modify retry_count — the orchestrator's AckRevocation or
+  // a future re-enqueue handles that. Informational only.
+  int32 retry_count = 3;
+}
+
+// AuditEventProto is the thin wire representation of an audit event that the
+// orchestrator passes to EmitAudit. The host maps this onto the OSS AuditEvent
+// struct (internal/audit/events.go, line 97) before writing to the Auditor.
+//
+// Fields correspond 1:1 with AuditEvent struct tags. Fields the host
+// always sets itself (EventID, Timestamp, SchemaVersion) are omitted here
+// — the host generates them. The orchestrator must not set those fields.
+//
+// The orchestrator MUST NOT include key material in any string field. The host
+// calls AuditEvent.Validate() before writing; events that fail validation are
+// rejected with HOST_PERMANENT.
+message AuditEventProto {
+  // operation uses the Operation* constants from internal/audit/events.go.
+  // For rotation events: "binding_rotate_start", "binding_rotate",
+  // "destination_deliver", "revoke".
+  string operation = 1;
+
+  // credential_uuid is the UUID of the new (or old) credential being acted on.
+  string credential_uuid = 2;
+
+  // credential_type is the credential class (e.g. "github-app-token").
+  string credential_type = 3;
+
+  // caller_id is the identity of the operation initiator.
+  // For orchestrator-generated events use "orchestrator".
+  string caller_id = 4;
+
+  // outcome uses the Outcome* constants: "success", "denied", "error".
+  string outcome = 5;
+
+  // error_detail is a human-readable error description for OutcomeError.
+  // Must not contain key material (enforced by AuditEvent.Validate).
+  string error_detail = 6;
+
+  // anomalies lists any anomaly codes for this event.
+  // Examples: "vend_failed", "partial_delivery_failure", "old_credential_revoke_failed".
+  repeated string anomalies = 7;
+
+  // agent_session carries the rotation_correlation_id for the current rotation
+  // run. Threads through all events in one rotation (T5 §5, audit chain).
+  // Set to the EventID of the binding_rotate_start event.
+  string agent_session = 8;
+
+  // invalidation_reason uses the ReasonRevoked* constants for revocation events.
+  // Empty for non-revocation events.
+  string invalidation_reason = 9;
+
+  // rule_id is the matched policy rule ID. May be empty.
+  string rule_id = 10;
+}
+
+// ── Request / response types ──────────────────────────────────────────────────
+
+// ListBindingsRequest is the input to HostService.ListBindings.
+message ListBindingsRequest {
+  BindingFilter filter = 1;
+}
+
+// GetBindingRequest is the input to HostService.GetBinding.
+message GetBindingRequest {
+  // name is the binding name to retrieve.
+  string name = 1;
+}
+
+// GetBindingResponse is the output of HostService.GetBinding.
+message GetBindingResponse {
+  Binding binding = 1;
+  HostCallbackErrorCode error_code = 2;
+  string error_message = 3;
+}
+
+// SaveBindingMetadataRequest is the input to HostService.SaveBindingMetadata.
+message SaveBindingMetadataRequest {
+  // name identifies the binding to update.
+  string name = 1;
+
+  // patch contains the fields to update.
+  BindingMetadataPatch patch = 2;
+}
+
+// SaveBindingMetadataResponse is the output of HostService.SaveBindingMetadata.
+message SaveBindingMetadataResponse {
+  HostCallbackErrorCode error_code = 1;
+  string error_message = 2;
+}
+
+// VendCredentialRequest is the input to HostService.VendCredential.
+// The host looks up the provider plugin by provider_kind, constructs a
+// VendRequest, dispatches it, and returns the result. The orchestrator
+// never holds provider plugin handles directly.
+message VendCredentialRequest {
+  // provider_kind is the provider plugin kind to dispatch to
+  // (e.g. "github-app-token", "anthropic-api-key").
+  string provider_kind = 1;
+
+  // scope is the effective permissions scope to request from the provider.
+  Scope scope = 2;
+
+  // provider_params holds provider-specific vend parameters.
+  // Merged with the binding's provider_params at the host before dispatch.
+  google.protobuf.Struct provider_params = 3;
+}
+
+// VendCredentialResponse is the output of HostService.VendCredential.
+message VendCredentialResponse {
+  // credential is the vended credential on success.
+  // Reuses VendedCredential from plugin.proto (same package).
+  VendedCredential credential = 1;
+  HostCallbackErrorCode error_code = 2;
+  string error_message = 3;
+}
+
+// DeliverToDestinationRequest is the input to HostService.DeliverToDestination.
+// The host looks up the destination plugin by destination_kind and dispatches
+// a DeliverRequest. Field semantics mirror DeliverRequest from destination.proto.
+message DeliverToDestinationRequest {
+  // destination_kind is the destination plugin kind to dispatch to.
+  string destination_kind = 1;
+
+  // target_id is the opaque kind-scoped identifier. See DeliverRequest.target_id.
+  string target_id = 2;
+
+  // credential_value is the raw credential bytes to write to the target.
+  // SECURITY: Host must not log this field.
+  bytes credential_value = 3;
+
+  // generation is the monotonically increasing rotation counter.
+  uint64 generation = 4;
+
+  // delivery_id is the UUID stable across retries for this rotation event.
+  string delivery_id = 5;
+
+  // params holds kind-specific delivery parameters.
+  google.protobuf.Struct params = 6;
+
+  // ttl_seconds is the credential's expected lifetime. Informational hint.
+  int64 ttl_seconds = 7;
+
+  // expires_at is the wall-clock expiry of the credential. Informational hint.
+  google.protobuf.Timestamp expires_at = 8;
+
+  // requester_id is the stable identity string of the triggering entity.
+  string requester_id = 9;
+
+  // credential_uuid is the UUID of the VendedCredential being delivered.
+  string credential_uuid = 10;
+}
+
+// DeliverToDestinationResponse is the output of HostService.DeliverToDestination.
+message DeliverToDestinationResponse {
+  // error_code reuses HostCallbackErrorCode. The host maps DestinationErrorCode
+  // from the destination plugin response onto HostCallbackErrorCode:
+  //   DESTINATION_OK              → HOST_OK
+  //   DESTINATION_TRANSIENT       → HOST_TRANSIENT
+  //   DESTINATION_PERMANENT       → HOST_PERMANENT
+  //   DESTINATION_GENERATION_REGRESSION → HOST_PERMANENT
+  //   DESTINATION_TARGET_NOT_FOUND → HOST_NOT_FOUND
+  //   DESTINATION_PERMISSION_DENIED → HOST_PERMISSION_DENIED
+  HostCallbackErrorCode error_code = 1;
+
+  // error_message is a human-readable failure description.
+  // Must not contain credential_value bytes.
+  string error_message = 2;
+}
+
+// RevokeAtDestinationRequest is the input to HostService.RevokeAtDestination.
+// The host dispatches a RevokeDestinationRequest to the named destination plugin.
+message RevokeAtDestinationRequest {
+  // destination_kind is the destination plugin kind to dispatch to.
+  string destination_kind = 1;
+
+  // target_id identifies the secret slot to remove.
+  string target_id = 2;
+
+  // credential_uuid is the UUID of the credential being decommissioned.
+  string credential_uuid = 3;
+
+  // generation is the generation number of the credential being revoked.
+  uint64 generation = 4;
+
+  // params holds kind-specific parameters needed to reach the target.
+  google.protobuf.Struct params = 5;
+}
+
+// RevokeAtDestinationResponse is the output of HostService.RevokeAtDestination.
+message RevokeAtDestinationResponse {
+  HostCallbackErrorCode error_code = 1;
+  string error_message = 2;
+}
+
+// RevokeCredentialRequest is the input to HostService.RevokeCredential.
+// The host looks up the credential by UUID in the audit store, identifies its
+// provider_kind, and dispatches a Revoke call to the provider plugin.
+message RevokeCredentialRequest {
+  // credential_uuid is the UUID of the credential to revoke at the provider.
+  string credential_uuid = 1;
+}
+
+// RevokeCredentialResponse is the output of HostService.RevokeCredential.
+message RevokeCredentialResponse {
+  HostCallbackErrorCode error_code = 1;
+  string error_message = 2;
+}
+
+// EmitAuditRequest is the input to HostService.EmitAudit.
+message EmitAuditRequest {
+  AuditEventProto event = 1;
+}
+
+// EmitAuditResponse is the output of HostService.EmitAudit.
+message EmitAuditResponse {
+  // error_code is HOST_PERMANENT if AuditEvent.Validate() fails.
+  // HOST_TRANSIENT if the audit sink is temporarily unavailable.
+  HostCallbackErrorCode error_code = 1;
+  string error_message = 2;
+}
+
+// EnqueueRevocationRequest is the input to HostService.EnqueueRevocation.
+message EnqueueRevocationRequest {
+  // credential_uuid is the UUID of the credential to schedule for revocation.
+  string credential_uuid = 1;
+
+  // scheduled_at is the wall-clock time at or after which the host should
+  // make this entry visible to DrainPendingRevocations.
+  google.protobuf.Timestamp scheduled_at = 2;
+}
+
+// EnqueueRevocationResponse is the output of HostService.EnqueueRevocation.
+message EnqueueRevocationResponse {
+  HostCallbackErrorCode error_code = 1;
+  string error_message = 2;
+}
+
+// DrainPendingRevocationsRequest is the input to HostService.DrainPendingRevocations.
+message DrainPendingRevocationsRequest {
+  // now is the reference time the host uses to filter entries whose
+  // scheduled_at is <= now. The orchestrator passes its own time.Now().UTC()
+  // so the host does not need to agree on wall clock (useful in tests).
+  google.protobuf.Timestamp now = 1;
+}
+
+// DrainPendingRevocationsResponse is the output of HostService.DrainPendingRevocations.
+message DrainPendingRevocationsResponse {
+  // revocations contains all pending revocations whose scheduled_at <= now.
+  repeated PendingRevocation revocations = 1;
+  HostCallbackErrorCode error_code = 2;
+  string error_message = 3;
+}
+
+// AckRevocationRequest is the input to HostService.AckRevocation.
+message AckRevocationRequest {
+  // credential_uuid identifies the successfully revoked credential.
+  // The host removes the corresponding entry from EncryptedKV.
+  string credential_uuid = 1;
+}
+
+// AckRevocationResponse is the output of HostService.AckRevocation.
+message AckRevocationResponse {
+  HostCallbackErrorCode error_code = 1;
+  string error_message = 2;
+}
+
+// ── Service definition ────────────────────────────────────────────────────────
+
+// HostService is the callback service served by the OSS host and consumed by
+// the Pro rotation orchestrator plugin. It gives the plugin subprocess
+// controlled access to OSS-internal state: binding store, provider registry,
+// destination registry, audit chain, and the pending-revocation queue.
+//
+// Transport: go-plugin GRPCBroker side channel within the established plugin
+// process pair. The host calls broker.AcceptAndServe(brokerID, server) during
+// orchestrator plugin startup; the plugin calls broker.Dial(brokerID) to
+// obtain a *grpc.ClientConn and construct a HostServiceClient.
+//
+// Authentication: the gRPC connection is gated by the existing go-plugin
+// handshake cookie and Ed25519 plugin binary signature verification (see
+// internal/plugin/signing.go). No additional TLS or token authentication is
+// needed at the HostService gRPC level.
+//
+// Scope: HostService is registered only for plugins dispensed under the
+// PluginMap key "rotation_orchestrator". Provider and destination plugins
+// (scope_validator, credential_vender, destination_deliverer) do not receive
+// a broker ID and cannot reach this service.
+//
+// Concurrency: see docs/specs/2026-04-26-T5-host-callback-design.md §4 for
+// the full concurrency contract. Short summary:
+//   - VendCredential, DeliverToDestination, RevokeAtDestination: parallel calls safe.
+//   - SaveBindingMetadata for the same binding name: serialized by the host.
+//   - EnqueueRevocation / DrainPendingRevocations / AckRevocation: linearizable.
+service HostService {
+  // ── Bindings ────────────────────────────────────────────────────────────────
+
+  // ListBindings returns a paginated list of bindings matching the filter.
+  // Idempotent (read-only). Safe to call in parallel.
+  // Error semantics: HOST_TRANSIENT if the KV layer is temporarily unavailable.
+  rpc ListBindings(ListBindingsRequest) returns (BindingList);
+
+  // GetBinding fetches a specific binding by name.
+  // Idempotent (read-only).
+  // Error semantics: HOST_NOT_FOUND if no binding with that name exists.
+  rpc GetBinding(GetBindingRequest) returns (GetBindingResponse);
+
+  // SaveBindingMetadata persists the metadata fields the orchestrator owns
+  // after a rotation (LastGeneration, LastRotatedAt, BindingState,
+  // LastCredentialUUID). It does NOT replace the full binding — only these
+  // four fields. Concurrent calls for the same binding name are serialized
+  // by the host using the binding store's write mutex.
+  //
+  // Idempotency: calling with the same patch twice is safe; the second call
+  // produces no observable change (generation check prevents regression).
+  //
+  // Error semantics:
+  //   HOST_NOT_FOUND    — binding name does not exist.
+  //   HOST_PERMANENT    — patch.last_generation < current LastGeneration
+  //                       (generation regression rejected).
+  //   HOST_TRANSIENT    — KV layer temporarily unavailable.
+  rpc SaveBindingMetadata(SaveBindingMetadataRequest) returns (SaveBindingMetadataResponse);
+
+  // ── Provider invocation ──────────────────────────────────────────────────────
+
+  // VendCredential dispatches to the provider plugin identified by provider_kind.
+  // The host looks up the plugin in the provider registry, calls Vend, and
+  // returns the result. The orchestrator never holds provider plugin handles.
+  //
+  // The host does NOT automatically emit an audit event for the vend — the
+  // orchestrator calls EmitAudit with the binding_rotate_start event before
+  // calling VendCredential (T5 §4.2 step 2→3). The orchestrator must emit its
+  // own binding_rotate audit event after this call (step 6). Open question
+  // OQ-HC-4 tracks whether the host should auto-emit OperationCredentialVend
+  // here to avoid double-emission concerns.
+  //
+  // Idempotency: NOT idempotent. Each call mints a distinct credential at the
+  // provider. The orchestrator must call this at most once per rotation step.
+  //
+  // Error semantics:
+  //   HOST_NOT_FOUND    — provider_kind not registered in the host registry.
+  //   HOST_TRANSIENT    — provider plugin subprocess is restarting.
+  //   HOST_PERMANENT    — provider rejected the vend (bad scope, auth failure).
+  rpc VendCredential(VendCredentialRequest) returns (VendCredentialResponse);
+
+  // ── Destination invocation ───────────────────────────────────────────────────
+
+  // DeliverToDestination dispatches to the destination plugin identified by
+  // destination_kind. The host looks up the plugin in the destination registry,
+  // calls Deliver, and maps the DestinationErrorCode response onto
+  // HostCallbackErrorCode. The orchestrator never holds destination plugin handles.
+  //
+  // Idempotency: idempotent via delivery_id. Multiple calls with the same
+  // delivery_id and generation produce the same observable outcome at the target
+  // (per DeliverRequest.delivery_id semantics in destination.proto).
+  //
+  // Parallel calls for different destination_kinds are safe. Parallel calls for
+  // the same destination_kind target are safe (destination plugins handle concurrency).
+  //
+  // Error semantics: HOST_NOT_FOUND if destination_kind not registered.
+  // Other codes map from DestinationErrorCode as documented in
+  // DeliverToDestinationResponse.error_code.
+  rpc DeliverToDestination(DeliverToDestinationRequest) returns (DeliverToDestinationResponse);
+
+  // RevokeAtDestination dispatches a Revoke to the destination plugin identified
+  // by destination_kind. Symmetric to DeliverToDestination.
+  //
+  // Idempotency: idempotent — DESTINATION_OK is returned if the credential is
+  // already absent (per RevokeDestinationResponse semantics in destination.proto).
+  //
+  // Error semantics: destination plugins that cannot remove credentials return
+  // HOST_PERMANENT; the orchestrator logs and continues (non-fatal per T5 §4.2).
+  rpc RevokeAtDestination(RevokeAtDestinationRequest) returns (RevokeAtDestinationResponse);
+
+  // ── Provider revocation (grace-period old-credential cleanup) ────────────────
+
+  // RevokeCredential revokes the credential identified by credential_uuid at
+  // its provider. The host looks up the credential UUID in the audit store to
+  // identify provider_kind, then dispatches to the provider plugin's Revoke RPC.
+  //
+  // Idempotency: idempotent. If the credential is already revoked or unknown to
+  // the provider, HOST_OK is returned (non-fatal, log and continue).
+  //
+  // Error semantics:
+  //   HOST_NOT_FOUND  — credential_uuid not found in the audit store.
+  //   HOST_TRANSIENT  — provider plugin subprocess is restarting.
+  //   HOST_PERMANENT  — provider rejected the revocation permanently.
+  //
+  // Revocation failure is non-fatal for the rotation as a whole (T5 §4.2 step 7).
+  // The orchestrator logs "old_credential_revoke_failed" anomaly and continues.
+  rpc RevokeCredential(RevokeCredentialRequest) returns (RevokeCredentialResponse);
+
+  // ── Audit emission ───────────────────────────────────────────────────────────
+
+  // EmitAudit writes an audit event through the OSS Auditor. This is required
+  // because the orchestrator's audit chain must share the same write path as
+  // the OSS-side audit so forensics queries see one unified stream. The host
+  // maps AuditEventProto onto audit.AuditEvent, calls AuditEvent.Validate(),
+  // and passes it to the configured Auditor.Log.
+  //
+  // Idempotency: NOT idempotent. Each call writes a distinct event with a new
+  // host-generated EventID. The orchestrator must not call this twice for the
+  // same logical event.
+  //
+  // Error semantics:
+  //   HOST_PERMANENT  — AuditEvent.Validate() failed (key material in free-text
+  //                     field, invalid InvalidationReason, etc.).
+  //   HOST_TRANSIENT  — audit sink temporarily unavailable.
+  //
+  // Ordering: the orchestrator must call EmitAudit for binding_rotate_start
+  // BEFORE calling VendCredential (T5 §4.2 step 2→3). The host does not
+  // enforce ordering — it is the orchestrator's responsibility.
+  rpc EmitAudit(EmitAuditRequest) returns (EmitAuditResponse);
+
+  // ── Pending revocation queue (grace-period durability) ───────────────────────
+
+  // EnqueueRevocation persists a delayed-revocation entry to EncryptedKV under
+  // "orchestrator/pending-revocations/<credential_uuid>". Called by the orchestrator
+  // at T5 §4.2 step 7 when GracePeriodSeconds > 0.
+  //
+  // Idempotency: idempotent. Enqueueing the same credential_uuid twice is safe;
+  // the host upserts the entry (later scheduled_at wins, so re-enqueue can delay).
+  //
+  // Linearizability: EnqueueRevocation and DrainPendingRevocations are
+  // serialized by the host using the KV store's write mutex. A credential
+  // enqueued before a DrainPendingRevocations call with now >= scheduled_at
+  // is guaranteed to appear in the drain response.
+  //
+  // Error semantics: HOST_TRANSIENT if KV layer is temporarily unavailable.
+  rpc EnqueueRevocation(EnqueueRevocationRequest) returns (EnqueueRevocationResponse);
+
+  // DrainPendingRevocations returns all pending revocations whose scheduled_at
+  // is <= the provided now timestamp. Called by the orchestrator on startup and
+  // periodically (recommended: every 60 seconds) to find due revocations.
+  //
+  // Idempotency: idempotent. Returning the same entry twice is safe — the
+  // orchestrator's RevokeCredential call is idempotent, and AckRevocation
+  // removes the entry after successful revocation.
+  //
+  // Error semantics: HOST_TRANSIENT if KV layer is temporarily unavailable.
+  rpc DrainPendingRevocations(DrainPendingRevocationsRequest) returns (DrainPendingRevocationsResponse);
+
+  // AckRevocation signals that the orchestrator successfully revoked the
+  // credential and the host should remove the pending-revocation entry from
+  // EncryptedKV.
+  //
+  // Idempotency: idempotent. Acking an already-removed credential_uuid returns
+  // HOST_OK (not HOST_NOT_FOUND) — the desired state (entry removed) is already met.
+  //
+  // Error semantics: HOST_TRANSIENT if KV layer is temporarily unavailable.
+  rpc AckRevocation(AckRevocationRequest) returns (AckRevocationResponse);
+}
+
+// ── OrchestratorService (Pro-implemented, Host-consumed) ─────────────────────
+//
+// OrchestratorService is implemented by the Pro rotation orchestrator plugin
+// and consumed by the OSS host. It is the complement to HostService: where
+// HostService lets the plugin call INTO the host, OrchestratorService lets the
+// host call INTO the plugin.
+//
+// The OSS host uses OrchestratorService to:
+//   1. Perform the initial handshake (Init), passing the HostService broker ID.
+//   2. Implement the webhooks.RotationHook interface via gRPC adapters
+//      (TriggerRotation, BindingForCredential).
+//
+// This service is registered in the OSS PluginMap under "rotation_orchestrator".
+// The host calls broker.AcceptAndServe for HostService BEFORE calling Init.
+// The plugin calls broker.Dial to connect to HostService inside its Init handler.
+
+// OrchestratorInitRequest carries the HostService broker ID to the plugin.
+message OrchestratorInitRequest {
+  // host_broker_id is the go-plugin GRPCBroker ID for the HostService side channel.
+  // The plugin calls broker.Dial(host_broker_id) to obtain a *grpc.ClientConn
+  // and construct a HostServiceClient.
+  uint32 host_broker_id = 1;
+}
+
+// OrchestratorInitResponse is the output of OrchestratorService.Init.
+message OrchestratorInitResponse {
+  // error_message is empty on success. Non-empty means the plugin startup failed
+  // (license check failed, HostService dial failed, etc.). The host treats any
+  // non-empty error as a fatal startup failure and does not register the RotationHook.
+  string error_message = 1;
+}
+
+// TriggerRotationRequest is the input to OrchestratorService.TriggerRotation.
+message TriggerRotationRequest {
+  // credential_uuid identifies the compromised credential that triggered
+  // the emergency rotation.
+  string credential_uuid = 1;
+}
+
+// TriggerRotationResponse is the output of OrchestratorService.TriggerRotation.
+message TriggerRotationResponse {
+  // error_message is empty on successful trigger dispatch (rotation proceeds async).
+  string error_message = 1;
+}
+
+// BindingForCredentialRequest is the input to OrchestratorService.BindingForCredential.
+message BindingForCredentialRequest {
+  // credential_uuid is the UUID to look up.
+  string credential_uuid = 1;
+}
+
+// BindingForCredentialResponse is the output of OrchestratorService.BindingForCredential.
+message BindingForCredentialResponse {
+  // binding_name is the name of the binding that owns credential_uuid.
+  // Empty when not_found is true.
+  string binding_name = 1;
+
+  // not_found is true when the credential is not managed by any binding.
+  // The host falls back to the OSS revoker-only path when this is true.
+  bool not_found = 2;
+
+  // error_message is non-empty on unexpected errors (not "not found").
+  string error_message = 3;
+}
+
+// OrchestratorService is implemented by the Pro orchestrator plugin and
+// consumed by the OSS host. The OSS PluginMap entry "rotation_orchestrator"
+// maps to this service on the GRPCClient side.
+service OrchestratorService {
+  // Init performs the plugin startup handshake. The host calls Init after
+  // dispensing the plugin, passing the host_broker_id so the plugin can
+  // connect to HostService. The plugin verifies its license, dials the broker,
+  // starts the cron driver, and returns. If Init returns a non-empty
+  // error_message the host does not register the RotationHook and the plugin
+  // subprocess is killed.
+  rpc Init(OrchestratorInitRequest) returns (OrchestratorInitResponse);
+
+  // TriggerRotation initiates an emergency rotation for the credential
+  // identified by credential_uuid. Returns immediately; rotation proceeds
+  // asynchronously. Implements the webhooks.RotationHook.TriggerRotation contract.
+  rpc TriggerRotation(TriggerRotationRequest) returns (TriggerRotationResponse);
+
+  // BindingForCredential returns the binding name associated with a given
+  // credentialUUID, or not_found=true if the credential is not managed by any
+  // binding. Implements the webhooks.RotationHook.BindingForCredential contract.
+  rpc BindingForCredential(BindingForCredentialRequest) returns (BindingForCredentialResponse);
+}

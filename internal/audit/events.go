@@ -52,9 +52,11 @@ const (
 	OperationSecretHistory = "secret_history"
 
 	// Binding operations — T3 credential binding data model.
-	OperationBindingRegister = "binding_register"
-	OperationBindingRotate   = "binding_rotate"
-	OperationBindingDelete   = "binding_delete"
+	OperationBindingRegister     = "binding_register"
+	OperationBindingRotate       = "binding_rotate"
+	OperationBindingDelete       = "binding_delete"
+	OperationBindingRotateStart  = "binding_rotate_start"
+	OperationDestinationDeliver  = "destination_deliver"
 
 	// OperationBindingRotateStub marks a rotation that used a stub credential
 	// value because no provider plugin was available for the binding's

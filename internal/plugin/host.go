@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,9 +14,14 @@ import (
 	"time"
 
 	pluginv1 "github.com/agentkms/agentkms/api/plugin/v1"
+	"github.com/agentkms/agentkms/internal/audit"
+	"github.com/agentkms/agentkms/internal/credentials"
+	"github.com/agentkms/agentkms/internal/credentials/binding"
 	"github.com/agentkms/agentkms/internal/destination"
+	"github.com/agentkms/agentkms/internal/webhooks"
 	hclog "github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
+	"google.golang.org/grpc"
 )
 
 const pluginPrefix = "agentkms-plugin-"
@@ -52,14 +58,44 @@ type pluginEntry struct {
 //   - On ping failure the host attempts one restart; on second failure the plugin
 //     is marked failed and removed from active dispatch.
 //   - StopAll() kills every running subprocess on host shutdown.
+// HostServiceDeps bundles the OSS-internal dependencies needed to serve the
+// HostService callback to the Pro rotation orchestrator plugin.
+// If HostServiceDeps is nil when StartOrchestrator is called, the host creates
+// a degraded HostService that returns HOST_PERMANENT on all calls requiring
+// internal state — this is the graceful degradation path for test environments.
+type HostServiceDeps struct {
+	Store   binding.BindingStore
+	Auditor audit.Auditor
+	KV      credentials.KVWriter
+}
+
+// Host manages plugin discovery, lifecycle, and dispatch.
+//
+// Subprocess lifecycle:
+//   - Plugins are started on demand via Start(name).
+//   - A background goroutine pings each plugin every 30 s.
+//   - On ping failure the host attempts one restart; on second failure the plugin
+//     is marked failed and removed from active dispatch.
+//   - StopAll() kills every running subprocess on host shutdown.
 type Host struct {
 	dir      string
 	plugins  []PluginMeta
 	verifier *Verifier  // Ed25519 verifier; nil = signing disabled (with warning)
 	registry *Registry  // optional: populated with gRPC adapters after Start
 
+	// hostServiceDeps is set via SetHostServiceDeps before calling StartOrchestrator.
+	// Used to construct the HostService server for the rotation orchestrator plugin.
+	hostServiceDeps *HostServiceDeps
+
 	mu      sync.Mutex
 	clients map[string]*pluginEntry // keyed by plugin name
+}
+
+// SetHostServiceDeps provides the OSS-internal dependencies needed to serve the
+// HostService callback to the Pro rotation orchestrator plugin. Must be called
+// before StartOrchestrator.
+func (h *Host) SetHostServiceDeps(deps *HostServiceDeps) {
+	h.hostServiceDeps = deps
 }
 
 // NewHost creates a plugin host that discovers plugins in dir.
@@ -579,3 +615,217 @@ func (h *Host) destinationHealthLoop(name string, entry *pluginEntry, adapter de
 		}
 	}
 }
+
+// ── Orchestrator plugin startup ───────────────────────────────────────────────
+
+// StartOrchestrator launches the Pro rotation orchestrator plugin subprocess.
+// It sets up the GRPCBroker HostService side channel, passes the broker ID to
+// the plugin via the Init RPC, and returns the OrchestratorGRPC adapter that
+// the host can use as a webhooks.RotationHook.
+//
+// Fail-fast design (HC-5): if the HostService broker cannot be established or
+// the plugin's Init fails, StartOrchestrator returns an error immediately.
+// The host does NOT register a RotationHook and OSS webhook handling falls back
+// to its existing revoker-only path.
+//
+// Startup race (HC-6): the ~1s window between OSS host start and this method
+// returning is accepted. If a webhook arrives before the RotationHook is
+// registered, the OSS AlertOrchestrator falls back gracefully.
+func (h *Host) StartOrchestrator(name string) (*OrchestratorGRPC, error) {
+	pluginPath, err := h.findPluginPath(name)
+	if err != nil {
+		return nil, err
+	}
+
+	h.mu.Lock()
+	if entry, ok := h.clients[name]; ok {
+		if !entry.client.Exited() {
+			h.mu.Unlock()
+			return nil, fmt.Errorf("orchestrator plugin %q is already running", name)
+		}
+		entry.cancel()
+		delete(h.clients, name)
+	}
+	h.mu.Unlock()
+
+	// Signature verification before subprocess launch.
+	if h.verifier != nil {
+		sigPath := pluginPath + ".sig"
+		sig, err := os.ReadFile(sigPath)
+		if err != nil {
+			return nil, fmt.Errorf("%w: cannot read .sig sidecar %q: %v", ErrUntrustedPlugin, sigPath, err)
+		}
+		if err := h.verifier.Verify(pluginPath, sig); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrUntrustedPlugin, err)
+		}
+	} else {
+		log.Printf("[plugin] WARNING: no verifier configured for orchestrator %q — running unsigned binary", name)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	client := goplugin.NewClient(&goplugin.ClientConfig{
+		HandshakeConfig:  HandshakeConfig,
+		Plugins:          PluginMap,
+		Cmd:              pluginCommand(pluginPath),
+		AllowedProtocols: []goplugin.Protocol{goplugin.ProtocolGRPC},
+		Logger:           newPluginLogger(name),
+		StartTimeout:     30 * time.Second,
+		GRPCBrokerMultiplex: true, // required for broker side channels
+	})
+
+	rpcClient, err := client.Client()
+	if err != nil {
+		cancel()
+		client.Kill()
+		return nil, fmt.Errorf("orchestrator plugin %q handshake failed: %w", name, err)
+	}
+
+	raw, err := rpcClient.Dispense("rotation_orchestrator")
+	if err != nil {
+		cancel()
+		client.Kill()
+		return nil, fmt.Errorf("orchestrator plugin %q: dispense rotation_orchestrator: %w", name, err)
+	}
+
+	orchestrator, ok := raw.(*OrchestratorGRPC)
+	if !ok {
+		cancel()
+		client.Kill()
+		return nil, fmt.Errorf("orchestrator plugin %q: dispensed value is %T, want *OrchestratorGRPC", name, raw)
+	}
+
+	// Set up the HostService gRPC broker side channel.
+	// The host allocates a broker ID, launches AcceptAndServe in a goroutine,
+	// then passes the broker ID to the plugin via Init.
+	var hsSrv *hostServiceServer
+	if deps := h.hostServiceDeps; deps != nil {
+		hsSrv = newHostServiceServer(deps.Store, h.registry, deps.Auditor, deps.KV)
+	} else {
+		log.Printf("[plugin] WARNING: HostServiceDeps not configured — orchestrator plugin %q will have degraded access", name)
+		hsSrv = &hostServiceServer{} // empty server returns HOST_PERMANENT on all calls
+	}
+
+	broker := orchestrator.broker
+	brokerID := broker.NextId()
+	go broker.AcceptAndServe(brokerID, func(opts []grpc.ServerOption) *grpc.Server {
+		srv := grpc.NewServer(opts...)
+		pluginv1.RegisterHostServiceServer(srv, hsSrv)
+		return srv
+	})
+
+	// Call Init on the orchestrator plugin with the broker ID (fail-fast).
+	initCtx, initCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer initCancel()
+	resp, err := orchestrator.client.Init(initCtx, &pluginv1.OrchestratorInitRequest{
+		HostBrokerId: brokerID,
+	})
+	if err != nil {
+		cancel()
+		client.Kill()
+		return nil, fmt.Errorf("orchestrator plugin %q: Init RPC failed: %w", name, err)
+	}
+	if msg := resp.GetErrorMessage(); msg != "" {
+		cancel()
+		client.Kill()
+		return nil, fmt.Errorf("orchestrator plugin %q: Init failed: %s", name, msg)
+	}
+
+	// Store the running client.
+	entry := &pluginEntry{client: client, cancel: cancel}
+	h.mu.Lock()
+	h.clients[name] = entry
+	h.mu.Unlock()
+
+	log.Printf("[plugin] orchestrator %q started successfully", name)
+	return orchestrator, nil
+}
+
+// RotationHookFor returns a webhooks.RotationHook adapter that wraps the
+// OrchestratorGRPC client. The adapter translates the Go interface calls
+// (TriggerRotation, BindingForCredential) to OrchestratorService gRPC RPCs.
+//
+// This is used by the host after StartOrchestrator succeeds to register the
+// Pro orchestrator as the RotationHook with the OSS AlertOrchestrator.
+func (h *Host) RotationHookFor(orchestrator *OrchestratorGRPC) webhooks.RotationHook {
+	return &orchestratorRotationHook{client: orchestrator}
+}
+
+// orchestratorRotationHook implements webhooks.RotationHook by calling the
+// OrchestratorService gRPC client. It is used by the OSS AlertOrchestrator
+// to delegate emergency rotations to the Pro plugin without knowing about Pro.
+type orchestratorRotationHook struct {
+	client *OrchestratorGRPC
+}
+
+func (h *orchestratorRotationHook) TriggerRotation(ctx context.Context, credentialUUID string) error {
+	resp, err := h.client.client.TriggerRotation(ctx, &pluginv1.TriggerRotationRequest{
+		CredentialUuid: credentialUUID,
+	})
+	if err != nil {
+		return fmt.Errorf("orchestrator TriggerRotation RPC: %w", err)
+	}
+	if msg := resp.GetErrorMessage(); msg != "" {
+		return fmt.Errorf("orchestrator TriggerRotation: %s", msg)
+	}
+	return nil
+}
+
+func (h *orchestratorRotationHook) BindingForCredential(ctx context.Context, credentialUUID string) (string, error) {
+	resp, err := h.client.client.BindingForCredential(ctx, &pluginv1.BindingForCredentialRequest{
+		CredentialUuid: credentialUUID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("orchestrator BindingForCredential RPC: %w", err)
+	}
+	if msg := resp.GetErrorMessage(); msg != "" {
+		return "", fmt.Errorf("orchestrator BindingForCredential: %s", msg)
+	}
+	if resp.GetNotFound() {
+		return "", webhooks.ErrNoBinding
+	}
+	return resp.GetBindingName(), nil
+}
+
+// orchestratorHealthLoop is similar to destinationHealthLoop but for the orchestrator.
+// For now it uses basic process liveness — the orchestrator doesn't expose a Health RPC.
+func (h *Host) orchestratorHealthLoop(name string, entry *pluginEntry) {
+	ticker := time.NewTicker(healthCheckInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		h.mu.Lock()
+		_, stillOurs := h.clients[name]
+		h.mu.Unlock()
+		if !stillOurs {
+			return
+		}
+
+		if entry.client.Exited() {
+			log.Printf("[plugin] orchestrator %q exited unexpectedly", name)
+			// Do not attempt automatic restart for the orchestrator —
+			// the host operator should restart the whole server or investigate.
+			h.mu.Lock()
+			delete(h.clients, name)
+			h.mu.Unlock()
+			return
+		}
+
+		rpcClient, err := entry.client.Client()
+		if err != nil || rpcClient.Ping() != nil {
+			log.Printf("[plugin] orchestrator %q protocol ping failed", name)
+			entry.client.Kill()
+			h.mu.Lock()
+			delete(h.clients, name)
+			h.mu.Unlock()
+			return
+		}
+	}
+}
+
+// noopListener is a do-nothing net.Listener used to satisfy the broker API signature.
+type noopListener struct{}
+func (noopListener) Accept() (net.Conn, error)  { return nil, fmt.Errorf("noop listener") }
+func (noopListener) Close() error                { return nil }
+func (noopListener) Addr() net.Addr              { return &net.TCPAddr{} }
+

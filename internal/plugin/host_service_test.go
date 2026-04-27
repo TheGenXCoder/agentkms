@@ -211,7 +211,7 @@ func (d *stubDeliverer) Health(_ context.Context) error { return nil }
 // makeServer builds a hostServiceServer with all stubs wired up.
 func makeServer(store binding.BindingStore, aud audit.Auditor, kv credentials.KVWriter) *hostServiceServer {
 	reg := NewRegistry()
-	return newHostServiceServer(store, reg, aud, kv)
+	return newHostServiceServer(store, reg, aud, kv, nil)
 }
 
 // ── ListBindings tests ───────────────────────────────────────────────────────
@@ -572,7 +572,7 @@ func TestHostService_VendCredential_ProviderParams_MergedIntoScope(t *testing.T)
 	cv := &scopeCapturingVender{}
 	reg := NewRegistry()
 	_ = reg.RegisterVender("scope-capturer", cv)
-	srv := newHostServiceServer(newStubStore(), reg, &stubAuditor{}, newStubKV())
+	srv := newHostServiceServer(newStubStore(), reg, &stubAuditor{}, newStubKV(), nil)
 
 	pp, err := structpb.NewStruct(map[string]any{
 		"app_name": "blog-audit",
@@ -613,7 +613,7 @@ func TestHostService_VendCredential_ScopeParamsWinOnCollision(t *testing.T) {
 	cv := &scopeCapturingVender{}
 	reg := NewRegistry()
 	_ = reg.RegisterVender("scope-capturer", cv)
-	srv := newHostServiceServer(newStubStore(), reg, &stubAuditor{}, newStubKV())
+	srv := newHostServiceServer(newStubStore(), reg, &stubAuditor{}, newStubKV(), nil)
 
 	pp, err := structpb.NewStruct(map[string]any{
 		"app_name": "binding-level-app",
@@ -672,7 +672,7 @@ func TestHostService_VendCredential_ProviderNotFound(t *testing.T) {
 func TestHostService_VendCredential_HappyPath(t *testing.T) {
 	reg := NewRegistry()
 	_ = reg.RegisterVender("stub", &stubVender{})
-	srv := newHostServiceServer(newStubStore(), reg, &stubAuditor{}, newStubKV())
+	srv := newHostServiceServer(newStubStore(), reg, &stubAuditor{}, newStubKV(), nil)
 
 	resp, err := srv.VendCredential(context.Background(), &pluginv1.VendCredentialRequest{
 		ProviderKind: "stub",
@@ -714,7 +714,7 @@ func TestHostService_DeliverToDestination_TransientError_Mapped(t *testing.T) {
 			return false, errors.New("connection timeout")
 		},
 	})
-	srv := newHostServiceServer(newStubStore(), reg, &stubAuditor{}, newStubKV())
+	srv := newHostServiceServer(newStubStore(), reg, &stubAuditor{}, newStubKV(), nil)
 	resp, err := srv.DeliverToDestination(context.Background(), &pluginv1.DeliverToDestinationRequest{
 		DestinationKind: "stub-dest",
 		CredentialValue: []byte("cred"),
@@ -737,7 +737,7 @@ func TestHostService_DeliverToDestination_PermanentError_Mapped(t *testing.T) {
 			return true, errors.New("permission denied by target")
 		},
 	})
-	srv := newHostServiceServer(newStubStore(), reg, &stubAuditor{}, newStubKV())
+	srv := newHostServiceServer(newStubStore(), reg, &stubAuditor{}, newStubKV(), nil)
 	resp, err := srv.DeliverToDestination(context.Background(), &pluginv1.DeliverToDestinationRequest{
 		DestinationKind: "stub-dest",
 	})
@@ -766,7 +766,7 @@ func TestHostService_DeliverToDestination_Audit_Success(t *testing.T) {
 			return false, nil // success
 		},
 	})
-	srv := newHostServiceServer(newStubStore(), reg, aud, newStubKV())
+	srv := newHostServiceServer(newStubStore(), reg, aud, newStubKV(), nil)
 
 	resp, err := srv.DeliverToDestination(context.Background(), &pluginv1.DeliverToDestinationRequest{
 		DestinationKind: "stub-dest",
@@ -810,7 +810,7 @@ func TestHostService_DeliverToDestination_Audit_PermanentError(t *testing.T) {
 			return true, errors.New("permission denied by target") // permanent
 		},
 	})
-	srv := newHostServiceServer(newStubStore(), reg, aud, newStubKV())
+	srv := newHostServiceServer(newStubStore(), reg, aud, newStubKV(), nil)
 
 	resp, err := srv.DeliverToDestination(context.Background(), &pluginv1.DeliverToDestinationRequest{
 		DestinationKind: "stub-dest",
@@ -851,7 +851,7 @@ func TestHostService_DeliverToDestination_Audit_TransientError(t *testing.T) {
 			return false, errors.New("connection timeout") // transient (isPerm=false)
 		},
 	})
-	srv := newHostServiceServer(newStubStore(), reg, aud, newStubKV())
+	srv := newHostServiceServer(newStubStore(), reg, aud, newStubKV(), nil)
 
 	resp, err := srv.DeliverToDestination(context.Background(), &pluginv1.DeliverToDestinationRequest{
 		DestinationKind: "stub-dest",
@@ -903,7 +903,7 @@ func TestHostService_DeliverToDestination_AuditEventCount(t *testing.T) {
 			return false, nil // success
 		},
 	})
-	srv := newHostServiceServer(newStubStore(), reg, aud, newStubKV())
+	srv := newHostServiceServer(newStubStore(), reg, aud, newStubKV(), nil)
 
 	_, err := srv.DeliverToDestination(context.Background(), &pluginv1.DeliverToDestinationRequest{
 		DestinationKind: "stub-dest",

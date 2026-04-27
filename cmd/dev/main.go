@@ -54,6 +54,7 @@ import (
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/credentials/binding"
+	"github.com/agentkms/agentkms/internal/githubapp"
 	"github.com/agentkms/agentkms/internal/plugin"
 	"github.com/agentkms/agentkms/internal/policy"
 	"github.com/agentkms/agentkms/internal/revocation"
@@ -501,6 +502,7 @@ func runServe(args []string) error {
 	apiServer.SetVender(vender)
 	apiServer.SetRegistryWriter(kv)
 	apiServer.SetBindingStore(binding.NewKVBindingStore(kv))
+	apiServer.SetGithubAppStore(githubapp.NewKVStore(kv))
 	apiServer.SetRateLimitInterval(time.Duration(*rateLimitFlag) * time.Second)
 
 	// ── AlertOrchestrator (OSS webhook orchestration) ─────────────────────
@@ -562,9 +564,10 @@ func runServe(args []string) error {
 				} else {
 					// Pre-register HostServiceDeps once; orchestrator dispatch needs it.
 					deps := &plugin.HostServiceDeps{
-						Store:   binding.NewKVBindingStore(kv),
-						Auditor: auditor,
-						KV:      kv,
+						Store:          binding.NewKVBindingStore(kv),
+						Auditor:        auditor,
+						KV:             kv,
+						GithubAppStore: githubapp.NewKVStore(kv),
 					}
 					pluginHost.SetHostServiceDeps(deps)
 

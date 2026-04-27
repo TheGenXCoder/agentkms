@@ -206,6 +206,26 @@ message VendResponse {
   string           error      = 2;
 }
 
+// InitProviderRequest is the input to CredentialVenderService.InitProvider.
+// Sent by the host after startup to hand the HostService GRPCBroker ID to the
+// plugin so it can call HostService.GetGithubApp (or other host callbacks).
+// Plugins that do not need host callbacks may return an empty error_message.
+message InitProviderRequest {
+  // host_broker_id is the go-plugin GRPCBroker ID for the HostService side channel.
+  // The plugin calls broker.Dial(host_broker_id) to obtain a HostServiceClient.
+  // Zero means no HostService is available (host is pre-UX-B).
+  uint32 host_broker_id = 1;
+}
+
+// InitProviderResponse is the output of CredentialVenderService.InitProvider.
+message InitProviderResponse {
+  // error_message is non-empty if the plugin failed to connect to the HostService.
+  // An empty error_message means the plugin successfully initialised host callbacks.
+  // Plugins that don't implement InitProvider return Unimplemented; the host
+  // treats Unimplemented as success (backwards compatible — legacy plugins).
+  string error_message = 1;
+}
+
 // ── Services ─────────────────────────────────────────────────────────────────
 
 // ScopeValidatorService mirrors the ScopeValidator Go interface.
@@ -276,4 +296,12 @@ service CredentialVenderService {
   // The returned VendedCredential holds the secret bytes, a UUID for
   // audit correlation, a hash for safe logging, and an expiry.
   rpc Vend(VendRequest) returns (VendResponse);
+
+  // InitProvider hands the HostService GRPCBroker ID to the plugin so it can
+  // call host callbacks such as GetGithubApp. Called once after startup.
+  //
+  // Backward compatibility: plugins that pre-date UX-B return Unimplemented;
+  // the host treats Unimplemented as a no-op success — they continue to work
+  // with filesystem-based config (with a deprecation warning).
+  rpc InitProvider(InitProviderRequest) returns (InitProviderResponse);
 }

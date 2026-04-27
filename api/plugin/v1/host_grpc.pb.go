@@ -61,6 +61,7 @@ const (
 	HostService_EnqueueRevocation_FullMethodName       = "/agentkms.plugin.v1.HostService/EnqueueRevocation"
 	HostService_DrainPendingRevocations_FullMethodName = "/agentkms.plugin.v1.HostService/DrainPendingRevocations"
 	HostService_AckRevocation_FullMethodName           = "/agentkms.plugin.v1.HostService/AckRevocation"
+	HostService_GetGithubApp_FullMethodName            = "/agentkms.plugin.v1.HostService/GetGithubApp"
 )
 
 // HostServiceClient is the client API for HostService service.
@@ -231,6 +232,24 @@ type HostServiceClient interface {
 	//
 	// Error semantics: HOST_TRANSIENT if KV layer is temporarily unavailable.
 	AckRevocation(ctx context.Context, in *AckRevocationRequest, opts ...grpc.CallOption) (*AckRevocationResponse, error)
+	// GetGithubApp returns the full GitHub App registration (App ID, Installation ID,
+	// and private key PEM) for the named App. Called by the github provider plugin
+	// at vend time to replace the legacy github-apps.yaml filesystem config.
+	//
+	// This RPC is usable by "credential_vender" plugins that receive a broker ID
+	// during their GRPCServer setup. The github provider plugin is the sole consumer.
+	//
+	// SECURITY: private_key_pem in the response MUST NOT be logged by the host.
+	// The transport is the in-process gRPC broker side channel; it does not cross
+	// a network boundary.
+	//
+	// Idempotency: idempotent (read-only).
+	//
+	// Error semantics:
+	//
+	//	HOST_NOT_FOUND — no App registered under that name.
+	//	HOST_TRANSIENT — KV layer temporarily unavailable.
+	GetGithubApp(ctx context.Context, in *GetGithubAppRequest, opts ...grpc.CallOption) (*GetGithubAppResponse, error)
 }
 
 type hostServiceClient struct {
@@ -345,6 +364,16 @@ func (c *hostServiceClient) AckRevocation(ctx context.Context, in *AckRevocation
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AckRevocationResponse)
 	err := c.cc.Invoke(ctx, HostService_AckRevocation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hostServiceClient) GetGithubApp(ctx context.Context, in *GetGithubAppRequest, opts ...grpc.CallOption) (*GetGithubAppResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetGithubAppResponse)
+	err := c.cc.Invoke(ctx, HostService_GetGithubApp_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -519,6 +548,24 @@ type HostServiceServer interface {
 	//
 	// Error semantics: HOST_TRANSIENT if KV layer is temporarily unavailable.
 	AckRevocation(context.Context, *AckRevocationRequest) (*AckRevocationResponse, error)
+	// GetGithubApp returns the full GitHub App registration (App ID, Installation ID,
+	// and private key PEM) for the named App. Called by the github provider plugin
+	// at vend time to replace the legacy github-apps.yaml filesystem config.
+	//
+	// This RPC is usable by "credential_vender" plugins that receive a broker ID
+	// during their GRPCServer setup. The github provider plugin is the sole consumer.
+	//
+	// SECURITY: private_key_pem in the response MUST NOT be logged by the host.
+	// The transport is the in-process gRPC broker side channel; it does not cross
+	// a network boundary.
+	//
+	// Idempotency: idempotent (read-only).
+	//
+	// Error semantics:
+	//
+	//	HOST_NOT_FOUND — no App registered under that name.
+	//	HOST_TRANSIENT — KV layer temporarily unavailable.
+	GetGithubApp(context.Context, *GetGithubAppRequest) (*GetGithubAppResponse, error)
 	mustEmbedUnimplementedHostServiceServer()
 }
 
@@ -561,6 +608,9 @@ func (UnimplementedHostServiceServer) DrainPendingRevocations(context.Context, *
 }
 func (UnimplementedHostServiceServer) AckRevocation(context.Context, *AckRevocationRequest) (*AckRevocationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AckRevocation not implemented")
+}
+func (UnimplementedHostServiceServer) GetGithubApp(context.Context, *GetGithubAppRequest) (*GetGithubAppResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetGithubApp not implemented")
 }
 func (UnimplementedHostServiceServer) mustEmbedUnimplementedHostServiceServer() {}
 func (UnimplementedHostServiceServer) testEmbeddedByValue()                     {}
@@ -781,6 +831,24 @@ func _HostService_AckRevocation_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HostService_GetGithubApp_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetGithubAppRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HostServiceServer).GetGithubApp(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HostService_GetGithubApp_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HostServiceServer).GetGithubApp(ctx, req.(*GetGithubAppRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // HostService_ServiceDesc is the grpc.ServiceDesc for HostService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -832,6 +900,10 @@ var HostService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "AckRevocation",
 			Handler:    _HostService_AckRevocation_Handler,
 		},
+		{
+			MethodName: "GetGithubApp",
+			Handler:    _HostService_GetGithubApp_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "host.proto",
@@ -842,12 +914,7 @@ const (
 	OrchestratorService_Init_FullMethodName                 = "/agentkms.plugin.v1.OrchestratorService/Init"
 	OrchestratorService_TriggerRotation_FullMethodName      = "/agentkms.plugin.v1.OrchestratorService/TriggerRotation"
 	OrchestratorService_BindingForCredential_FullMethodName = "/agentkms.plugin.v1.OrchestratorService/BindingForCredential"
-	// OrchestratorService_RotateBinding_FullMethodName is the full gRPC method name
-	// for the RotateBinding RPC added in T6 (rotate handler delegation).
-	// The request type is GetBindingRequest (name field) and the response type is
-	// TriggerRotationResponse (error_message field) — both defined in host.pb.go.
-	// These existing types are reused to avoid a protoc regen cycle for this additive change.
-	OrchestratorService_RotateBinding_FullMethodName = "/agentkms.plugin.v1.OrchestratorService/RotateBinding"
+	OrchestratorService_RotateBinding_FullMethodName        = "/agentkms.plugin.v1.OrchestratorService/RotateBinding"
 )
 
 // OrchestratorServiceClient is the client API for OrchestratorService service.
@@ -881,10 +948,26 @@ type OrchestratorServiceClient interface {
 	BindingForCredential(ctx context.Context, in *BindingForCredentialRequest, opts ...grpc.CallOption) (*BindingForCredentialResponse, error)
 	// RotateBinding executes a synchronous full rotation for the named binding.
 	// Called by the OSS rotate handler (POST /bindings/{name}/rotate) when the
-	// Pro orchestrator is loaded. Request reuses GetBindingRequest (name field);
-	// response reuses TriggerRotationResponse (error_message field). See host.proto
-	// OrchestratorService.RotateBinding for full semantics.
-	RotateBinding(ctx context.Context, in *GetBindingRequest, opts ...grpc.CallOption) (*TriggerRotationResponse, error)
+	// Pro orchestrator is loaded. Unlike TriggerRotation (which takes a
+	// credential UUID and returns immediately), RotateBinding takes a binding
+	// name and blocks until the rotation state machine completes (or fails).
+	//
+	// The orchestrator acquires the per-binding lock, vends a new credential via
+	// the provider plugin, delivers it to all destinations, updates binding
+	// metadata, and handles grace-period revocation of the old credential —
+	// emitting the full audit chain (binding_rotate_start, binding_rotate,
+	// destination_deliver) via HostService.EmitAudit.
+	//
+	// The OSS rotate handler returns the orchestrator's outcome synchronously
+	// to the kpm CLI caller, including per-destination results.
+	//
+	// Error semantics: error_message is non-empty on total failure (all
+	// destinations failed, vend failed, binding not found). Partial success
+	// (degraded) is returned as success with per-destination detail recorded in
+	// the audit log; the OSS handler emits its own final OperationBindingRotate
+	// event. Returns immediately if called before Init with an "not initialized"
+	// error.
+	RotateBinding(ctx context.Context, in *RotateBindingRequest, opts ...grpc.CallOption) (*RotateBindingResponse, error)
 }
 
 type orchestratorServiceClient struct {
@@ -935,9 +1018,9 @@ func (c *orchestratorServiceClient) BindingForCredential(ctx context.Context, in
 	return out, nil
 }
 
-func (c *orchestratorServiceClient) RotateBinding(ctx context.Context, in *GetBindingRequest, opts ...grpc.CallOption) (*TriggerRotationResponse, error) {
+func (c *orchestratorServiceClient) RotateBinding(ctx context.Context, in *RotateBindingRequest, opts ...grpc.CallOption) (*RotateBindingResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TriggerRotationResponse)
+	out := new(RotateBindingResponse)
 	err := c.cc.Invoke(ctx, OrchestratorService_RotateBinding_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -975,8 +1058,27 @@ type OrchestratorServiceServer interface {
 	// binding. Implements the webhooks.RotationHook.BindingForCredential contract.
 	BindingForCredential(context.Context, *BindingForCredentialRequest) (*BindingForCredentialResponse, error)
 	// RotateBinding executes a synchronous full rotation for the named binding.
-	// Request reuses GetBindingRequest (name field); response reuses TriggerRotationResponse.
-	RotateBinding(context.Context, *GetBindingRequest) (*TriggerRotationResponse, error)
+	// Called by the OSS rotate handler (POST /bindings/{name}/rotate) when the
+	// Pro orchestrator is loaded. Unlike TriggerRotation (which takes a
+	// credential UUID and returns immediately), RotateBinding takes a binding
+	// name and blocks until the rotation state machine completes (or fails).
+	//
+	// The orchestrator acquires the per-binding lock, vends a new credential via
+	// the provider plugin, delivers it to all destinations, updates binding
+	// metadata, and handles grace-period revocation of the old credential —
+	// emitting the full audit chain (binding_rotate_start, binding_rotate,
+	// destination_deliver) via HostService.EmitAudit.
+	//
+	// The OSS rotate handler returns the orchestrator's outcome synchronously
+	// to the kpm CLI caller, including per-destination results.
+	//
+	// Error semantics: error_message is non-empty on total failure (all
+	// destinations failed, vend failed, binding not found). Partial success
+	// (degraded) is returned as success with per-destination detail recorded in
+	// the audit log; the OSS handler emits its own final OperationBindingRotate
+	// event. Returns immediately if called before Init with an "not initialized"
+	// error.
+	RotateBinding(context.Context, *RotateBindingRequest) (*RotateBindingResponse, error)
 	mustEmbedUnimplementedOrchestratorServiceServer()
 }
 
@@ -999,7 +1101,7 @@ func (UnimplementedOrchestratorServiceServer) TriggerRotation(context.Context, *
 func (UnimplementedOrchestratorServiceServer) BindingForCredential(context.Context, *BindingForCredentialRequest) (*BindingForCredentialResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BindingForCredential not implemented")
 }
-func (UnimplementedOrchestratorServiceServer) RotateBinding(context.Context, *GetBindingRequest) (*TriggerRotationResponse, error) {
+func (UnimplementedOrchestratorServiceServer) RotateBinding(context.Context, *RotateBindingRequest) (*RotateBindingResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RotateBinding not implemented")
 }
 func (UnimplementedOrchestratorServiceServer) mustEmbedUnimplementedOrchestratorServiceServer() {}
@@ -1096,7 +1198,7 @@ func _OrchestratorService_BindingForCredential_Handler(srv interface{}, ctx cont
 }
 
 func _OrchestratorService_RotateBinding_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetBindingRequest)
+	in := new(RotateBindingRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -1108,7 +1210,7 @@ func _OrchestratorService_RotateBinding_Handler(srv interface{}, ctx context.Con
 		FullMethod: OrchestratorService_RotateBinding_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OrchestratorServiceServer).RotateBinding(ctx, req.(*GetBindingRequest))
+		return srv.(OrchestratorServiceServer).RotateBinding(ctx, req.(*RotateBindingRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

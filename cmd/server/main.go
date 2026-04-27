@@ -30,6 +30,7 @@ import (
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/credentials/binding"
+	"github.com/agentkms/agentkms/internal/githubapp"
 	"github.com/agentkms/agentkms/internal/policy"
 	"github.com/agentkms/agentkms/internal/revocation"
 	"github.com/agentkms/agentkms/internal/ui"
@@ -325,7 +326,8 @@ func main() {
 		// Wire registry writer and binding store now that OpenBaoKV implements KVWriter.
 		apiServer.SetRegistryWriter(kv)
 		apiServer.SetBindingStore(binding.NewKVBindingStore(kv))
-		slog.Info("credential vender, registry writer, and binding store ready")
+		apiServer.SetGithubAppStore(githubapp.NewKVStore(kv))
+		slog.Info("credential vender, registry writer, binding store, and github app store ready")
 	}
 
 	// ── AlertOrchestrator (webhook-triggered rotation) ────────────────────────

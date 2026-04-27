@@ -1127,6 +1127,106 @@ func (x *VendResponse) GetError() string {
 	return ""
 }
 
+// InitProviderRequest is the input to CredentialVenderService.InitProvider.
+// Sent by the host after startup to hand the HostService GRPCBroker ID to the
+// plugin so it can call HostService.GetGithubApp (or other host callbacks).
+// Plugins that do not need host callbacks may return an empty error_message.
+type InitProviderRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// host_broker_id is the go-plugin GRPCBroker ID for the HostService side channel.
+	// The plugin calls broker.Dial(host_broker_id) to obtain a HostServiceClient.
+	// Zero means no HostService is available (host is pre-UX-B).
+	HostBrokerId  uint32 `protobuf:"varint,1,opt,name=host_broker_id,json=hostBrokerId,proto3" json:"host_broker_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InitProviderRequest) Reset() {
+	*x = InitProviderRequest{}
+	mi := &file_plugin_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InitProviderRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InitProviderRequest) ProtoMessage() {}
+
+func (x *InitProviderRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InitProviderRequest.ProtoReflect.Descriptor instead.
+func (*InitProviderRequest) Descriptor() ([]byte, []int) {
+	return file_plugin_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *InitProviderRequest) GetHostBrokerId() uint32 {
+	if x != nil {
+		return x.HostBrokerId
+	}
+	return 0
+}
+
+// InitProviderResponse is the output of CredentialVenderService.InitProvider.
+type InitProviderResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// error_message is non-empty if the plugin failed to connect to the HostService.
+	// An empty error_message means the plugin successfully initialised host callbacks.
+	// Plugins that don't implement InitProvider return Unimplemented; the host
+	// treats Unimplemented as success (backwards compatible — legacy plugins).
+	ErrorMessage  string `protobuf:"bytes,1,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InitProviderResponse) Reset() {
+	*x = InitProviderResponse{}
+	mi := &file_plugin_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InitProviderResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InitProviderResponse) ProtoMessage() {}
+
+func (x *InitProviderResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InitProviderResponse.ProtoReflect.Descriptor instead.
+func (*InitProviderResponse) Descriptor() ([]byte, []int) {
+	return file_plugin_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *InitProviderResponse) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
 var File_plugin_proto protoreflect.FileDescriptor
 
 const file_plugin_proto_rawDesc = "" +
@@ -1196,7 +1296,11 @@ const file_plugin_proto_rawDesc = "" +
 	"\n" +
 	"credential\x18\x01 \x01(\v2$.agentkms.plugin.v1.VendedCredentialR\n" +
 	"credential\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error*v\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\";\n" +
+	"\x13InitProviderRequest\x12$\n" +
+	"\x0ehost_broker_id\x18\x01 \x01(\rR\fhostBrokerId\";\n" +
+	"\x14InitProviderResponse\x12#\n" +
+	"\rerror_message\x18\x01 \x01(\tR\ferrorMessage*v\n" +
 	"\fAnomalyLevel\x12\x1d\n" +
 	"\x19ANOMALY_LEVEL_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12ANOMALY_LEVEL_INFO\x10\x01\x12\x16\n" +
@@ -1214,11 +1318,12 @@ const file_plugin_proto_rawDesc = "" +
 	"\x16ScopeSerializerService\x12I\n" +
 	"\x04Kind\x12\x1f.agentkms.plugin.v1.KindRequest\x1a .agentkms.plugin.v1.KindResponse\x12a\n" +
 	"\fCapabilities\x12'.agentkms.plugin.v1.CapabilitiesRequest\x1a(.agentkms.plugin.v1.CapabilitiesResponse\x12X\n" +
-	"\tSerialize\x12$.agentkms.plugin.v1.SerializeRequest\x1a%.agentkms.plugin.v1.SerializeResponse2\x92\x02\n" +
+	"\tSerialize\x12$.agentkms.plugin.v1.SerializeRequest\x1a%.agentkms.plugin.v1.SerializeResponse2\xf5\x02\n" +
 	"\x17CredentialVenderService\x12I\n" +
 	"\x04Kind\x12\x1f.agentkms.plugin.v1.KindRequest\x1a .agentkms.plugin.v1.KindResponse\x12a\n" +
 	"\fCapabilities\x12'.agentkms.plugin.v1.CapabilitiesRequest\x1a(.agentkms.plugin.v1.CapabilitiesResponse\x12I\n" +
-	"\x04Vend\x12\x1f.agentkms.plugin.v1.VendRequest\x1a .agentkms.plugin.v1.VendResponseB5Z3github.com/agentkms/agentkms/api/plugin/v1;pluginv1b\x06proto3"
+	"\x04Vend\x12\x1f.agentkms.plugin.v1.VendRequest\x1a .agentkms.plugin.v1.VendResponse\x12a\n" +
+	"\fInitProvider\x12'.agentkms.plugin.v1.InitProviderRequest\x1a(.agentkms.plugin.v1.InitProviderResponseB5Z3github.com/agentkms/agentkms/api/plugin/v1;pluginv1b\x06proto3"
 
 var (
 	file_plugin_proto_rawDescOnce sync.Once
@@ -1233,7 +1338,7 @@ func file_plugin_proto_rawDescGZIP() []byte {
 }
 
 var file_plugin_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_plugin_proto_goTypes = []any{
 	(AnomalyLevel)(0),             // 0: agentkms.plugin.v1.AnomalyLevel
 	(*Scope)(nil),                 // 1: agentkms.plugin.v1.Scope
@@ -1255,16 +1360,18 @@ var file_plugin_proto_goTypes = []any{
 	(*SerializeResponse)(nil),     // 17: agentkms.plugin.v1.SerializeResponse
 	(*VendRequest)(nil),           // 18: agentkms.plugin.v1.VendRequest
 	(*VendResponse)(nil),          // 19: agentkms.plugin.v1.VendResponse
-	(*structpb.Struct)(nil),       // 20: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil), // 21: google.protobuf.Timestamp
+	(*InitProviderRequest)(nil),   // 20: agentkms.plugin.v1.InitProviderRequest
+	(*InitProviderResponse)(nil),  // 21: agentkms.plugin.v1.InitProviderResponse
+	(*structpb.Struct)(nil),       // 22: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil), // 23: google.protobuf.Timestamp
 }
 var file_plugin_proto_depIdxs = []int32{
-	20, // 0: agentkms.plugin.v1.Scope.params:type_name -> google.protobuf.Struct
-	21, // 1: agentkms.plugin.v1.Scope.issued_at:type_name -> google.protobuf.Timestamp
-	21, // 2: agentkms.plugin.v1.Scope.expires_at:type_name -> google.protobuf.Timestamp
-	20, // 3: agentkms.plugin.v1.ScopeBounds.max_params:type_name -> google.protobuf.Struct
+	22, // 0: agentkms.plugin.v1.Scope.params:type_name -> google.protobuf.Struct
+	23, // 1: agentkms.plugin.v1.Scope.issued_at:type_name -> google.protobuf.Timestamp
+	23, // 2: agentkms.plugin.v1.Scope.expires_at:type_name -> google.protobuf.Timestamp
+	22, // 3: agentkms.plugin.v1.ScopeBounds.max_params:type_name -> google.protobuf.Struct
 	0,  // 4: agentkms.plugin.v1.ScopeAnomaly.level:type_name -> agentkms.plugin.v1.AnomalyLevel
-	21, // 5: agentkms.plugin.v1.VendedCredential.expires_at:type_name -> google.protobuf.Timestamp
+	23, // 5: agentkms.plugin.v1.VendedCredential.expires_at:type_name -> google.protobuf.Timestamp
 	1,  // 6: agentkms.plugin.v1.ValidateRequest.scope:type_name -> agentkms.plugin.v1.Scope
 	1,  // 7: agentkms.plugin.v1.NarrowRequest.requested:type_name -> agentkms.plugin.v1.Scope
 	2,  // 8: agentkms.plugin.v1.NarrowRequest.bounds:type_name -> agentkms.plugin.v1.ScopeBounds
@@ -1287,21 +1394,23 @@ var file_plugin_proto_depIdxs = []int32{
 	6,  // 25: agentkms.plugin.v1.CredentialVenderService.Kind:input_type -> agentkms.plugin.v1.KindRequest
 	8,  // 26: agentkms.plugin.v1.CredentialVenderService.Capabilities:input_type -> agentkms.plugin.v1.CapabilitiesRequest
 	18, // 27: agentkms.plugin.v1.CredentialVenderService.Vend:input_type -> agentkms.plugin.v1.VendRequest
-	7,  // 28: agentkms.plugin.v1.ScopeValidatorService.Kind:output_type -> agentkms.plugin.v1.KindResponse
-	9,  // 29: agentkms.plugin.v1.ScopeValidatorService.Capabilities:output_type -> agentkms.plugin.v1.CapabilitiesResponse
-	11, // 30: agentkms.plugin.v1.ScopeValidatorService.Validate:output_type -> agentkms.plugin.v1.ValidateResponse
-	13, // 31: agentkms.plugin.v1.ScopeValidatorService.Narrow:output_type -> agentkms.plugin.v1.NarrowResponse
-	7,  // 32: agentkms.plugin.v1.ScopeAnalyzerService.Kind:output_type -> agentkms.plugin.v1.KindResponse
-	9,  // 33: agentkms.plugin.v1.ScopeAnalyzerService.Capabilities:output_type -> agentkms.plugin.v1.CapabilitiesResponse
-	15, // 34: agentkms.plugin.v1.ScopeAnalyzerService.Analyze:output_type -> agentkms.plugin.v1.AnalyzeResponse
-	7,  // 35: agentkms.plugin.v1.ScopeSerializerService.Kind:output_type -> agentkms.plugin.v1.KindResponse
-	9,  // 36: agentkms.plugin.v1.ScopeSerializerService.Capabilities:output_type -> agentkms.plugin.v1.CapabilitiesResponse
-	17, // 37: agentkms.plugin.v1.ScopeSerializerService.Serialize:output_type -> agentkms.plugin.v1.SerializeResponse
-	7,  // 38: agentkms.plugin.v1.CredentialVenderService.Kind:output_type -> agentkms.plugin.v1.KindResponse
-	9,  // 39: agentkms.plugin.v1.CredentialVenderService.Capabilities:output_type -> agentkms.plugin.v1.CapabilitiesResponse
-	19, // 40: agentkms.plugin.v1.CredentialVenderService.Vend:output_type -> agentkms.plugin.v1.VendResponse
-	28, // [28:41] is the sub-list for method output_type
-	15, // [15:28] is the sub-list for method input_type
+	20, // 28: agentkms.plugin.v1.CredentialVenderService.InitProvider:input_type -> agentkms.plugin.v1.InitProviderRequest
+	7,  // 29: agentkms.plugin.v1.ScopeValidatorService.Kind:output_type -> agentkms.plugin.v1.KindResponse
+	9,  // 30: agentkms.plugin.v1.ScopeValidatorService.Capabilities:output_type -> agentkms.plugin.v1.CapabilitiesResponse
+	11, // 31: agentkms.plugin.v1.ScopeValidatorService.Validate:output_type -> agentkms.plugin.v1.ValidateResponse
+	13, // 32: agentkms.plugin.v1.ScopeValidatorService.Narrow:output_type -> agentkms.plugin.v1.NarrowResponse
+	7,  // 33: agentkms.plugin.v1.ScopeAnalyzerService.Kind:output_type -> agentkms.plugin.v1.KindResponse
+	9,  // 34: agentkms.plugin.v1.ScopeAnalyzerService.Capabilities:output_type -> agentkms.plugin.v1.CapabilitiesResponse
+	15, // 35: agentkms.plugin.v1.ScopeAnalyzerService.Analyze:output_type -> agentkms.plugin.v1.AnalyzeResponse
+	7,  // 36: agentkms.plugin.v1.ScopeSerializerService.Kind:output_type -> agentkms.plugin.v1.KindResponse
+	9,  // 37: agentkms.plugin.v1.ScopeSerializerService.Capabilities:output_type -> agentkms.plugin.v1.CapabilitiesResponse
+	17, // 38: agentkms.plugin.v1.ScopeSerializerService.Serialize:output_type -> agentkms.plugin.v1.SerializeResponse
+	7,  // 39: agentkms.plugin.v1.CredentialVenderService.Kind:output_type -> agentkms.plugin.v1.KindResponse
+	9,  // 40: agentkms.plugin.v1.CredentialVenderService.Capabilities:output_type -> agentkms.plugin.v1.CapabilitiesResponse
+	19, // 41: agentkms.plugin.v1.CredentialVenderService.Vend:output_type -> agentkms.plugin.v1.VendResponse
+	21, // 42: agentkms.plugin.v1.CredentialVenderService.InitProvider:output_type -> agentkms.plugin.v1.InitProviderResponse
+	29, // [29:43] is the sub-list for method output_type
+	15, // [15:29] is the sub-list for method input_type
 	15, // [15:15] is the sub-list for extension type_name
 	15, // [15:15] is the sub-list for extension extendee
 	0,  // [0:15] is the sub-list for field type_name
@@ -1318,7 +1427,7 @@ func file_plugin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plugin_proto_rawDesc), len(file_plugin_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   19,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   4,
 		},

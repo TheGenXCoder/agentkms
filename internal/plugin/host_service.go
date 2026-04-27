@@ -29,6 +29,7 @@ import (
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/credentials/binding"
 	"github.com/agentkms/agentkms/internal/destination"
+	"github.com/agentkms/agentkms/internal/githubapp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -50,10 +51,11 @@ type pendingRevocationEntry struct {
 type hostServiceServer struct {
 	pluginv1.UnimplementedHostServiceServer
 
-	store    binding.BindingStore
-	registry *Registry
-	auditor  audit.Auditor
-	kv       credentials.KVWriter // for pending-revocation queue
+	store          binding.BindingStore
+	registry       *Registry
+	auditor        audit.Auditor
+	kv             credentials.KVWriter // for pending-revocation queue
+	githubAppStore githubapp.Store      // optional; serves GetGithubApp RPC
 
 	// bindingMu serializes SaveBindingMetadata per binding name.
 	bindingMuMap  map[string]*sync.Mutex
@@ -64,18 +66,21 @@ type hostServiceServer struct {
 }
 
 // newHostServiceServer constructs a HostService server.
+// githubAppStore may be nil; if so, GetGithubApp returns HOST_NOT_FOUND.
 func newHostServiceServer(
 	store binding.BindingStore,
 	registry *Registry,
 	auditor audit.Auditor,
 	kv credentials.KVWriter,
+	githubAppStore githubapp.Store,
 ) *hostServiceServer {
 	return &hostServiceServer{
-		store:        store,
-		registry:     registry,
-		auditor:      auditor,
-		kv:           kv,
-		bindingMuMap: make(map[string]*sync.Mutex),
+		store:          store,
+		registry:       registry,
+		auditor:        auditor,
+		kv:             kv,
+		githubAppStore: githubAppStore,
+		bindingMuMap:   make(map[string]*sync.Mutex),
 	}
 }
 
@@ -731,6 +736,59 @@ func (s *hostServiceServer) AckRevocation(ctx context.Context, req *pluginv1.Ack
 
 	return &pluginv1.AckRevocationResponse{
 		ErrorCode: pluginv1.HostCallbackErrorCode_HOST_OK,
+	}, nil
+}
+
+// ── GitHub App fetch (UX-B) ───────────────────────────────────────────────────
+
+// GetGithubApp returns the full GitHub App registration by name, including the
+// private key PEM bytes. Called by the github provider plugin at vend time.
+//
+// SECURITY: the private_key_pem field in the response MUST NOT be logged.
+// This RPC is transported over the in-process gRPC broker side channel only.
+func (s *hostServiceServer) GetGithubApp(ctx context.Context, req *pluginv1.GetGithubAppRequest) (*pluginv1.GetGithubAppResponse, error) {
+	name := req.GetName()
+	if name == "" {
+		return &pluginv1.GetGithubAppResponse{
+			ErrorCode:    pluginv1.HostCallbackErrorCode_HOST_PERMANENT,
+			ErrorMessage: "name is required",
+		}, nil
+	}
+
+	if s.githubAppStore == nil {
+		return &pluginv1.GetGithubAppResponse{
+			ErrorCode:    pluginv1.HostCallbackErrorCode_HOST_NOT_FOUND,
+			ErrorMessage: "github app store not configured on host",
+		}, nil
+	}
+
+	app, err := s.githubAppStore.Get(ctx, name)
+	if err != nil {
+		if err == githubapp.ErrNotFound {
+			return &pluginv1.GetGithubAppResponse{
+				ErrorCode:    pluginv1.HostCallbackErrorCode_HOST_NOT_FOUND,
+				ErrorMessage: fmt.Sprintf("github app %q not found", name),
+			}, nil
+		}
+		if isTransientError(err) {
+			return &pluginv1.GetGithubAppResponse{
+				ErrorCode:    pluginv1.HostCallbackErrorCode_HOST_TRANSIENT,
+				ErrorMessage: fmt.Sprintf("github app store: %v", err),
+			}, nil
+		}
+		return &pluginv1.GetGithubAppResponse{
+			ErrorCode:    pluginv1.HostCallbackErrorCode_HOST_PERMANENT,
+			ErrorMessage: fmt.Sprintf("github app store: %v", err),
+		}, nil
+	}
+
+	// SECURITY: private_key_pem is returned here over the in-process broker only.
+	// Do NOT log app.PrivateKeyPEM or include it in any audit event.
+	return &pluginv1.GetGithubAppResponse{
+		AppId:          app.AppID,
+		InstallationId: app.InstallationID,
+		PrivateKeyPem:  app.PrivateKeyPEM,
+		ErrorCode:      pluginv1.HostCallbackErrorCode_HOST_OK,
 	}, nil
 }
 

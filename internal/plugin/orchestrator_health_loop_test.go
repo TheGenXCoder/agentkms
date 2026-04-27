@@ -52,8 +52,8 @@ func (f *fakeOrchestratorClient) BindingForCredential(_ context.Context, _ *plug
 	return &pluginv1.BindingForCredentialResponse{NotFound: true}, nil
 }
 
-func (f *fakeOrchestratorClient) RotateBinding(_ context.Context, _ *pluginv1.GetBindingRequest, _ ...grpc.CallOption) (*pluginv1.TriggerRotationResponse, error) {
-	return &pluginv1.TriggerRotationResponse{}, nil
+func (f *fakeOrchestratorClient) RotateBinding(_ context.Context, _ *pluginv1.RotateBindingRequest, _ ...grpc.CallOption) (*pluginv1.RotateBindingResponse, error) {
+	return &pluginv1.RotateBindingResponse{}, nil
 }
 
 // testOrchestratorHealthLoopFast is a test-only variant of orchestratorHealthLoop

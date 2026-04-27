@@ -18,6 +18,7 @@ import (
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/credentials/binding"
 	"github.com/agentkms/agentkms/internal/destination"
+	"github.com/agentkms/agentkms/internal/githubapp"
 	"github.com/agentkms/agentkms/internal/webhooks"
 	hclog "github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
@@ -64,9 +65,10 @@ type pluginEntry struct {
 // a degraded HostService that returns HOST_PERMANENT on all calls requiring
 // internal state — this is the graceful degradation path for test environments.
 type HostServiceDeps struct {
-	Store   binding.BindingStore
-	Auditor audit.Auditor
-	KV      credentials.KVWriter
+	Store         binding.BindingStore
+	Auditor       audit.Auditor
+	KV            credentials.KVWriter
+	GithubAppStore githubapp.Store // optional; enables GetGithubApp RPC for github provider plugin
 }
 
 // Host manages plugin discovery, lifecycle, and dispatch.
@@ -662,13 +664,22 @@ func (h *Host) StartProvider(name string) error {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Build the subprocess command. If GithubAppStore is configured, start a
+	// HostService broker side channel so the github provider plugin can call
+	// GetGithubApp at vend time. The broker ID is passed via environment variable
+	// AGENTKMS_HOST_BROKER_ID so the plugin can dial back without changing the
+	// CredentialVenderService gRPC surface.
+	cmd := pluginCommand(pluginPath)
+
 	client := goplugin.NewClient(&goplugin.ClientConfig{
-		HandshakeConfig:  HandshakeConfig,
-		Plugins:          PluginMap,
-		Cmd:              pluginCommand(pluginPath),
-		AllowedProtocols: []goplugin.Protocol{goplugin.ProtocolGRPC},
-		Logger:           newPluginLogger(name),
-		StartTimeout:     30 * time.Second,
+		HandshakeConfig:     HandshakeConfig,
+		Plugins:             PluginMap,
+		Cmd:                 cmd,
+		AllowedProtocols:    []goplugin.Protocol{goplugin.ProtocolGRPC},
+		Logger:              newPluginLogger(name),
+		StartTimeout:        30 * time.Second,
+		GRPCBrokerMultiplex: true, // enables broker side channels for provider plugins
 	})
 
 	rpcClient, err := client.Client()
@@ -692,6 +703,25 @@ func (h *Host) StartProvider(name string) error {
 		return fmt.Errorf("provider plugin %q: dispensed value is %T, want *CredentialVenderGRPC", name, raw)
 	}
 
+	// If GithubAppStore is available, start a HostService broker so the provider
+	// plugin can call GetGithubApp. The broker ID is passed by calling
+	// InitProvider on the plugin via the adapter.
+	if deps := h.hostServiceDeps; deps != nil && deps.GithubAppStore != nil {
+		hsSrv := newHostServiceServer(deps.Store, h.registry, deps.Auditor, deps.KV, deps.GithubAppStore)
+		broker := adapter.broker
+		if broker != nil {
+			brokerID := broker.NextId()
+			go broker.AcceptAndServe(brokerID, func(opts []grpc.ServerOption) *grpc.Server {
+				srv := grpc.NewServer(opts...)
+				pluginv1.RegisterHostServiceServer(srv, hsSrv)
+				return srv
+			})
+			adapter.hostBrokerID = brokerID
+			adapter.hostBrokerReady = true
+			log.Printf("[plugin] provider %q: HostService broker started (broker_id=%d)", name, brokerID)
+		}
+	}
+
 	// Kind negotiation: discover the provider's discriminator (e.g. "github-app-token").
 	kindResp, err := adapter.client.Kind(ctx, &pluginv1.KindRequest{})
 	if err != nil {
@@ -709,6 +739,24 @@ func (h *Host) StartProvider(name string) error {
 		adapter.capabilities = nil
 	} else {
 		adapter.capabilities = capsResp.GetCapabilities()
+	}
+
+	// If a HostService broker was started, send the broker ID to the plugin via
+	// InitProvider so it can dial the HostService and bootstrap App config.
+	if adapter.hostBrokerReady {
+		initCtx, initCancel := context.WithTimeout(ctx, 15*time.Second)
+		initResp, initErr := adapter.client.InitProvider(initCtx, &pluginv1.InitProviderRequest{
+			HostBrokerId: adapter.hostBrokerID,
+		})
+		initCancel()
+		if initErr != nil {
+			// Non-fatal: plugin continues without host-side App config. Log and proceed.
+			log.Printf("[plugin] provider %q: InitProvider RPC failed (github app fetch will be unavailable): %v", name, initErr)
+		} else if msg := initResp.GetErrorMessage(); msg != "" {
+			log.Printf("[plugin] provider %q: InitProvider returned error (github app fetch degraded): %s", name, msg)
+		} else {
+			log.Printf("[plugin] provider %q: InitProvider succeeded", name)
+		}
 	}
 
 	// Register the adapter in the vender registry so that VendCredential can find it.
@@ -860,7 +908,7 @@ func (h *Host) StartOrchestrator(name string) (*OrchestratorGRPC, error) {
 	// then passes the broker ID to the plugin via Init.
 	var hsSrv *hostServiceServer
 	if deps := h.hostServiceDeps; deps != nil {
-		hsSrv = newHostServiceServer(deps.Store, h.registry, deps.Auditor, deps.KV)
+		hsSrv = newHostServiceServer(deps.Store, h.registry, deps.Auditor, deps.KV, deps.GithubAppStore)
 	} else {
 		log.Printf("[plugin] WARNING: HostServiceDeps not configured — orchestrator plugin %q will have degraded access", name)
 		hsSrv = &hostServiceServer{} // empty server returns HOST_PERMANENT on all calls
@@ -961,8 +1009,8 @@ func (h *orchestratorRotationHook) BindingForCredential(ctx context.Context, cre
 // binding name); TriggerRotationResponse is reused for the error_message field.
 // This avoids a protoc regen cycle for this additive T6 change.
 func (h *orchestratorRotationHook) RotateBinding(ctx context.Context, bindingName string) error {
-	resp, err := h.client.client.RotateBinding(ctx, &pluginv1.GetBindingRequest{
-		Name: bindingName,
+	resp, err := h.client.client.RotateBinding(ctx, &pluginv1.RotateBindingRequest{
+		BindingName: bindingName,
 	})
 	if err != nil {
 		return fmt.Errorf("orchestrator RotateBinding RPC: %w", err)

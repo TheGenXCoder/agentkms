@@ -655,6 +655,7 @@ const (
 	CredentialVenderService_Kind_FullMethodName         = "/agentkms.plugin.v1.CredentialVenderService/Kind"
 	CredentialVenderService_Capabilities_FullMethodName = "/agentkms.plugin.v1.CredentialVenderService/Capabilities"
 	CredentialVenderService_Vend_FullMethodName         = "/agentkms.plugin.v1.CredentialVenderService/Vend"
+	CredentialVenderService_InitProvider_FullMethodName = "/agentkms.plugin.v1.CredentialVenderService/InitProvider"
 )
 
 // CredentialVenderServiceClient is the client API for CredentialVenderService service.
@@ -674,6 +675,13 @@ type CredentialVenderServiceClient interface {
 	// The returned VendedCredential holds the secret bytes, a UUID for
 	// audit correlation, a hash for safe logging, and an expiry.
 	Vend(ctx context.Context, in *VendRequest, opts ...grpc.CallOption) (*VendResponse, error)
+	// InitProvider hands the HostService GRPCBroker ID to the plugin so it can
+	// call host callbacks such as GetGithubApp. Called once after startup.
+	//
+	// Backward compatibility: plugins that pre-date UX-B return Unimplemented;
+	// the host treats Unimplemented as a no-op success — they continue to work
+	// with filesystem-based config (with a deprecation warning).
+	InitProvider(ctx context.Context, in *InitProviderRequest, opts ...grpc.CallOption) (*InitProviderResponse, error)
 }
 
 type credentialVenderServiceClient struct {
@@ -714,6 +722,16 @@ func (c *credentialVenderServiceClient) Vend(ctx context.Context, in *VendReques
 	return out, nil
 }
 
+func (c *credentialVenderServiceClient) InitProvider(ctx context.Context, in *InitProviderRequest, opts ...grpc.CallOption) (*InitProviderResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InitProviderResponse)
+	err := c.cc.Invoke(ctx, CredentialVenderService_InitProvider_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CredentialVenderServiceServer is the server API for CredentialVenderService service.
 // All implementations must embed UnimplementedCredentialVenderServiceServer
 // for forward compatibility.
@@ -731,6 +749,13 @@ type CredentialVenderServiceServer interface {
 	// The returned VendedCredential holds the secret bytes, a UUID for
 	// audit correlation, a hash for safe logging, and an expiry.
 	Vend(context.Context, *VendRequest) (*VendResponse, error)
+	// InitProvider hands the HostService GRPCBroker ID to the plugin so it can
+	// call host callbacks such as GetGithubApp. Called once after startup.
+	//
+	// Backward compatibility: plugins that pre-date UX-B return Unimplemented;
+	// the host treats Unimplemented as a no-op success — they continue to work
+	// with filesystem-based config (with a deprecation warning).
+	InitProvider(context.Context, *InitProviderRequest) (*InitProviderResponse, error)
 	mustEmbedUnimplementedCredentialVenderServiceServer()
 }
 
@@ -749,6 +774,9 @@ func (UnimplementedCredentialVenderServiceServer) Capabilities(context.Context, 
 }
 func (UnimplementedCredentialVenderServiceServer) Vend(context.Context, *VendRequest) (*VendResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Vend not implemented")
+}
+func (UnimplementedCredentialVenderServiceServer) InitProvider(context.Context, *InitProviderRequest) (*InitProviderResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InitProvider not implemented")
 }
 func (UnimplementedCredentialVenderServiceServer) mustEmbedUnimplementedCredentialVenderServiceServer() {
 }
@@ -826,6 +854,24 @@ func _CredentialVenderService_Vend_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CredentialVenderService_InitProvider_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InitProviderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CredentialVenderServiceServer).InitProvider(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CredentialVenderService_InitProvider_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CredentialVenderServiceServer).InitProvider(ctx, req.(*InitProviderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CredentialVenderService_ServiceDesc is the grpc.ServiceDesc for CredentialVenderService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -844,6 +890,10 @@ var CredentialVenderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Vend",
 			Handler:    _CredentialVenderService_Vend_Handler,
+		},
+		{
+			MethodName: "InitProvider",
+			Handler:    _CredentialVenderService_InitProvider_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

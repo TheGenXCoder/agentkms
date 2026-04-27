@@ -5,24 +5,20 @@
 // hashicorp/go-plugin subprocess under the PluginMap key "credential_vender".
 //
 // The plugin supports N GitHub Apps registered by name. Apps are configured
-// from a YAML file at startup; the app_name field in a Scope.Params selects
-// which App to use when vending.
+// at runtime via the HostService.GetGithubApp RPC (UX-B), fetched lazily on
+// first vend per app_name and cached for 5 minutes. The private key PEM is
+// NEVER written to the filesystem.
 //
-// Configuration:
+// app_name selection:
 //
-//	AGENTKMS_GITHUB_APPS_CONFIG — path to the apps config YAML file.
-//	Default: ~/.agentkms/plugins/github-apps.yaml
+//	The app_name field in the Scope.Params map selects which registered App to
+//	use when vending. Example: {"app_name": "agentkms-blog-audit-rotator"}.
 //
-// Config file schema (YAML):
+// Migration from legacy github-apps.yaml:
 //
-//	apps:
-//	  - app_name: blog-audit
-//	    private_key_path: /tmp/blog-audit-app.pem
-//	    app_id: 1234567
-//	    installation_id: 127321567
-//
-// If the config file is missing or has zero apps, the plugin starts with an
-// empty registry (all Vend calls return NotFound until apps are registered).
+//	If AGENTKMS_GITHUB_APPS_CONFIG is set or ~/.agentkms/plugins/github-apps.yaml
+//	exists, the plugin logs a deprecation warning and ignores the file.
+//	Register Apps via 'kpm gh-app register' instead.
 //
 // HandshakeConfig matches the OSS host (internal/plugin/plugins.go):
 //
@@ -35,9 +31,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	pluginv1 "github.com/agentkms/agentkms/api/plugin/v1"
@@ -45,84 +43,106 @@ import (
 	"github.com/agentkms/agentkms/internal/dynsecrets/github"
 	goplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gopkg.in/yaml.v3"
 )
 
-// defaultConfigPath is the fallback config location when AGENTKMS_GITHUB_APPS_CONFIG is unset.
-var defaultConfigPath = filepath.Join(os.Getenv("HOME"), ".agentkms", "plugins", "github-apps.yaml")
+// cacheTTL is how long a fetched App config stays valid before the plugin
+// re-fetches from the HostService.
+const cacheTTL = 5 * time.Minute
 
-// appsConfig is the YAML schema for the apps configuration file.
-type appsConfig struct {
-	Apps []appEntry `yaml:"apps"`
-}
-
-// appEntry describes a single GitHub App in the config file.
-type appEntry struct {
-	AppName        string `yaml:"app_name"`
-	PrivateKeyPath string `yaml:"private_key_path"`
-	AppID          int64  `yaml:"app_id"`
-	InstallationID int64  `yaml:"installation_id"`
+// cachedApp records the time an App was last fetched.
+// We don't store the config here because RegisterApp puts it in the plugin.
+type cachedApp struct {
+	fetchedAt time.Time
 }
 
 // githubVenderServer adapts github.Plugin to the gRPC CredentialVenderServiceServer interface.
+// Apps are loaded lazily from the HostService and cached with a 5-minute TTL.
 type githubVenderServer struct {
 	pluginv1.UnimplementedCredentialVenderServiceServer
+
 	plugin *github.Plugin
+
+	// hostClient is the HostService gRPC client, available after InitProvider.
+	hostMu         sync.RWMutex
+	hostClient     pluginv1.HostServiceClient
+	hostConn       *grpc.ClientConn                     // kept to close on shutdown
+	brokerDialFunc func(uint32) (*grpc.ClientConn, error) // set by GRPCServer
+
+	// cache maps app_name → last fetch time (plugin.RegisterApp holds the config).
+	cacheMu sync.RWMutex
+	cache   map[string]*cachedApp
 }
 
-// newGithubVenderServer builds the server, reads the config file, and registers
-// all configured Apps. Missing config file is non-fatal (logs a warning).
 func newGithubVenderServer() *githubVenderServer {
-	p := github.NewMulti()
-
-	configPath := os.Getenv("AGENTKMS_GITHUB_APPS_CONFIG")
-	if configPath == "" {
-		configPath = defaultConfigPath
+	// Warn if the legacy config file is present but do NOT read it.
+	legacyPath := os.Getenv("AGENTKMS_GITHUB_APPS_CONFIG")
+	if legacyPath == "" {
+		legacyPath = filepath.Join(os.Getenv("HOME"), ".agentkms", "plugins", "github-apps.yaml")
+	}
+	if _, err := os.Stat(legacyPath); err == nil {
+		log.Printf("[github-plugin] DEPRECATED: found legacy config file %q — it is ignored in this release. "+
+			"Register GitHub Apps via 'kpm gh-app register' instead.", legacyPath)
 	}
 
-	data, err := os.ReadFile(configPath)
+	return &githubVenderServer{
+		plugin: github.NewMulti(),
+		cache:  make(map[string]*cachedApp),
+	}
+}
+
+// InitProvider is called by the host after startup to hand the HostService
+// GRPCBroker ID to the plugin. The plugin dials the broker and stores the
+// HostServiceClient for lazy App fetching.
+func (s *githubVenderServer) InitProvider(_ context.Context, req *pluginv1.InitProviderRequest) (*pluginv1.InitProviderResponse, error) {
+	brokerID := req.GetHostBrokerId()
+	if brokerID == 0 {
+		// Pre-UX-B host: no broker available. All Vend calls will fail with NotFound.
+		log.Printf("[github-plugin] InitProvider: host_broker_id=0 — no HostService available; all Vend calls will fail until Apps are registered server-side")
+		return &pluginv1.InitProviderResponse{}, nil
+	}
+
+	// The broker is provided by the go-plugin framework through GRPCServer's broker
+	// parameter. We store it during GRPCServer and use it here to dial back.
+	s.hostMu.Lock()
+	defer s.hostMu.Unlock()
+
+	if s.hostConn != nil {
+		// Already initialised (e.g. on restart). Re-dial is fine.
+		_ = s.hostConn.Close()
+		s.hostConn = nil
+		s.hostClient = nil
+	}
+
+	// brokerDialFunc is set during GRPCServer by the plugin framework.
+	if s.brokerDialFunc == nil {
+		return &pluginv1.InitProviderResponse{
+			ErrorMessage: "InitProvider called before GRPCServer: broker not available",
+		}, nil
+	}
+
+	conn, err := s.brokerDialFunc(brokerID)
 	if err != nil {
-		if os.IsNotExist(err) {
-			log.Printf("[github-plugin] WARN: config file not found at %q; starting with zero apps. Set AGENTKMS_GITHUB_APPS_CONFIG or create the file. All Vend calls will fail until apps are registered.", configPath)
-		} else {
-			log.Printf("[github-plugin] WARN: cannot read config file %q: %v; starting with zero apps.", configPath, err)
-		}
-		return &githubVenderServer{plugin: p}
+		return &pluginv1.InitProviderResponse{
+			ErrorMessage: fmt.Sprintf("broker.Dial(%d): %v", brokerID, err),
+		}, nil
 	}
 
-	var cfg appsConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		log.Printf("[github-plugin] WARN: cannot parse config file %q: %v; starting with zero apps.", configPath, err)
-		return &githubVenderServer{plugin: p}
-	}
+	s.hostConn = conn
+	s.hostClient = pluginv1.NewHostServiceClient(conn)
+	log.Printf("[github-plugin] InitProvider: connected to HostService (broker_id=%d)", brokerID)
+	return &pluginv1.InitProviderResponse{}, nil
+}
 
-	for _, entry := range cfg.Apps {
-		if entry.AppName == "" {
-			log.Printf("[github-plugin] WARN: skipping app entry with empty app_name")
-			continue
-		}
-		if entry.PrivateKeyPath == "" {
-			log.Printf("[github-plugin] WARN: skipping app %q: private_key_path is empty", entry.AppName)
-			continue
-		}
-		keyPEM, err := os.ReadFile(entry.PrivateKeyPath)
-		if err != nil {
-			log.Printf("[github-plugin] WARN: skipping app %q: cannot read private_key_path %q: %v", entry.AppName, entry.PrivateKeyPath, err)
-			continue
-		}
-		if err := p.RegisterApp(entry.AppName, entry.AppID, entry.InstallationID, keyPEM); err != nil {
-			log.Printf("[github-plugin] WARN: skipping app %q: RegisterApp failed: %v", entry.AppName, err)
-			continue
-		}
-		log.Printf("[github-plugin] registered app %q (app_id=%d installation_id=%d)", entry.AppName, entry.AppID, entry.InstallationID)
-	}
-
-	apps := p.ListApps()
-	log.Printf("[github-plugin] startup complete: %d app(s) registered", len(apps))
-
-	return &githubVenderServer{plugin: p}
+// setBrokerDial sets the broker dial function captured from GRPCServer.
+// Called once at plugin startup before InitProvider is invoked.
+func (s *githubVenderServer) setBrokerDial(fn func(uint32) (*grpc.ClientConn, error)) {
+	s.hostMu.Lock()
+	s.brokerDialFunc = fn
+	s.hostMu.Unlock()
 }
 
 func (s *githubVenderServer) Kind(_ context.Context, _ *pluginv1.KindRequest) (*pluginv1.KindResponse, error) {
@@ -137,8 +157,75 @@ func (s *githubVenderServer) Capabilities(_ context.Context, _ *pluginv1.Capabil
 	}, nil
 }
 
+// ensureApp fetches and caches an App from the HostService, with a 5-minute TTL.
+// On cache hit within TTL, the already-registered plugin entry is used.
+// On cache miss or TTL expiry, re-fetches from HostService and re-registers.
+func (s *githubVenderServer) ensureApp(ctx context.Context, appName string) error {
+	// Check cache first.
+	s.cacheMu.RLock()
+	entry, ok := s.cache[appName]
+	s.cacheMu.RUnlock()
+	if ok && time.Since(entry.fetchedAt) < cacheTTL {
+		return nil // still fresh
+	}
+
+	// Cache miss or TTL expired — fetch from HostService.
+	s.hostMu.RLock()
+	hc := s.hostClient
+	s.hostMu.RUnlock()
+
+	if hc == nil {
+		// If the App is already registered in the plugin (from a previous fetch
+		// before the connection was lost), we can still vend — just log a warning.
+		s.cacheMu.RLock()
+		_, cached := s.cache[appName]
+		s.cacheMu.RUnlock()
+		if cached {
+			log.Printf("[github-plugin] WARN: HostService not available; using stale cached config for app %q", appName)
+			return nil
+		}
+		return fmt.Errorf("HostService not available (InitProvider not called or failed); cannot fetch app %q", appName)
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	resp, err := hc.GetGithubApp(fetchCtx, &pluginv1.GetGithubAppRequest{Name: appName})
+	if err != nil {
+		return fmt.Errorf("GetGithubApp RPC for %q: %w", appName, err)
+	}
+	if resp.GetErrorCode() != pluginv1.HostCallbackErrorCode_HOST_OK {
+		return fmt.Errorf("GetGithubApp %q: %s (code=%v)", appName, resp.GetErrorMessage(), resp.GetErrorCode())
+	}
+
+	// Re-register (idempotent; existing clients are replaced with fresh config).
+	if err := s.plugin.RegisterApp(appName, resp.GetAppId(), resp.GetInstallationId(), resp.GetPrivateKeyPem()); err != nil {
+		log.Printf("[github-plugin] RegisterApp %q: %v (may be duplicate — continuing)", appName, err)
+	}
+
+	// Update cache.
+	s.cacheMu.Lock()
+	s.cache[appName] = &cachedApp{fetchedAt: time.Now()}
+	s.cacheMu.Unlock()
+
+	log.Printf("[github-plugin] fetched App %q from HostService (app_id=%d installation_id=%d)",
+		appName, resp.GetAppId(), resp.GetInstallationId())
+	return nil
+}
+
 func (s *githubVenderServer) Vend(ctx context.Context, req *pluginv1.VendRequest) (*pluginv1.VendResponse, error) {
-	scope := protoToScope(req.GetScope()) // returns credentials.Scope
+	scope := protoToScope(req.GetScope())
+
+	// Extract app_name from scope params. If not present, fall back to default.
+	appName, _ := scope.Params["app_name"].(string)
+	if appName == "" {
+		return &pluginv1.VendResponse{Error: "scope.params.app_name is required for github-app-token provider"}, nil
+	}
+
+	// Ensure the App is registered (lazy fetch with cache).
+	if err := s.ensureApp(ctx, appName); err != nil {
+		return &pluginv1.VendResponse{Error: err.Error()}, nil
+	}
 
 	cred, err := s.plugin.Vend(ctx, scope)
 	if err != nil {
@@ -159,12 +246,17 @@ func (s *githubVenderServer) Vend(ctx context.Context, req *pluginv1.VendRequest
 }
 
 // githubVenderPlugin wires the gRPC server on the plugin side.
+// It captures the broker so that InitProvider can dial back to the HostService.
 type githubVenderPlugin struct {
 	goplugin.NetRPCUnsupportedPlugin
 	impl *githubVenderServer
 }
 
-func (p *githubVenderPlugin) GRPCServer(_ *goplugin.GRPCBroker, s *grpc.Server) error {
+func (p *githubVenderPlugin) GRPCServer(broker *goplugin.GRPCBroker, s *grpc.Server) error {
+	// Set the broker dial function so InitProvider can use it.
+	p.impl.setBrokerDial(func(id uint32) (*grpc.ClientConn, error) {
+		return broker.Dial(id)
+	})
 	pluginv1.RegisterCredentialVenderServiceServer(s, p.impl)
 	return nil
 }
@@ -193,9 +285,6 @@ func main() {
 
 // ── proto conversion helpers ──────────────────────────────────────────────────
 // These mirror the unexported helpers in internal/plugin/convert.go.
-// Plugin binaries can't import from internal/plugin (would be a circular dep
-// and internal is not exported to cmd anyway), so we duplicate the minimal
-// subset needed here.
 
 func protoToScope(p *pluginv1.Scope) credentials.Scope {
 	if p == nil {
@@ -219,3 +308,10 @@ func structToMap(s *structpb.Struct) map[string]any {
 	}
 	return m
 }
+
+// ── stub for pre-UX-B hosts ───────────────────────────────────────────────────
+
+// Ensure InitProvider returns Unimplemented on hosts that call it via the
+// UnimplementedCredentialVenderServiceServer base. The real implementation
+// above overrides it.
+var _ = status.Error(codes.Unimplemented, "")

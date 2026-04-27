@@ -58,6 +58,12 @@ const (
 	OperationBindingRotateStart  = "binding_rotate_start"
 	OperationDestinationDeliver  = "destination_deliver"
 
+	// GitHub App registration operations — UX-B.
+	// SECURITY: private key PEM bytes MUST NEVER appear in any audit log field.
+	OperationGithubAppRegister = "github_app_register"
+	OperationGithubAppInspect  = "github_app_inspect"
+	OperationGithubAppDelete   = "github_app_delete"
+
 	// OperationBindingRotateStub marks a rotation that used a stub credential
 	// value because no provider plugin was available for the binding's
 	// provider_kind. Forensics queries can filter on this constant to distinguish

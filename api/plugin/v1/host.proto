@@ -532,6 +532,40 @@ message AckRevocationResponse {
   string error_message = 2;
 }
 
+// ── GitHub App fetch (UX-B) ───────────────────────────────────────────────────
+
+// GetGithubAppRequest is the input to HostService.GetGithubApp.
+// The github provider plugin calls this to fetch App config + private key
+// at vend time. The name matches the app_name field in the binding's Scope.Params.
+message GetGithubAppRequest {
+  // name is the human-friendly GitHub App registration name
+  // (e.g. "agentkms-blog-audit-rotator").
+  string name = 1;
+}
+
+// GetGithubAppResponse is the output of HostService.GetGithubApp.
+//
+// SECURITY: private_key_pem is returned ONLY over the in-process gRPC broker
+// side channel (subprocess→host bidirectional gRPC). It MUST NEVER appear in
+// audit log fields. The host does not log this response.
+message GetGithubAppResponse {
+  // app_id is the GitHub App ID.
+  int64 app_id = 1;
+
+  // installation_id is the GitHub App installation ID.
+  int64 installation_id = 2;
+
+  // private_key_pem contains the RSA private key PEM bytes.
+  // SECURITY: never log, never persist beyond in-memory use in the plugin.
+  bytes private_key_pem = 3;
+
+  // error_code is HOST_OK on success. HOST_NOT_FOUND when the App is not registered.
+  HostCallbackErrorCode error_code = 4;
+
+  // error_message is a human-readable failure description. Empty on success.
+  string error_message = 5;
+}
+
 // ── Service definition ────────────────────────────────────────────────────────
 
 // HostService is the callback service served by the OSS host and consumed by
@@ -716,6 +750,26 @@ service HostService {
   //
   // Error semantics: HOST_TRANSIENT if KV layer is temporarily unavailable.
   rpc AckRevocation(AckRevocationRequest) returns (AckRevocationResponse);
+
+  // ── GitHub App config fetch (UX-B) ──────────────────────────────────────────
+
+  // GetGithubApp returns the full GitHub App registration (App ID, Installation ID,
+  // and private key PEM) for the named App. Called by the github provider plugin
+  // at vend time to replace the legacy github-apps.yaml filesystem config.
+  //
+  // This RPC is usable by "credential_vender" plugins that receive a broker ID
+  // during their GRPCServer setup. The github provider plugin is the sole consumer.
+  //
+  // SECURITY: private_key_pem in the response MUST NOT be logged by the host.
+  // The transport is the in-process gRPC broker side channel; it does not cross
+  // a network boundary.
+  //
+  // Idempotency: idempotent (read-only).
+  //
+  // Error semantics:
+  //   HOST_NOT_FOUND — no App registered under that name.
+  //   HOST_TRANSIENT — KV layer temporarily unavailable.
+  rpc GetGithubApp(GetGithubAppRequest) returns (GetGithubAppResponse);
 }
 
 // ── OrchestratorService (Pro-implemented, Host-consumed) ─────────────────────

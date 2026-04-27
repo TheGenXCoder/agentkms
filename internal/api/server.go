@@ -20,6 +20,7 @@ import (
 	"github.com/agentkms/agentkms/internal/backend"
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/credentials/binding"
+	"github.com/agentkms/agentkms/internal/githubapp"
 	"github.com/agentkms/agentkms/internal/plugin"
 	"github.com/agentkms/agentkms/internal/policy"
 	"github.com/agentkms/agentkms/internal/webhooks"
@@ -58,6 +59,7 @@ type Server struct {
 	destinationRegistry *plugin.Registry       // nil until SetDestinationRegistry is called
 	alertOrchestrator   *webhooks.AlertOrchestrator // nil until SetAlertOrchestrator is called
 	githubWebhookHandler *webhooks.GitHubWebhookHandler // nil until RegisterGitHubWebhookHandler is called
+	githubAppStore      githubapp.Store // nil until SetGithubAppStore is called
 	authTokens *auth.TokenService
 
 	// recoveryStore handles Layer 1 recovery codes.
@@ -303,6 +305,13 @@ func (s *Server) registerRoutes() {
 
 	// FO-C2: detection enrichment
 	s.mux.HandleFunc("POST /credentials/detect", wrap(s.handleDetectCredential))
+
+	// UX-B: GitHub App registration endpoints (OSS)
+	// Private key is accepted on POST only; GET responses never include it.
+	s.mux.HandleFunc("POST /github-apps", wrap(s.handleRegisterGithubApp))
+	s.mux.HandleFunc("GET /github-apps", wrap(s.handleListGithubApps))
+	s.mux.HandleFunc("GET /github-apps/{name}", wrap(s.handleInspectGithubApp))
+	s.mux.HandleFunc("DELETE /github-apps/{name}", wrap(s.handleDeleteGithubApp))
 
 	// T3: credential binding endpoints (OSS)
 	s.mux.HandleFunc("POST /bindings", wrap(s.handleRegisterBinding))

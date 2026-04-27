@@ -198,16 +198,20 @@ func (p *CredentialVenderPlugin) GRPCServer(broker *goplugin.GRPCBroker, s *grpc
 func (p *CredentialVenderPlugin) GRPCClient(ctx context.Context, broker *goplugin.GRPCBroker, cc *grpc.ClientConn) (interface{}, error) {
 	return &CredentialVenderGRPC{
 		client: pluginv1.NewCredentialVenderServiceClient(cc),
+		broker: broker,
 	}, nil
 }
 
 // CredentialVenderGRPC wraps the generated gRPC client and implements
-// credentials.CredentialVender. The Vend method is not wired into the pipeline
-// until v0.3.2, but the adapter is available for subprocess-connected plugins.
+// credentials.CredentialVender. The Vend method dispatches to the plugin subprocess.
+// broker and hostBrokerID are populated by StartProvider when GithubAppStore is configured.
 type CredentialVenderGRPC struct {
-	client       pluginv1.CredentialVenderServiceClient
-	kind         string
-	capabilities []string
+	client          pluginv1.CredentialVenderServiceClient
+	broker          *goplugin.GRPCBroker
+	kind            string
+	capabilities    []string
+	hostBrokerID    uint32
+	hostBrokerReady bool
 }
 
 func (a *CredentialVenderGRPC) Kind() string           { return a.kind }

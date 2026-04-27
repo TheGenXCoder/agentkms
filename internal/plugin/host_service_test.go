@@ -14,6 +14,7 @@ import (
 	"github.com/agentkms/agentkms/internal/credentials"
 	"github.com/agentkms/agentkms/internal/credentials/binding"
 	"github.com/agentkms/agentkms/internal/destination"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -540,6 +541,120 @@ func TestHostService_SaveBindingMetadata_Concurrent_Linearized(t *testing.T) {
 }
 
 // ── VendCredential tests ──────────────────────────────────────────────────────
+
+// scopeCapturingVender is a stubVender that records the Scope it received.
+// Used to verify that VendCredential merges provider_params into the scope.
+type scopeCapturingVender struct {
+	mu          sync.Mutex
+	capturedScope credentials.Scope
+}
+
+func (v *scopeCapturingVender) Kind() string           { return "scope-capturer" }
+func (v *scopeCapturingVender) Capabilities() []string { return nil }
+func (v *scopeCapturingVender) Vend(_ context.Context, s credentials.Scope) (*credentials.VendedCredential, error) {
+	v.mu.Lock()
+	v.capturedScope = s
+	v.mu.Unlock()
+	return &credentials.VendedCredential{UUID: "cap-uuid", APIKey: []byte("cap-key")}, nil
+}
+
+// TestHostService_VendCredential_ProviderParams_MergedIntoScope is the
+// regression test for the T6 provider-params-drop bug.
+//
+// When a VendCredentialRequest carries provider_params (e.g. {"app_name":"blog-audit"}),
+// the host service must merge those params into the Scope.Params before calling
+// vender.Vend — otherwise the plugin sees an empty app_name and falls back to "default".
+//
+// Before the fix: host_service.VendCredential called vender.Vend(ctx, scope) where
+// scope was built only from req.GetScope(); provider_params were silently discarded.
+// After the fix: provider_params keys are merged into scope.Params (scope wins on collision).
+func TestHostService_VendCredential_ProviderParams_MergedIntoScope(t *testing.T) {
+	cv := &scopeCapturingVender{}
+	reg := NewRegistry()
+	_ = reg.RegisterVender("scope-capturer", cv)
+	srv := newHostServiceServer(newStubStore(), reg, &stubAuditor{}, newStubKV())
+
+	pp, err := structpb.NewStruct(map[string]any{
+		"app_name": "blog-audit",
+	})
+	if err != nil {
+		t.Fatalf("structpb.NewStruct: %v", err)
+	}
+
+	resp, err := srv.VendCredential(context.Background(), &pluginv1.VendCredentialRequest{
+		ProviderKind:   "scope-capturer",
+		ProviderParams: pp,
+		// Scope has no params — provider_params should fill the gap.
+	})
+	if err != nil {
+		t.Fatalf("unexpected RPC error: %v", err)
+	}
+	if resp.ErrorCode != pluginv1.HostCallbackErrorCode_HOST_OK {
+		t.Errorf("error_code = %v, want HOST_OK (msg: %s)", resp.ErrorCode, resp.ErrorMessage)
+	}
+
+	cv.mu.Lock()
+	scope := cv.capturedScope
+	cv.mu.Unlock()
+
+	got, ok := scope.Params["app_name"]
+	if !ok {
+		t.Fatalf("scope.Params missing app_name key; got: %v — provider_params were not merged into scope", scope.Params)
+	}
+	if got != "blog-audit" {
+		t.Errorf("scope.Params[\"app_name\"] = %q, want %q", got, "blog-audit")
+	}
+}
+
+// TestHostService_VendCredential_ScopeParamsWinOnCollision verifies that when
+// both Scope.Params and provider_params contain the same key, Scope.Params wins.
+// This preserves override semantics: the caller can override binding defaults.
+func TestHostService_VendCredential_ScopeParamsWinOnCollision(t *testing.T) {
+	cv := &scopeCapturingVender{}
+	reg := NewRegistry()
+	_ = reg.RegisterVender("scope-capturer", cv)
+	srv := newHostServiceServer(newStubStore(), reg, &stubAuditor{}, newStubKV())
+
+	pp, err := structpb.NewStruct(map[string]any{
+		"app_name": "binding-level-app",
+	})
+	if err != nil {
+		t.Fatalf("structpb.NewStruct: %v", err)
+	}
+
+	scopeParams, err := structpb.NewStruct(map[string]any{
+		"app_name": "caller-override-app",
+	})
+	if err != nil {
+		t.Fatalf("structpb.NewStruct: %v", err)
+	}
+
+	resp, err := srv.VendCredential(context.Background(), &pluginv1.VendCredentialRequest{
+		ProviderKind:   "scope-capturer",
+		ProviderParams: pp,
+		Scope: &pluginv1.Scope{
+			Params: scopeParams,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected RPC error: %v", err)
+	}
+	if resp.ErrorCode != pluginv1.HostCallbackErrorCode_HOST_OK {
+		t.Errorf("error_code = %v, want HOST_OK", resp.ErrorCode)
+	}
+
+	cv.mu.Lock()
+	scope := cv.capturedScope
+	cv.mu.Unlock()
+
+	got, ok := scope.Params["app_name"]
+	if !ok {
+		t.Fatalf("scope.Params missing app_name key; got: %v", scope.Params)
+	}
+	if got != "caller-override-app" {
+		t.Errorf("scope.Params[\"app_name\"] = %q, want %q (scope should win over provider_params)", got, "caller-override-app")
+	}
+}
 
 func TestHostService_VendCredential_ProviderNotFound(t *testing.T) {
 	srv := makeServer(newStubStore(), &stubAuditor{}, newStubKV())

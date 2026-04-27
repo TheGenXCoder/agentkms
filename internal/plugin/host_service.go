@@ -310,6 +310,12 @@ func (s *hostServiceServer) SaveBindingMetadata(ctx context.Context, req *plugin
 
 // VendCredential dispatches to the provider plugin identified by provider_kind.
 // Decision HC-4: the host does NOT auto-emit OperationCredentialVend here.
+//
+// Params merging: the binding's provider_params (req.ProviderParams) are merged
+// into the Scope.Params before dispatching to the plugin. Scope.Params values
+// take precedence over provider_params values so that the caller can override
+// binding defaults. This is the join point where binding-level configuration
+// (e.g. "app_name":"blog-audit") reaches the plugin's Vend handler.
 func (s *hostServiceServer) VendCredential(ctx context.Context, req *pluginv1.VendCredentialRequest) (*pluginv1.VendCredentialResponse, error) {
 	vender, err := s.registry.LookupVender(req.GetProviderKind())
 	if err != nil {
@@ -320,6 +326,20 @@ func (s *hostServiceServer) VendCredential(ctx context.Context, req *pluginv1.Ve
 	}
 
 	scope := protoToScope(req.GetScope())
+
+	// Merge provider_params into scope.Params. Scope params win on key collision
+	// (runtime caller override takes precedence over binding-level defaults).
+	if pp := req.GetProviderParams(); pp != nil {
+		if scope.Params == nil {
+			scope.Params = make(map[string]any)
+		}
+		for k, v := range pp.AsMap() {
+			if _, exists := scope.Params[k]; !exists {
+				scope.Params[k] = v
+			}
+		}
+	}
+
 	vc, err := vender.Vend(ctx, scope)
 	if err != nil {
 		// Classify as permanent (provider rejected) or transient (subprocess unavailable).

@@ -97,12 +97,36 @@ func (d *Deliverer) Capabilities() []string { return []string{"health", "revoke"
 
 // Validate performs a pre-flight connectivity and permission check.
 //
-// Checks:
+// Contract for startup probes (nil or empty params):
+//
+//	When params is nil or does not contain "writer_token" this method returns
+//	nil immediately. Destinations do not have per-instance configuration at
+//	registration time — credentials arrive in per-Deliver params. Startup
+//	Validate is a connectivity / sanity check only, not a credential check.
+//	Log a debug notice and defer credential validation to the first Deliver call.
+//
+// Full validation (params present with writer_token):
 //  1. params["writer_token"] is present and non-empty.
 //  2. The GitHub API is reachable (GET /user with a short timeout).
 //
+// If writer_token is present but rejected by the GitHub API (401/403), a
+// permanent error is returned regardless of whether this is a startup probe.
+//
 // Does not write any secret material.
 func (d *Deliverer) Validate(ctx context.Context, params map[string]any) error {
+	// Startup-probe tolerance: nil params or absent writer_token → defer to Deliver.
+	// This implements the correct destination plugin contract: no per-instance
+	// config exists at registration time; credentials arrive per-Deliver call.
+	if params == nil {
+		// No params at all — connectivity-only probe from StartDestination.
+		// Deferring credential check to Deliver.
+		return nil
+	}
+	if _, hasToken := params["writer_token"]; !hasToken {
+		// Params present but writer_token absent — defer credential check to Deliver.
+		return nil
+	}
+
 	p, err := parseParams(params)
 	if err != nil {
 		return err // already tagged [permanent]

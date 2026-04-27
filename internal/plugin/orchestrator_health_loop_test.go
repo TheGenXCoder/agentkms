@@ -52,6 +52,10 @@ func (f *fakeOrchestratorClient) BindingForCredential(_ context.Context, _ *plug
 	return &pluginv1.BindingForCredentialResponse{NotFound: true}, nil
 }
 
+func (f *fakeOrchestratorClient) RotateBinding(_ context.Context, _ *pluginv1.GetBindingRequest, _ ...grpc.CallOption) (*pluginv1.TriggerRotationResponse, error) {
+	return &pluginv1.TriggerRotationResponse{}, nil
+}
+
 // testOrchestratorHealthLoopFast is a test-only variant of orchestratorHealthLoop
 // that uses a 200ms ticker instead of the 30-second production interval so tests
 // can exercise the Ping-failure restart path without sleeping for minutes.

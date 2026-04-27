@@ -467,17 +467,65 @@ func TestRevoke_Idempotent(t *testing.T) {
 	}
 }
 
-// TestValidate_TokenMissing verifies that a missing writer_token is a permanent error.
-func TestValidate_TokenMissing(t *testing.T) {
+// TestValidate_NilParams verifies that nil params (startup probe) returns nil —
+// startup Validate must tolerate absent credentials per the destination plugin contract.
+func TestValidate_NilParams(t *testing.T) {
+	t.Parallel()
+
+	d := NewDeliverer("http://unused", nil)
+	err := d.Validate(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Validate(nil) should return nil (startup probe), got: %v", err)
+	}
+}
+
+// TestValidate_EmptyParams verifies that an empty params map (writer_token absent)
+// returns nil — deferred credential check per destination plugin contract.
+func TestValidate_EmptyParams(t *testing.T) {
 	t.Parallel()
 
 	d := NewDeliverer("http://unused", nil)
 	err := d.Validate(context.Background(), map[string]any{})
-	if err == nil {
-		t.Fatal("expected error for missing writer_token, got nil")
+	if err != nil {
+		t.Fatalf("Validate({}) should return nil (no writer_token → deferred), got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "writer_token") {
-		t.Errorf("error should mention writer_token, got: %v", err)
+}
+
+// TestValidate_TokenMissing is an alias for TestValidate_EmptyParams: missing
+// writer_token in a non-nil map now returns nil (deferred to Deliver).
+// Kept for explicit naming clarity.
+func TestValidate_TokenMissing(t *testing.T) {
+	t.Parallel()
+
+	d := NewDeliverer("http://unused", nil)
+	// After the contract fix: missing writer_token → nil (deferred, not permanent error).
+	err := d.Validate(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatalf("Validate with missing writer_token: expected nil (deferred check), got: %v", err)
+	}
+}
+
+// TestValidate_TokenPresentButBad verifies that an explicitly present but
+// rejected token is still a permanent error — tolerance is ONLY for absent tokens.
+func TestValidate_TokenPresentButBad(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"message":"Bad credentials"}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	d := NewDeliverer(srv.URL, nil)
+	// writer_token is present (so no deferral) but GitHub returns 401 → permanent.
+	err := d.Validate(context.Background(), map[string]any{"writer_token": "bad-tok"})
+	if err == nil {
+		t.Fatal("expected error for bad token, got nil")
+	}
+	if !strings.Contains(err.Error(), "permanent") {
+		t.Errorf("expected permanent error, got: %v", err)
 	}
 }
 

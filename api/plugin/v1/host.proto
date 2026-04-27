@@ -764,6 +764,21 @@ message OrchestratorInitResponse {
   string error_message = 1;
 }
 
+// RotateBindingRequest is the input to OrchestratorService.RotateBinding.
+message RotateBindingRequest {
+  // binding_name is the human-friendly name of the binding to rotate.
+  // This is the direct manual-rotation entry point called by the OSS rotate
+  // handler (POST /bindings/{name}/rotate) when the Pro orchestrator is loaded.
+  string binding_name = 1;
+}
+
+// RotateBindingResponse is the output of OrchestratorService.RotateBinding.
+message RotateBindingResponse {
+  // error_message is empty on success. Non-empty on failure.
+  // The rotate handler returns 500 to the caller when error_message is non-empty.
+  string error_message = 1;
+}
+
 // TriggerRotationRequest is the input to OrchestratorService.TriggerRotation.
 message TriggerRotationRequest {
   // credential_uuid identifies the compromised credential that triggered
@@ -825,4 +840,27 @@ service OrchestratorService {
   // credentialUUID, or not_found=true if the credential is not managed by any
   // binding. Implements the webhooks.RotationHook.BindingForCredential contract.
   rpc BindingForCredential(BindingForCredentialRequest) returns (BindingForCredentialResponse);
+
+  // RotateBinding executes a synchronous full rotation for the named binding.
+  // Called by the OSS rotate handler (POST /bindings/{name}/rotate) when the
+  // Pro orchestrator is loaded. Unlike TriggerRotation (which takes a
+  // credential UUID and returns immediately), RotateBinding takes a binding
+  // name and blocks until the rotation state machine completes (or fails).
+  //
+  // The orchestrator acquires the per-binding lock, vends a new credential via
+  // the provider plugin, delivers it to all destinations, updates binding
+  // metadata, and handles grace-period revocation of the old credential —
+  // emitting the full audit chain (binding_rotate_start, binding_rotate,
+  // destination_deliver) via HostService.EmitAudit.
+  //
+  // The OSS rotate handler returns the orchestrator's outcome synchronously
+  // to the kpm CLI caller, including per-destination results.
+  //
+  // Error semantics: error_message is non-empty on total failure (all
+  // destinations failed, vend failed, binding not found). Partial success
+  // (degraded) is returned as success with per-destination detail recorded in
+  // the audit log; the OSS handler emits its own final OperationBindingRotate
+  // event. Returns immediately if called before Init with an "not initialized"
+  // error.
+  rpc RotateBinding(RotateBindingRequest) returns (RotateBindingResponse);
 }

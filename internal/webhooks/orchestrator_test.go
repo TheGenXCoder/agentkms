@@ -64,6 +64,12 @@ func (h *fakeRotationHook) TriggerRotation(_ context.Context, credentialUUID str
 	return h.triggerErr
 }
 
+func (h *fakeRotationHook) RotateBinding(_ context.Context, _ string) error {
+	// Not exercised by orchestrator_test.go scenarios (those test the webhook
+	// alert path, not the manual rotate path). Return nil unconditionally.
+	return nil
+}
+
 func (h *fakeRotationHook) getBindingCallCount() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()

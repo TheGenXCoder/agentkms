@@ -110,6 +110,13 @@ func (o *AlertOrchestrator) SetRotationHook(hook RotationHook) {
 	o.rotationHook = hook
 }
 
+// RotationHook returns the currently registered RotationHook, or nil if none
+// is registered. Used by the rotate handler (POST /bindings/{name}/rotate) to
+// check whether to delegate to the Pro orchestrator's RotateBinding path (T6).
+func (o *AlertOrchestrator) RotationHook() RotationHook {
+	return o.rotationHook
+}
+
 // NewAlertOrchestrator constructs an AlertOrchestrator with the given dependencies.
 func NewAlertOrchestrator(
 	store AuditStore,

@@ -842,6 +842,12 @@ const (
 	OrchestratorService_Init_FullMethodName                 = "/agentkms.plugin.v1.OrchestratorService/Init"
 	OrchestratorService_TriggerRotation_FullMethodName      = "/agentkms.plugin.v1.OrchestratorService/TriggerRotation"
 	OrchestratorService_BindingForCredential_FullMethodName = "/agentkms.plugin.v1.OrchestratorService/BindingForCredential"
+	// OrchestratorService_RotateBinding_FullMethodName is the full gRPC method name
+	// for the RotateBinding RPC added in T6 (rotate handler delegation).
+	// The request type is GetBindingRequest (name field) and the response type is
+	// TriggerRotationResponse (error_message field) — both defined in host.pb.go.
+	// These existing types are reused to avoid a protoc regen cycle for this additive change.
+	OrchestratorService_RotateBinding_FullMethodName = "/agentkms.plugin.v1.OrchestratorService/RotateBinding"
 )
 
 // OrchestratorServiceClient is the client API for OrchestratorService service.
@@ -873,6 +879,12 @@ type OrchestratorServiceClient interface {
 	// credentialUUID, or not_found=true if the credential is not managed by any
 	// binding. Implements the webhooks.RotationHook.BindingForCredential contract.
 	BindingForCredential(ctx context.Context, in *BindingForCredentialRequest, opts ...grpc.CallOption) (*BindingForCredentialResponse, error)
+	// RotateBinding executes a synchronous full rotation for the named binding.
+	// Called by the OSS rotate handler (POST /bindings/{name}/rotate) when the
+	// Pro orchestrator is loaded. Request reuses GetBindingRequest (name field);
+	// response reuses TriggerRotationResponse (error_message field). See host.proto
+	// OrchestratorService.RotateBinding for full semantics.
+	RotateBinding(ctx context.Context, in *GetBindingRequest, opts ...grpc.CallOption) (*TriggerRotationResponse, error)
 }
 
 type orchestratorServiceClient struct {
@@ -923,6 +935,16 @@ func (c *orchestratorServiceClient) BindingForCredential(ctx context.Context, in
 	return out, nil
 }
 
+func (c *orchestratorServiceClient) RotateBinding(ctx context.Context, in *GetBindingRequest, opts ...grpc.CallOption) (*TriggerRotationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TriggerRotationResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_RotateBinding_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrchestratorServiceServer is the server API for OrchestratorService service.
 // All implementations must embed UnimplementedOrchestratorServiceServer
 // for forward compatibility.
@@ -952,6 +974,9 @@ type OrchestratorServiceServer interface {
 	// credentialUUID, or not_found=true if the credential is not managed by any
 	// binding. Implements the webhooks.RotationHook.BindingForCredential contract.
 	BindingForCredential(context.Context, *BindingForCredentialRequest) (*BindingForCredentialResponse, error)
+	// RotateBinding executes a synchronous full rotation for the named binding.
+	// Request reuses GetBindingRequest (name field); response reuses TriggerRotationResponse.
+	RotateBinding(context.Context, *GetBindingRequest) (*TriggerRotationResponse, error)
 	mustEmbedUnimplementedOrchestratorServiceServer()
 }
 
@@ -973,6 +998,9 @@ func (UnimplementedOrchestratorServiceServer) TriggerRotation(context.Context, *
 }
 func (UnimplementedOrchestratorServiceServer) BindingForCredential(context.Context, *BindingForCredentialRequest) (*BindingForCredentialResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BindingForCredential not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) RotateBinding(context.Context, *GetBindingRequest) (*TriggerRotationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RotateBinding not implemented")
 }
 func (UnimplementedOrchestratorServiceServer) mustEmbedUnimplementedOrchestratorServiceServer() {}
 func (UnimplementedOrchestratorServiceServer) testEmbeddedByValue()                             {}
@@ -1067,6 +1095,24 @@ func _OrchestratorService_BindingForCredential_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrchestratorService_RotateBinding_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetBindingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).RotateBinding(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_RotateBinding_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).RotateBinding(ctx, req.(*GetBindingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrchestratorService_ServiceDesc is the grpc.ServiceDesc for OrchestratorService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1089,6 +1135,10 @@ var OrchestratorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BindingForCredential",
 			Handler:    _OrchestratorService_BindingForCredential_Handler,
+		},
+		{
+			MethodName: "RotateBinding",
+			Handler:    _OrchestratorService_RotateBinding_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

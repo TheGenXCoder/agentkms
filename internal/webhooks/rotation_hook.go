@@ -38,4 +38,24 @@ type RotationHook interface {
 	// to TriggerRotation (binding exists) or fall back to revoker-only
 	// (no binding).
 	BindingForCredential(ctx context.Context, credentialUUID string) (string, error)
+
+	// RotateBinding executes a synchronous, full rotation for the named
+	// binding — vend new credential, deliver to all destinations, update
+	// metadata, revoke old credential per grace-period policy.
+	//
+	// Called by the OSS rotate handler (POST /bindings/{name}/rotate) when
+	// the Pro orchestrator is loaded. Unlike TriggerRotation (credential UUID,
+	// async), RotateBinding takes a binding name and blocks until the
+	// rotation state machine completes (or fails). The handler uses the
+	// returned error to determine whether to return 200 OK or 500 to the CLI.
+	//
+	// Implementations must emit the full audit chain (binding_rotate_start,
+	// binding_rotate, destination_deliver events) via HostService.EmitAudit
+	// so forensics queries see a unified stream. The OSS rotate handler does
+	// NOT emit an additional OperationBindingRotate after this call returns.
+	//
+	// Returns nil on success (including degraded/partial-success). Returns a
+	// non-nil error only when the rotation failed completely (all destinations
+	// failed, vend failed, or the orchestrator was not yet initialized).
+	RotateBinding(ctx context.Context, bindingName string) error
 }

@@ -547,7 +547,12 @@ func runServe(args []string) error {
 	if pluginDir != "" {
 		if _, statErr := os.Stat(pluginDir); statErr == nil {
 			slog.Info("[plugin] discovering plugins", "dir", pluginDir)
-			pluginHost, hostErr := plugin.NewHost(pluginDir)
+			// Construct a shared registry so the same instance backs both the
+			// plugin host (for adapter registration during Start*) and the api
+			// server (for binding-rotate destination lookup).
+			pluginRegistry := plugin.NewRegistry()
+			apiServer.SetDestinationRegistry(pluginRegistry)
+			pluginHost, hostErr := plugin.NewHostWithRegistry(pluginDir, pluginRegistry)
 			if hostErr != nil {
 				slog.Warn("[plugin] orchestrator plugin discovery failed", "error", hostErr)
 			} else {
@@ -555,19 +560,20 @@ func runServe(args []string) error {
 				if discErr != nil {
 					slog.Warn("[plugin] orchestrator plugin discovery failed", "error", discErr)
 				} else {
+					// Pre-register HostServiceDeps once; orchestrator dispatch needs it.
+					deps := &plugin.HostServiceDeps{
+						Store:   binding.NewKVBindingStore(kv),
+						Auditor: auditor,
+						KV:      kv,
+					}
+					pluginHost.SetHostServiceDeps(deps)
+
 					orchestratorFound := false
 					for _, meta := range discovered {
-						if meta.Name == "orchestrator" {
+						switch meta.Name {
+						case "orchestrator":
 							orchestratorFound = true
 							slog.Info("[plugin] found: orchestrator", "path", meta.Path)
-
-							deps := &plugin.HostServiceDeps{
-								Store:   binding.NewKVBindingStore(kv),
-								Auditor: auditor,
-								KV:      kv,
-							}
-							pluginHost.SetHostServiceDeps(deps)
-
 							orch, initErr := pluginHost.StartOrchestrator(meta.Name)
 							if initErr != nil {
 								slog.Error("[plugin] orchestrator plugin Init failed", "error", initErr)
@@ -577,7 +583,26 @@ func runServe(args []string) error {
 								apiServer.SetRotationHook(rotationHook)
 								slog.Info("[plugin] orchestrator registered as RotationHook")
 							}
-							break
+						case "gh-secret":
+							slog.Info("[plugin] found: destination gh-secret", "path", meta.Path)
+							if err := pluginHost.StartDestination(meta.Name); err != nil {
+								slog.Error("[plugin] destination plugin Init failed", "name", meta.Name, "error", err)
+							} else {
+								slog.Info("[plugin] destination plugin loaded", "name", meta.Name, "path", meta.Path)
+							}
+						default:
+							// Treat any other plugin as a CredentialVender provider plugin.
+							// Host.Start() is for ScopeValidator plugins only — it dispenses
+							// "scope_validator" and calls ScopeValidatorService.Kind(), which
+							// fails for CredentialVender plugins with "unknown service
+							// ScopeValidatorService". Host.StartProvider() dispenses
+							// "credential_vender" and calls CredentialVenderService.Kind().
+							slog.Info("[plugin] found: provider (credential_vender)", "name", meta.Name, "path", meta.Path)
+							if err := pluginHost.StartProvider(meta.Name); err != nil {
+								slog.Error("[plugin] provider plugin Init failed", "name", meta.Name, "error", err)
+							} else {
+								slog.Info("[plugin] provider plugin loaded", "name", meta.Name, "path", meta.Path)
+							}
 						}
 					}
 					if !orchestratorFound {

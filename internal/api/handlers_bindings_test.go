@@ -15,6 +15,7 @@ import (
 	"github.com/agentkms/agentkms/internal/credentials/binding"
 	"github.com/agentkms/agentkms/internal/destination/noop"
 	"github.com/agentkms/agentkms/internal/plugin"
+	"github.com/agentkms/agentkms/internal/webhooks"
 )
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -415,6 +416,103 @@ func TestHandleRotateBinding_StubPathAuditMarker(t *testing.T) {
 	if !foundStub {
 		t.Errorf("no %q audit event found after stub-path rotate; operations seen: %v",
 			audit.OperationBindingRotateStub, operationNames(events))
+	}
+}
+
+// ── POST /bindings/{name}/rotate — Pro orchestrator delegation ────────────────
+
+// TestHandleRotateBinding_OrchestratorDelegation verifies that when a Pro
+// RotationHook is wired to the Server's AlertOrchestrator, POST
+// /bindings/{name}/rotate delegates to hook.RotateBinding rather than taking
+// the OSS stub credential path.
+//
+// Assertions:
+//   - HTTP 200 is returned
+//   - hook.RotateBinding was called with the correct binding name
+//   - No binding_rotate_stub audit event is emitted
+//   - A binding_rotate audit event IS emitted with OutcomeSuccess
+func TestHandleRotateBinding_OrchestratorDelegation(t *testing.T) {
+	srv, aud, _ := newBindingServer(t)
+
+	// Wire up an AlertOrchestrator with a stubRotationHook.
+	orch := webhooks.NewAlertOrchestrator(nil, nil, nil, nil)
+	hook := &stubRotationHook{}
+	orch.SetRotationHook(hook)
+	srv.SetAlertOrchestrator(orch)
+
+	// Register and rotate a binding.
+	bindingRequest(t, srv, http.MethodPost, "/bindings", minimalBinding("orch-delegate-test"))
+	rr := bindingRequest(t, srv, http.MethodPost, "/bindings/orch-delegate-test/rotate", nil)
+	assertStatus(t, rr, http.StatusOK)
+
+	// Verify the hook was invoked.
+	hook.mu.Lock()
+	rotateCalls := make([]string, len(hook.rotateCalls))
+	copy(rotateCalls, hook.rotateCalls)
+	hook.mu.Unlock()
+
+	if len(rotateCalls) != 1 {
+		t.Fatalf("hook.RotateBinding call count: got %d, want 1", len(rotateCalls))
+	}
+	if rotateCalls[0] != "orch-delegate-test" {
+		t.Errorf("hook.RotateBinding called with %q, want %q", rotateCalls[0], "orch-delegate-test")
+	}
+
+	// Verify audit events: must have binding_rotate, must NOT have binding_rotate_stub.
+	aud.mu.Lock()
+	events := make([]audit.AuditEvent, len(aud.events))
+	copy(events, aud.events)
+	aud.mu.Unlock()
+
+	var foundRotate, foundStub bool
+	for _, ev := range events {
+		switch ev.Operation {
+		case audit.OperationBindingRotate:
+			foundRotate = true
+			if ev.Outcome != audit.OutcomeSuccess {
+				t.Errorf("binding_rotate audit Outcome = %q, want %q", ev.Outcome, audit.OutcomeSuccess)
+			}
+		case audit.OperationBindingRotateStub:
+			foundStub = true
+		}
+	}
+	if !foundRotate {
+		t.Errorf("no %q audit event found; operations seen: %v", audit.OperationBindingRotate, operationNames(events))
+	}
+	if foundStub {
+		t.Errorf("unexpected %q audit event: stub path must NOT be taken when orchestrator hook is wired", audit.OperationBindingRotateStub)
+	}
+}
+
+// TestHandleRotateBinding_OrchestratorDelegation_HookError verifies that when
+// the hook returns an error, the handler returns HTTP 500 and emits a
+// binding_rotate audit event with OutcomeError (not OutcomeSuccess).
+func TestHandleRotateBinding_OrchestratorDelegation_HookError(t *testing.T) {
+	srv, aud, _ := newBindingServer(t)
+
+	orch := webhooks.NewAlertOrchestrator(nil, nil, nil, nil)
+	hook := &stubRotationHook{rotateErr: context.DeadlineExceeded}
+	orch.SetRotationHook(hook)
+	srv.SetAlertOrchestrator(orch)
+
+	bindingRequest(t, srv, http.MethodPost, "/bindings", minimalBinding("orch-err-test"))
+	rr := bindingRequest(t, srv, http.MethodPost, "/bindings/orch-err-test/rotate", nil)
+	assertStatus(t, rr, http.StatusInternalServerError)
+
+	aud.mu.Lock()
+	events := make([]audit.AuditEvent, len(aud.events))
+	copy(events, aud.events)
+	aud.mu.Unlock()
+
+	var foundError bool
+	for _, ev := range events {
+		if ev.Operation == audit.OperationBindingRotate && ev.Outcome == audit.OutcomeError {
+			foundError = true
+			break
+		}
+	}
+	if !foundError {
+		t.Errorf("expected binding_rotate audit event with OutcomeError; operations seen: %v", operationNames(events))
 	}
 }
 

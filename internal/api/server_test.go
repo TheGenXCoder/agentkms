@@ -35,13 +35,15 @@ import (
 
 // ── Test doubles ──────────────────────────────────────────────────────────────
 
-// stubRotationHook records BindingForCredential and TriggerRotation calls.
+// stubRotationHook records BindingForCredential, TriggerRotation, and RotateBinding calls.
 type stubRotationHook struct {
 	mu                   sync.Mutex
 	bindingCalls         []string
 	triggerCalls         []string
+	rotateCalls          []string // binding names passed to RotateBinding
 	bindingErr           error
 	triggerErr           error
+	rotateErr            error   // error returned by RotateBinding; nil = success
 }
 
 func (h *stubRotationHook) BindingForCredential(_ context.Context, credentialUUID string) (string, error) {
@@ -59,6 +61,15 @@ func (h *stubRotationHook) TriggerRotation(_ context.Context, credentialUUID str
 	defer h.mu.Unlock()
 	h.triggerCalls = append(h.triggerCalls, credentialUUID)
 	return h.triggerErr
+}
+
+// RotateBinding records the call and returns rotateErr (nil = success).
+// It satisfies the T6 webhooks.RotationHook.RotateBinding contract.
+func (h *stubRotationHook) RotateBinding(_ context.Context, bindingName string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.rotateCalls = append(h.rotateCalls, bindingName)
+	return h.rotateErr
 }
 
 // processAlertCapturingStore captures FindByTokenHash calls to verify dispatch.

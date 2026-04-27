@@ -29,6 +29,10 @@ func (t *testHookImpl) BindingForCredential(_ context.Context, _ string) (string
 	return "", nil
 }
 
+func (t *testHookImpl) RotateBinding(_ context.Context, _ string) error {
+	return nil
+}
+
 // TestRotationHook_InterfaceShape is a compile-time assertion that
 // *testHookImpl satisfies the webhooks.RotationHook interface.
 // If the interface ever changes (method renamed, signature altered), this

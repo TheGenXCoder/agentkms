@@ -616,6 +616,166 @@ func (h *Host) destinationHealthLoop(name string, entry *pluginEntry, adapter de
 	}
 }
 
+// ── Provider (CredentialVender) plugin startup ────────────────────────────────
+
+// StartProvider launches a credential-vender plugin subprocess, performs the
+// Kind → Capabilities handshake, wraps the gRPC client in a CredentialVenderGRPC
+// adapter, and registers the adapter into the Registry under the plugin's declared
+// kind so that host.VendCredential / Registry.LookupVender can find it.
+//
+// This is the correct loading path for plugins that register under PluginMap key
+// "credential_vender" (e.g. agentkms-plugin-github). Host.Start() must NOT be
+// called for these plugins — it attempts to dispense "scope_validator", which
+// they do not implement, and fails with "unknown service ScopeValidatorService".
+//
+// Start is idempotent for the same name: if the subprocess is already running,
+// this is a no-op.
+func (h *Host) StartProvider(name string) error {
+	pluginPath, err := h.findPluginPath(name)
+	if err != nil {
+		return err
+	}
+
+	h.mu.Lock()
+	if entry, ok := h.clients[name]; ok {
+		if !entry.client.Exited() {
+			h.mu.Unlock()
+			return nil // already running
+		}
+		entry.cancel()
+		delete(h.clients, name)
+	}
+	h.mu.Unlock()
+
+	// Signature verification (before subprocess launch).
+	if h.verifier != nil {
+		sigPath := pluginPath + ".sig"
+		sig, err := os.ReadFile(sigPath)
+		if err != nil {
+			return fmt.Errorf("%w: cannot read .sig sidecar %q: %v", ErrUntrustedPlugin, sigPath, err)
+		}
+		if err := h.verifier.Verify(pluginPath, sig); err != nil {
+			return fmt.Errorf("%w: %v", ErrUntrustedPlugin, err)
+		}
+	} else {
+		log.Printf("[plugin] WARNING: no verifier configured for %q — running unsigned binary", name)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	client := goplugin.NewClient(&goplugin.ClientConfig{
+		HandshakeConfig:  HandshakeConfig,
+		Plugins:          PluginMap,
+		Cmd:              pluginCommand(pluginPath),
+		AllowedProtocols: []goplugin.Protocol{goplugin.ProtocolGRPC},
+		Logger:           newPluginLogger(name),
+		StartTimeout:     30 * time.Second,
+	})
+
+	rpcClient, err := client.Client()
+	if err != nil {
+		cancel()
+		client.Kill()
+		return fmt.Errorf("provider plugin %q handshake failed: %w", name, err)
+	}
+
+	raw, err := rpcClient.Dispense("credential_vender")
+	if err != nil {
+		cancel()
+		client.Kill()
+		return fmt.Errorf("provider plugin %q: dispense credential_vender: %w", name, err)
+	}
+
+	adapter, ok := raw.(*CredentialVenderGRPC)
+	if !ok {
+		cancel()
+		client.Kill()
+		return fmt.Errorf("provider plugin %q: dispensed value is %T, want *CredentialVenderGRPC", name, raw)
+	}
+
+	// Kind negotiation: discover the provider's discriminator (e.g. "github-app-token").
+	kindResp, err := adapter.client.Kind(ctx, &pluginv1.KindRequest{})
+	if err != nil {
+		cancel()
+		client.Kill()
+		return fmt.Errorf("provider plugin %q: Kind() RPC failed: %w", name, err)
+	}
+	adapter.kind = kindResp.Kind
+
+	// Capability negotiation. Plugins that predate this RPC return Unimplemented;
+	// treat that as an empty capability set (backwards compatible).
+	capsResp, err := adapter.client.Capabilities(ctx, &pluginv1.CapabilitiesRequest{})
+	if err != nil {
+		log.Printf("[plugin] provider %q: Capabilities() RPC failed (assuming legacy, no capabilities): %v", name, err)
+		adapter.capabilities = nil
+	} else {
+		adapter.capabilities = capsResp.GetCapabilities()
+	}
+
+	// Register the adapter in the vender registry so that VendCredential can find it.
+	if h.registry != nil && adapter.kind != "" {
+		if err := h.registry.RegisterVender(adapter.kind, adapter); err != nil {
+			// Best-effort: duplicate registration on crash-restart is acceptable.
+			log.Printf("[plugin] provider %q: RegisterVender(%q) failed (may be duplicate): %v", name, adapter.kind, err)
+		}
+	}
+
+	entry := &pluginEntry{client: client, cancel: cancel}
+	h.mu.Lock()
+	h.clients[name] = entry
+	h.mu.Unlock()
+
+	// Start background health loop using the same protocol-level ping as the
+	// scope-validator healthLoop. CredentialVenderService does not define a
+	// Health RPC in v0.3.x, so we rely on the go-plugin keepalive ping only.
+	go h.providerHealthLoop(name, entry)
+
+	log.Printf("[plugin] provider %q started (kind=%q)", name, adapter.kind)
+	return nil
+}
+
+// providerHealthLoop runs in a goroutine and pings the provider plugin at
+// healthCheckInterval using the go-plugin protocol-level keepalive.
+// Restart semantics mirror healthLoop:
+//   - Subprocess exits   → attempt one restart via StartProvider; on failure, mark failed.
+//   - Protocol ping fail → attempt one restart via StartProvider; on failure, mark failed.
+func (h *Host) providerHealthLoop(name string, entry *pluginEntry) {
+	ticker := time.NewTicker(healthCheckInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		h.mu.Lock()
+		_, stillOurs := h.clients[name]
+		h.mu.Unlock()
+		if !stillOurs {
+			return
+		}
+
+		if entry.client.Exited() {
+			log.Printf("[plugin] provider %q exited unexpectedly — attempting restart", name)
+			if err := h.StartProvider(name); err != nil {
+				log.Printf("[plugin] provider %q restart failed: %v — marking failed", name, err)
+				h.mu.Lock()
+				delete(h.clients, name)
+				h.mu.Unlock()
+			}
+			return
+		}
+
+		rpcClient, err := entry.client.Client()
+		if err != nil || rpcClient.Ping() != nil {
+			log.Printf("[plugin] provider %q protocol ping failed — attempting restart", name)
+			entry.client.Kill()
+			if err := h.StartProvider(name); err != nil {
+				log.Printf("[plugin] provider %q restart failed: %v — marking failed", name, err)
+				h.mu.Lock()
+				delete(h.clients, name)
+				h.mu.Unlock()
+			}
+			return
+		}
+	}
+}
+
 // ── Orchestrator plugin startup ───────────────────────────────────────────────
 
 // StartOrchestrator launches the Pro rotation orchestrator plugin subprocess.
@@ -789,6 +949,28 @@ func (h *orchestratorRotationHook) BindingForCredential(ctx context.Context, cre
 		return "", webhooks.ErrNoBinding
 	}
 	return resp.GetBindingName(), nil
+}
+
+// RotateBinding implements webhooks.RotationHook.RotateBinding.
+// It delegates to the Pro orchestrator's RotateBinding RPC, which runs the
+// full 8-step rotation state machine synchronously (acquire lock → emit
+// binding_rotate_start → vend → deliver → update metadata → emit binding_rotate
+// → revoke old credential → release lock).
+//
+// The request type GetBindingRequest is reused (its Name field carries the
+// binding name); TriggerRotationResponse is reused for the error_message field.
+// This avoids a protoc regen cycle for this additive T6 change.
+func (h *orchestratorRotationHook) RotateBinding(ctx context.Context, bindingName string) error {
+	resp, err := h.client.client.RotateBinding(ctx, &pluginv1.GetBindingRequest{
+		Name: bindingName,
+	})
+	if err != nil {
+		return fmt.Errorf("orchestrator RotateBinding RPC: %w", err)
+	}
+	if msg := resp.GetErrorMessage(); msg != "" {
+		return fmt.Errorf("orchestrator RotateBinding: %s", msg)
+	}
+	return nil
 }
 
 // orchestratorHealthErrorThreshold is the number of consecutive Ping failures

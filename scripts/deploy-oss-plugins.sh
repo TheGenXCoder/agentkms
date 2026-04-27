@@ -247,6 +247,16 @@ build_and_install() {
     ok "binary installed: ${dest_binary}"
     ok "permissions: $(ls -la "${dest_binary}" | awk '{print $1, $3, $4}')"
 
+    # macOS Gatekeeper: strip quarantine + ad-hoc sign so the freshly-built
+    # binary runs without "killed: 9". Skipped silently on non-Darwin.
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        xattr -dr com.apple.quarantine "${dest_binary}" 2>/dev/null || true
+        if command -v codesign >/dev/null 2>&1; then
+            codesign --force --sign - "${dest_binary}" >/dev/null 2>&1 || true
+            ok "ad-hoc signed (codesign --sign -)"
+        fi
+    fi
+
     # Install or remove sig
     if [[ $NO_SIGN -eq 0 ]] && [[ -f "${sig_file}" ]]; then
         cp "${sig_file}" "${dest_sig}"

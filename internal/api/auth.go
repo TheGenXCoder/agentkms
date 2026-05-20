@@ -85,7 +85,7 @@ func (h *AuthHandler) Session(w http.ResponseWriter, r *http.Request) {
 		// Do not include err details in the response — the cert error is
 		// logged; the client receives a generic message.
 		h.logAuditError(r.Context(), r, "", "", audit.OperationAuth,
-			"mTLS identity extraction failed")
+			"mTLS identity extraction failed: "+err.Error())
 		writeJSONError(w, http.StatusUnauthorized, "client certificate required")
 		return
 	}

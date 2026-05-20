@@ -111,6 +111,11 @@ func identityFromCert(cert *x509.Certificate) (*identity.Identity, error) {
 	var teamID string
 	if len(cert.Subject.Organization) > 0 && strings.TrimSpace(cert.Subject.Organization[0]) != "" {
 		teamID = strings.TrimSpace(cert.Subject.Organization[0])
+	} else if tenant != "" {
+		// Canonical multi-principal SPIFFE convention: the tenant segment
+		// IS the team. Used when the cert is signed by Vault PKI and the
+		// CSR's Subject Organisation didn't carry through.
+		teamID = tenant
 	} else if spiffeID != "" {
 		// For SPIFFE-only certificates (common in K8s/Spire), derive team from
 		// the SPIFFE ID.

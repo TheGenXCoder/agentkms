@@ -112,8 +112,8 @@ type authStrengthCtxKey struct{}
 
 // WithAuthStrength returns a child context that carries strength.  Use this
 // in HTTP handlers immediately after the session token has been validated.
-// strength is an opaque string ("device" or "device+human" in Phase 1) — the
-// engine does not import the auth package to avoid a circular dependency.
+// strength is an opaque string ("cert-only" or "cert+human" in Phase 1) —
+// the engine does not import the auth package to avoid a circular dependency.
 func WithAuthStrength(ctx context.Context, strength string) context.Context {
 	if strength == "" {
 		return ctx
@@ -134,12 +134,16 @@ func AuthStrengthFromContext(ctx context.Context) string {
 }
 
 // authStrengthRank assigns a numeric rank to each known auth strength value
-// so the matcher can express the partial order ("device+human" >= "device")
+// so the matcher can express the partial order ("cert+human" >= "cert-only")
 // without string-comparing in the hot path.  Unknown values get rank 0 and
 // fail any non-empty rule requirement.
+//
+// This map is intentionally duplicated with the one in internal/auth (the
+// engine package can't import auth without cycling) — deduplication is its
+// own follow-up.  Keep the two maps in lock-step.
 var authStrengthRank = map[string]int{
-	"device":       1,
-	"device+human": 2,
+	"cert-only":  1,
+	"cert+human": 2,
 }
 
 // authStrengthAtLeast reports whether got meets or exceeds required.
@@ -359,7 +363,7 @@ func (e *Engine) EvaluateAt(id identity.Identity, op Operation, keyID string, no
 // EvaluateAtWithStrength is the strength-aware variant of EvaluateAt.
 //
 // strength is the auth_strength the caller's session token carries (typically
-// "device" or "device+human").  Rules whose match.auth_strength is non-empty
+// "cert-only" or "cert+human").  Rules whose match.auth_strength is non-empty
 // require strength to meet or exceed that value (see authStrengthAtLeast).
 // An empty strength matches only rules whose auth_strength is also empty.
 //
@@ -523,6 +527,17 @@ func matchesIdentity(im IdentityMatch, id identity.Identity) bool {
 		return false
 	}
 
+	// UserID: exact match; empty means any user.  This is the dimension
+	// that follows a human across multiple device certs.
+	if im.UserID != "" && im.UserID != id.UserID {
+		return false
+	}
+
+	// DeviceID: exact match; empty means any device.
+	if im.DeviceID != "" && im.DeviceID != id.DeviceID {
+		return false
+	}
+
 	// CallerIDPattern: glob match; empty means any caller.
 	if im.CallerIDPattern != "" {
 		matched, err := path.Match(im.CallerIDPattern, id.CallerID)
@@ -668,6 +683,8 @@ func copyPolicy(p Policy) Policy {
 				Identity: IdentityMatch{
 					TeamID:          r.Match.Identity.TeamID,
 					CallerIDPattern: r.Match.Identity.CallerIDPattern,
+					UserID:          r.Match.Identity.UserID,
+					DeviceID:        r.Match.Identity.DeviceID,
 				},
 				KeyPrefix:    r.Match.KeyPrefix,
 				AuthStrength: r.Match.AuthStrength,

@@ -89,47 +89,47 @@ func TestTokenService_IssueDefaultsToDeviceStrength(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	if tok.AuthStrength != auth.AuthStrengthDevice {
-		t.Errorf("issued Token.AuthStrength = %q, want %q", tok.AuthStrength, auth.AuthStrengthDevice)
+	if tok.AuthStrength != auth.AuthStrengthCertOnly {
+		t.Errorf("issued Token.AuthStrength = %q, want %q", tok.AuthStrength, auth.AuthStrengthCertOnly)
 	}
 
 	got, err := svc.Validate(tokenStr)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if got.AuthStrength != auth.AuthStrengthDevice {
-		t.Errorf("validated AuthStrength = %q, want %q", got.AuthStrength, auth.AuthStrengthDevice)
+	if got.AuthStrength != auth.AuthStrengthCertOnly {
+		t.Errorf("validated AuthStrength = %q, want %q", got.AuthStrength, auth.AuthStrengthCertOnly)
 	}
 }
 
 // TestTokenService_IssueWithStrength_DeviceHumanRoundTrips proves the
 // substrate the WebAuthn /finish handler depends on: tokens issued with
-// AuthStrengthDeviceHuman survive sign → verify → claimsToToken with the
-// strength claim intact and equal to "device+human".
+// AuthStrengthCertHuman survive sign → verify → claimsToToken with the
+// strength claim intact and equal to "cert+human".
 func TestTokenService_IssueWithStrength_DeviceHumanRoundTrips(t *testing.T) {
 	svc := newTestService(t)
 	id := testIdentity("fp-webauthn-finish")
 
-	tokenStr, tok, err := svc.IssueWithStrength(id, auth.AuthStrengthDeviceHuman)
+	tokenStr, tok, err := svc.IssueWithStrength(id, auth.AuthStrengthCertHuman)
 	if err != nil {
 		t.Fatalf("IssueWithStrength: %v", err)
 	}
-	if tok.AuthStrength != auth.AuthStrengthDeviceHuman {
-		t.Errorf("issued Token.AuthStrength = %q, want %q", tok.AuthStrength, auth.AuthStrengthDeviceHuman)
+	if tok.AuthStrength != auth.AuthStrengthCertHuman {
+		t.Errorf("issued Token.AuthStrength = %q, want %q", tok.AuthStrength, auth.AuthStrengthCertHuman)
 	}
 
 	got, err := svc.Validate(tokenStr)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if got.AuthStrength != auth.AuthStrengthDeviceHuman {
-		t.Errorf("validated AuthStrength = %q, want %q", got.AuthStrength, auth.AuthStrengthDeviceHuman)
+	if got.AuthStrength != auth.AuthStrengthCertHuman {
+		t.Errorf("validated AuthStrength = %q, want %q", got.AuthStrength, auth.AuthStrengthCertHuman)
 	}
 	// AtLeast must say a device+human token satisfies a device requirement.
-	if !got.AuthStrength.AtLeast(auth.AuthStrengthDevice) {
+	if !got.AuthStrength.AtLeast(auth.AuthStrengthCertOnly) {
 		t.Errorf("device+human token unexpectedly does NOT satisfy device requirement")
 	}
-	if !got.AuthStrength.AtLeast(auth.AuthStrengthDeviceHuman) {
+	if !got.AuthStrength.AtLeast(auth.AuthStrengthCertHuman) {
 		t.Errorf("device+human token unexpectedly does NOT satisfy device+human requirement")
 	}
 }
@@ -146,20 +146,20 @@ func TestTokenService_IssueDelegatedWithStrength_PropagatesStrength(t *testing.T
 		parent,
 		time.Minute,
 		[]string{"sign:key-1"},
-		auth.AuthStrengthDeviceHuman,
+		auth.AuthStrengthCertHuman,
 	)
 	if err != nil {
 		t.Fatalf("IssueDelegatedWithStrength: %v", err)
 	}
-	if tok.AuthStrength != auth.AuthStrengthDeviceHuman {
-		t.Errorf("delegated Token.AuthStrength = %q, want %q", tok.AuthStrength, auth.AuthStrengthDeviceHuman)
+	if tok.AuthStrength != auth.AuthStrengthCertHuman {
+		t.Errorf("delegated Token.AuthStrength = %q, want %q", tok.AuthStrength, auth.AuthStrengthCertHuman)
 	}
 	got, err := svc.Validate(tokenStr)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if got.AuthStrength != auth.AuthStrengthDeviceHuman {
-		t.Errorf("validated delegated AuthStrength = %q, want %q", got.AuthStrength, auth.AuthStrengthDeviceHuman)
+	if got.AuthStrength != auth.AuthStrengthCertHuman {
+		t.Errorf("validated delegated AuthStrength = %q, want %q", got.AuthStrength, auth.AuthStrengthCertHuman)
 	}
 }
 

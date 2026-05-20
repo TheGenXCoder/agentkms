@@ -5,11 +5,18 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/agentkms/agentkms/pkg/identity"
 )
+
+// legacySpiffeWarnOnce de-duplicates the "legacy device-only SPIFFE URI"
+// warning so a chatty CI never floods the log with the same advice.  Keyed
+// on (UserID,DeviceID) — one warning per resolved principal pair, ever.
+var legacySpiffeWarnOnce sync.Map
 
 // ExtractIdentity derives an Identity from the verified client certificate
 // presented during the mTLS handshake.
@@ -72,6 +79,34 @@ func identityFromCert(cert *x509.Certificate) (*identity.Identity, error) {
 		}
 	}
 
+	// Parse the canonical multi-principal SPIFFE convention.
+	//
+	//   tenant/<t>/user/<u>/device/<d>  → user-and-device-bearing cert
+	//   tenant/<t>/device/<d>           → legacy device-only cert
+	//
+	// Anything else is left for the CN-based fallback so non-SPIFFE certs
+	// keep working.  The returned IDs are empty when the URI doesn't match
+	// either shape.
+	userID, deviceID, tenant := parseTenantPrincipal(spiffeID)
+	if userID == "" && deviceID != "" {
+		// Legacy device-only URI — warn once per (UserID,DeviceID) so the
+		// operator gets one nudge to re-issue with the new convention but
+		// log volume doesn't explode under a chatty client.
+		key := deviceID + "\x00" + deviceID
+		if _, already := legacySpiffeWarnOnce.LoadOrStore(key, struct{}{}); !already {
+			slog.Warn(
+				"legacy device-only SPIFFE URI — re-issue cert with /user/<name>/device/<name> for multi-device portability",
+				"device_id", deviceID,
+				"tenant", tenant,
+				"spiffe_id", spiffeID,
+			)
+		}
+		// Surface device as the (legacy) user too so downstream code that
+		// looks at UserID still has a stable principal value.  CallerID
+		// (further down) stays equal to the cert CN for these certs.
+		userID = deviceID
+	}
+
 	// Organisation is the team identifier.
 	var teamID string
 	if len(cert.Subject.Organization) > 0 && strings.TrimSpace(cert.Subject.Organization[0]) != "" {
@@ -129,12 +164,91 @@ func identityFromCert(cert *x509.Certificate) (*identity.Identity, error) {
 	fp := sha256.Sum256(cert.Raw)
 	fingerprint := hex.EncodeToString(fp[:])
 
+	// CallerID prefers UserID (the human/logical principal) when the cert
+	// follows the user/device convention so that the legacy single-string
+	// identifier resolves to the same value across all of a user's device
+	// certs.  For legacy device-only certs and non-SPIFFE certs it stays
+	// equal to the cert CN — same value as before this change.
+	callerID := cn
+	if userID != "" && userID != deviceID {
+		callerID = userID
+	}
+
 	return &identity.Identity{
-		CallerID:        cn,
+		CallerID:        callerID,
+		UserID:          userID,
+		DeviceID:        deviceID,
+		Tenant:          tenant,
 		TeamID:          teamID,
 		Role:            role,
 		SPIFFEID:        spiffeID,
 		CertFingerprint: fingerprint,
 		CallerOU:        ouRaw,
 	}, nil
+}
+
+// parseTenantPrincipal walks the path segments of a SPIFFE URI and extracts
+// (userID, deviceID, tenant) for the two shapes that the zero-trust identity
+// model recognises:
+//
+//	spiffe://<trust-domain>/tenant/<t>/user/<u>/device/<d>
+//	spiffe://<trust-domain>/tenant/<t>/device/<d>     (legacy)
+//
+// Returns ("", "", "") for any other shape so callers can fall back to the
+// CN-based path without conflating the two regimes.
+//
+// The function is intentionally case-sensitive: SPIFFE path segments are
+// defined to be opaque and case-significant by the spec.
+func parseTenantPrincipal(spiffeID string) (userID, deviceID, tenant string) {
+	if spiffeID == "" {
+		return "", "", ""
+	}
+	const prefix = "spiffe://"
+	if !strings.HasPrefix(spiffeID, prefix) {
+		return "", "", ""
+	}
+	// Everything after the trust domain.
+	rest := spiffeID[len(prefix):]
+	slash := strings.IndexByte(rest, '/')
+	if slash < 0 {
+		return "", "", ""
+	}
+	path := rest[slash+1:]
+	segments := strings.Split(path, "/")
+
+	// Walk pairs: "tenant/<t>", "user/<u>", "device/<d>" — in that order.
+	// We don't accept any other order because policy and audit reason
+	// about a fixed left-to-right specificity chain.
+	for i := 0; i+1 < len(segments); i += 2 {
+		k, v := segments[i], segments[i+1]
+		if v == "" {
+			return "", "", ""
+		}
+		switch k {
+		case "tenant":
+			if tenant != "" {
+				return "", "", ""
+			}
+			tenant = v
+		case "user":
+			if userID != "" {
+				return "", "", ""
+			}
+			userID = v
+		case "device":
+			if deviceID != "" {
+				return "", "", ""
+			}
+			deviceID = v
+		default:
+			// Unknown segment kind — reject the whole URI so we don't half-
+			// parse a workload/agent URI as a user/device URI.
+			return "", "", ""
+		}
+	}
+	// Required: tenant + device.  user is optional (legacy device-only URI).
+	if tenant == "" || deviceID == "" {
+		return "", "", ""
+	}
+	return userID, deviceID, tenant
 }

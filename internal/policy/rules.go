@@ -231,17 +231,17 @@ type Match struct {
 	KeyIDs []string `yaml:"key_ids,omitempty" json:"key_ids,omitempty"`
 
 	// AuthStrength is the minimum auth strength a session token must carry
-	// for this rule to match.  Valid values are "device" (single-factor:
-	// mTLS cert) and "device+human" (two-factor: cert + WebAuthn).  Empty
+	// for this rule to match.  Valid values are "cert-only" (single-factor:
+	// mTLS cert) and "cert+human" (two-factor: cert + WebAuthn).  Empty
 	// means "no auth-strength constraint" — the rule matches any session.
 	//
-	// The match is a partial order: a rule that requires "device" matches
-	// tokens of strength "device" or "device+human"; a rule that requires
-	// "device+human" matches only tokens of strength "device+human".
+	// The match is a partial order: a rule that requires "cert-only" matches
+	// tokens of strength "cert-only" or "cert+human"; a rule that requires
+	// "cert+human" matches only tokens of strength "cert+human".
 	//
 	// Use this on deny rules to fence off sensitive operations from
-	// device-only sessions (e.g. block credential vending unless the user
-	// has completed a WebAuthn step-up).
+	// cert-only sessions (e.g. block credential vending unless the user has
+	// completed a WebAuthn step-up).
 	AuthStrength string `yaml:"auth_strength,omitempty" json:"auth_strength,omitempty"`
 }
 
@@ -267,6 +267,25 @@ type IdentityMatch struct {
 	//   "ci-*"             — any caller whose ID starts with "ci-"
 	//   ""                 — any caller (no pattern constraint applied)
 	CallerIDPattern string `yaml:"caller_id_pattern,omitempty" json:"caller_id_pattern,omitempty"`
+
+	// UserID restricts this rule to a specific logical user (extracted from
+	// the cert's SPIFFE /user/<u> segment).  Exact match against
+	// identity.UserID; no wildcards.  Empty means "any user".
+	//
+	// When multiple device certs are enrolled for the same human, this is
+	// the principal-stable dimension to match on: a rule with UserID:"bert"
+	// matches sessions started from any of "bert"'s device certs.
+	UserID string `yaml:"user_id,omitempty" json:"user_id,omitempty"`
+
+	// DeviceID restricts this rule to a specific device cert (extracted from
+	// the cert's SPIFFE /device/<d> segment).  Exact match against
+	// identity.DeviceID; no wildcards.  Empty means "any device".
+	//
+	// Use this to fence operations to a specific machine (e.g. a hardware
+	// token reader, or a known-good admin workstation) — not as a substitute
+	// for UserID, which is the dimension that follows the human across
+	// device changes.
+	DeviceID string `yaml:"device_id,omitempty" json:"device_id,omitempty"`
 
 	// Roles restricts this rule to callers with one of the listed roles.
 	// Each value must be one of: "developer", "service", "agent".
@@ -450,13 +469,14 @@ func (r *Rule) validate(idx int) []string {
 
 	if r.Match.AuthStrength != "" {
 		switch r.Match.AuthStrength {
-		case "device", "device+human":
+		case "cert-only", "cert+human":
 			// valid
 		default:
-			errs = append(errs, fmt.Sprintf("%s (%q): match.auth_strength must be \"device\" or \"device+human\", got %q",
+			errs = append(errs, fmt.Sprintf("%s (%q): match.auth_strength must be \"cert-only\" or \"cert+human\", got %q",
 				prefix, r.ID, r.Match.AuthStrength))
 		}
 	}
+
 
 	if b := r.Bounds; b != nil {
 		if b.MaxTTL != "" {

@@ -9,7 +9,7 @@ package api
 // Authentication (per session):
 //   POST /auth/webauthn/auth/begin   — returns challenge JSON (mTLS-only)
 //   POST /auth/webauthn/auth/finish  — submits assertion, returns session token
-//                                       with auth_strength=device+human (mTLS-only)
+//                                       with auth_strength=cert+human (mTLS-only)
 //
 // All four endpoints require a verified mTLS client certificate.  /finish
 // additionally verifies that the cert's CN matches the WebAuthn caller_id so
@@ -141,7 +141,7 @@ func (s *Server) handleWebAuthnAuthFinish(w http.ResponseWriter, r *http.Request
 	}
 
 	// Two-factor pre-condition: a verified mTLS client cert MUST be present so
-	// that the token we issue can legitimately claim auth_strength=device+human.
+	// that the token we issue can legitimately claim auth_strength=cert+human.
 	// The cert identity is also the device-half of the audit trail.
 	certID, certErr := auth.ExtractIdentity(r)
 	if certErr != nil {
@@ -183,10 +183,10 @@ func (s *Server) handleWebAuthnAuthFinish(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Both factors verified.  Issue a session token with auth_strength=device+human.
+	// Both factors verified.  Issue a session token with auth_strength=cert+human.
 	// We carry the certificate-derived identity (team, role, cert fingerprint, SPIFFE)
 	// into the token so middleware can bind the token to this mTLS connection.
-	tokenStr, tok, err := s.tokenService.IssueWithStrength(certID, auth.AuthStrengthDeviceHuman)
+	tokenStr, tok, err := s.tokenService.IssueWithStrength(certID, auth.AuthStrengthCertHuman)
 	if err != nil {
 		ev.Outcome = audit.OutcomeError
 		_ = s.auditLog(ctx, ev)

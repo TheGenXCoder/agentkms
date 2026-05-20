@@ -122,7 +122,9 @@ Secrets are stored in the macOS Keychain — never in plaintext on disk.
 func runEnroll(args []string) error {
 	fs := flag.NewFlagSet("enroll", flag.ExitOnError)
 	dirFlag := fs.String("dir", "", "output directory (default: ~/.agentkms/dev)")
-	clientCN := fs.String("client-cn", "forge-gateway", "Common Name for the client cert")
+	clientCN := fs.String("client-cn", "forge-gateway", "Common Name for the client cert (also used as device segment in the SPIFFE URI)")
+	clientUser := fs.String("client-user", "", "logical user segment for the SPIFFE URI (default: empty — emits a legacy device-only URI)")
+	tenant := fs.String("tenant", "forge", "tenant segment for the SPIFFE URI")
 	force := fs.Bool("force", false, "overwrite existing certificates")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -231,7 +233,7 @@ func runEnroll(args []string) error {
 		NotAfter:    time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		URIs:        mustParseURIs([]string{"spiffe://agentkms.dev/team/forge/identity/" + *clientCN}),
+		URIs:        mustParseURIs([]string{buildSPIFFEURI(*tenant, *clientUser, *clientCN)}),
 	}
 	clientCertDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, caCert, &clientKey.PublicKey, caKey)
 	if err != nil {
@@ -718,6 +720,22 @@ func mustParseURIs(uris []string) []*url.URL {
 		out = append(out, parsed)
 	}
 	return out
+}
+
+// buildSPIFFEURI emits the multi-principal SPIFFE convention introduced in
+// Phase 1 of the zero-trust identity rollout:
+//
+//	spiffe://agentkms.dev/tenant/<t>/user/<u>/device/<d>   (when user != "")
+//	spiffe://agentkms.dev/tenant/<t>/device/<d>            (legacy fallback)
+//
+// The legacy fallback is preserved so existing dev workflows that didn't
+// previously have a user concept keep producing a working cert; the server
+// recognises it and emits a one-time warning per (UserID,DeviceID) pair.
+func buildSPIFFEURI(tenant, user, device string) string {
+	if user == "" {
+		return fmt.Sprintf("spiffe://agentkms.dev/tenant/%s/device/%s", tenant, device)
+	}
+	return fmt.Sprintf("spiffe://agentkms.dev/tenant/%s/user/%s/device/%s", tenant, user, device)
 }
 
 // ── Shared ────────────────────────────────────────────────────────────────────

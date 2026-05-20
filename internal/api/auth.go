@@ -220,9 +220,9 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	// Preserve the original auth_strength across refresh — refresh extends a
 	// session, it does not re-prove factors, so the new token's strength
-	// MUST equal the old token's.  Without this, a "device+human" user would
-	// silently downgrade to "device" after the first refresh and lose access
-	// to step-up-gated operations 15 minutes into their session.
+	// MUST equal the old token's.  Without this, a "cert+human" user would
+	// silently downgrade to "cert-only" after the first refresh and lose
+	// access to step-up-gated operations 15 minutes into their session.
 	newTokenStr, newTok, err := h.tokens.IssueWithStrength(&oldTok.Identity, oldTok.AuthStrength)
 	if err != nil {
 		h.logAudit(r.Context(), r, oldTok.Identity.CallerID, oldTok.Identity.TeamID, oldTok.JTI,
@@ -388,9 +388,9 @@ func (h *AuthHandler) Delegate(w http.ResponseWriter, r *http.Request) {
 
 	// Propagate the parent's auth_strength onto the child token.  Delegation
 	// must NEVER strengthen a session — IssueDelegatedWithStrength accepts
-	// the parent's value as-is so a "device" parent yields a "device" child,
-	// and the child cannot be used to satisfy a rule that demands
-	// "device+human".  This is the writing side of the attenuation contract.
+	// the parent's value as-is so a "cert-only" parent yields a "cert-only"
+	// child, and the child cannot be used to satisfy a rule that demands
+	// "cert+human".  This is the writing side of the attenuation contract.
 	tokenStr, tok, err := h.tokens.IssueDelegatedWithStrength(&parentTok.Identity, ttl, req.Scopes, parentTok.AuthStrength)
 	if err != nil {
 		h.logAudit(r.Context(), r, parentTok.Identity.CallerID, parentTok.Identity.TeamID, parentTok.JTI,

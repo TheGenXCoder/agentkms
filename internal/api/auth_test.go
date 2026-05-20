@@ -246,8 +246,8 @@ func TestSession_IssuesDeviceStrengthToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if tok.AuthStrength != auth.AuthStrengthDevice {
-		t.Errorf("auth_strength = %q, want %q", tok.AuthStrength, auth.AuthStrengthDevice)
+	if tok.AuthStrength != auth.AuthStrengthCertOnly {
+		t.Errorf("auth_strength = %q, want %q", tok.AuthStrength, auth.AuthStrengthCertOnly)
 	}
 }
 

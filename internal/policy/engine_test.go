@@ -1038,9 +1038,9 @@ func TestEvaluate_DenyReasonNeverContainsKeyMaterial(t *testing.T) {
 // TestAuthStrength_RuleRequiresDeviceHuman_DeniesDeviceOnly is the focused
 // proof for Phase 1 of the zero-trust agent identity rollout:
 //
-//   - A rule that requires auth_strength="device+human" MUST NOT match a
-//     session token that carries auth_strength="device".
-//   - The same rule MUST match a session token carrying "device+human".
+//   - A rule that requires auth_strength="cert+human" MUST NOT match a
+//     session token that carries auth_strength="cert-only".
+//   - The same rule MUST match a session token carrying "cert+human".
 //   - Rules with no auth_strength constraint match either token.
 //
 // The matcher is plumbed via context using policy.WithAuthStrength.  We
@@ -1056,7 +1056,7 @@ func TestAuthStrength_RuleRequiresDeviceHuman_DeniesDeviceOnly(t *testing.T) {
 			ID: "device-human-required",
 			Match: Match{
 				Operations:   []Operation{OpCredentialVend},
-				AuthStrength: "device+human",
+				AuthStrength: "cert+human",
 			},
 			Effect: EffectAllow,
 		}},
@@ -1067,7 +1067,7 @@ func TestAuthStrength_RuleRequiresDeviceHuman_DeniesDeviceOnly(t *testing.T) {
 	id := devID("platform-team", "alice")
 
 	t.Run("device-only token is denied", func(t *testing.T) {
-		ctx := WithAuthStrength(context.Background(), "device")
+		ctx := WithAuthStrength(context.Background(), "cert-only")
 		dec, err := adapter.Evaluate(ctx, id, string(OpCredentialVend), "github/token")
 		if err != nil {
 			t.Fatalf("Evaluate: %v", err)
@@ -1086,7 +1086,7 @@ func TestAuthStrength_RuleRequiresDeviceHuman_DeniesDeviceOnly(t *testing.T) {
 	})
 
 	t.Run("device+human token is allowed", func(t *testing.T) {
-		ctx := WithAuthStrength(context.Background(), "device+human")
+		ctx := WithAuthStrength(context.Background(), "cert+human")
 		dec, err := adapter.Evaluate(ctx, id, string(OpCredentialVend), "github/token")
 		if err != nil {
 			t.Fatalf("Evaluate: %v", err)
@@ -1113,7 +1113,7 @@ func TestAuthStrength_RuleRequiresDeviceHuman_DeniesDeviceOnly(t *testing.T) {
 }
 
 // TestAuthStrength_RuleRequiresDevice_MatchesEither verifies the partial
-// order: a rule requiring "device" matches both "device" and "device+human"
+// order: a rule requiring "cert-only" matches both "cert-only" and "cert+human"
 // tokens.  Without this property, raising a user's auth strength would
 // silently lock them out of operations that previously worked.
 func TestAuthStrength_RuleRequiresDevice_MatchesEither(t *testing.T) {
@@ -1125,7 +1125,7 @@ func TestAuthStrength_RuleRequiresDevice_MatchesEither(t *testing.T) {
 			ID: "device-or-better",
 			Match: Match{
 				Operations:   []Operation{OpSign},
-				AuthStrength: "device",
+				AuthStrength: "cert-only",
 			},
 			Effect: EffectAllow,
 		}},
@@ -1134,7 +1134,7 @@ func TestAuthStrength_RuleRequiresDevice_MatchesEither(t *testing.T) {
 	adapter := AsEngineI(engine)
 	id := devID("platform-team", "alice")
 
-	for _, strength := range []string{"device", "device+human"} {
+	for _, strength := range []string{"cert-only", "cert+human"} {
 		t.Run(strength, func(t *testing.T) {
 			ctx := WithAuthStrength(context.Background(), strength)
 			dec, err := adapter.Evaluate(ctx, id, string(OpSign), "key-1")
@@ -1169,7 +1169,7 @@ func TestAuthStrength_NoConstraint_AlwaysMatches(t *testing.T) {
 	adapter := AsEngineI(engine)
 	id := devID("platform-team", "alice")
 
-	for _, strength := range []string{"", "device", "device+human", "bogus-unknown-strength"} {
+	for _, strength := range []string{"", "cert-only", "cert+human", "bogus-unknown-strength"} {
 		t.Run("strength="+strength, func(t *testing.T) {
 			ctx := context.Background()
 			if strength != "" {

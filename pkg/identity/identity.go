@@ -51,9 +51,39 @@ func (r Role) IsValid() bool {
 //	OU  → Role              e.g. "developer", "service", "agent"
 //	SAN → SPIFFEID          e.g. "spiffe://agentkms.org/team/platform-team/identity/bert"
 type Identity struct {
-	// CallerID is the certificate's Common Name (CN).
-	// Example: "bert@platform-team", "ci-runner@payments-team".
+	// CallerID is the legacy single-string caller identifier.
+	//
+	// For backward compatibility this field is always populated:
+	//   - For SPIFFE URIs of shape tenant/<t>/user/<u>/device/<d> it equals UserID.
+	//   - For legacy device-only SPIFFE URIs (or non-SPIFFE certs) it equals
+	//     the cert's Common Name.
+	//
+	// New code should prefer UserID (logical principal) and DeviceID (the
+	// specific cert/device) over CallerID.  CallerID is preserved so existing
+	// handlers, policy CallerIDPattern, and audit fields keep working unchanged.
+	// Example: "bert@platform-team", "bert", "ci-runner@payments-team".
 	CallerID string
+
+	// UserID is the logical human (or workload) principal extracted from the
+	// SPIFFE URI's /user/<u>/ segment, when present.  Multiple device certs
+	// belonging to the same human all resolve to the same UserID, so audit,
+	// secret stash, and policy can reference the human-level principal
+	// independently of which device cert was actually used today.
+	//
+	// Empty when the certificate's SPIFFE URI does not encode a user segment
+	// (legacy device-only certs).  See identityFromCert.
+	UserID string
+
+	// DeviceID is the specific device cert principal extracted from the
+	// SPIFFE URI's /device/<d> segment.  Always populated for SPIFFE-bearing
+	// certs that follow the user/device convention; equal to the cert CN
+	// otherwise.  Used for per-device forensics in the audit trail.
+	DeviceID string
+
+	// Tenant is the organisational unit within an operator's trust domain,
+	// extracted from the SPIFFE URI's /tenant/<t>/ segment.  Empty for
+	// non-SPIFFE certs.
+	Tenant string
 
 	// TeamID is the certificate's Organisation (O) field.
 	// Example: "platform-team", "payments-team".

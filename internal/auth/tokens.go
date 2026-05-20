@@ -23,34 +23,40 @@ const TokenTTL = 15 * time.Minute
 // session token.  It is embedded in the token's claims so downstream policy
 // evaluation can require a minimum strength for sensitive operations.
 //
+// Naming convention: these values name the *factors* that were verified at
+// session issuance, NOT the cert's identity dimensions.  "cert-only" and
+// "cert+human" deliberately avoid the word "device" so they don't collide
+// with the Identity.DeviceID field (which describes which device cert
+// authenticated, a completely separate axis).
+//
 // Phase 1 supports two values:
 //
-//   - AuthStrengthDevice — a single factor (the mTLS client cert) was
+//   - AuthStrengthCertOnly — a single factor (the mTLS client cert) was
 //     verified.  Issued by POST /auth/session.
-//   - AuthStrengthDeviceHuman — both the mTLS client cert AND a WebAuthn
+//   - AuthStrengthCertHuman — both the mTLS client cert AND a WebAuthn
 //     challenge were verified.  Issued by POST /auth/webauthn/auth/finish.
 //
-// The ordering AuthStrengthDevice < AuthStrengthDeviceHuman is encoded in
+// The ordering AuthStrengthCertOnly < AuthStrengthCertHuman is encoded in
 // AuthStrength.AtLeast so that policy rules can match "any token of at least
 // this strength".
 type AuthStrength string
 
 const (
-	// AuthStrengthDevice indicates only the device factor (mTLS cert) was
-	// verified at session issuance.
-	AuthStrengthDevice AuthStrength = "device"
+	// AuthStrengthCertOnly indicates only the cert factor (mTLS client cert)
+	// was verified at session issuance.
+	AuthStrengthCertOnly AuthStrength = "cert-only"
 
-	// AuthStrengthDeviceHuman indicates the device factor (mTLS cert) AND a
-	// human factor (WebAuthn assertion) were both verified at session issuance.
-	AuthStrengthDeviceHuman AuthStrength = "device+human"
+	// AuthStrengthCertHuman indicates the cert factor (mTLS cert) AND a human
+	// factor (WebAuthn assertion) were both verified at session issuance.
+	AuthStrengthCertHuman AuthStrength = "cert+human"
 )
 
 // authStrengthRank assigns a numeric rank to each AuthStrength value so that
-// AtLeast can express the partial order ("device+human" > "device") without
+// AtLeast can express the partial order ("cert+human" > "cert-only") without
 // hard-coding string comparisons throughout the engine.
 var authStrengthRank = map[AuthStrength]int{
-	AuthStrengthDevice:      1,
-	AuthStrengthDeviceHuman: 2,
+	AuthStrengthCertOnly:  1,
+	AuthStrengthCertHuman: 2,
 }
 
 // AtLeast reports whether s meets or exceeds the required strength.
@@ -87,13 +93,16 @@ var ErrTokenRevoked = errors.New("auth: token revoked")
 // Field names are intentionally short (no sensitive data; just compact).
 type tokenClaims struct {
 	JTI       string       `json:"jti"`              // Unique token ID (used for revocation)
-	Subject   string       `json:"sub"`              // CallerID from cert CN
+	Subject   string       `json:"sub"`              // CallerID (UserID when known, else cert CN)
+	User      string       `json:"usr,omitempty"`    // UserID from SPIFFE /user/<u> (logical principal)
+	Device    string       `json:"dev,omitempty"`    // DeviceID from SPIFFE /device/<d>
+	Tenant    string       `json:"tnt,omitempty"`    // Tenant from SPIFFE /tenant/<t>
 	Team      string       `json:"team"`             // TeamID from cert O
 	Role      string       `json:"role"`             // Role from cert OU
 	SPIFFE    string       `json:"spiffe,omitempty"` // SPIFFE ID from cert SAN (may be empty)
 	CertFP    string       `json:"cfp"`              // Cert fingerprint (SHA-256 hex of DER)
 	Scopes    []string     `json:"scp,omitempty"`    // Delegated scopes
-	AuthStr   AuthStrength `json:"as,omitempty"`     // Auth strength: "device" or "device+human"
+	AuthStr   AuthStrength `json:"as,omitempty"`     // Auth strength: "cert-only" or "cert+human"
 	IssuedAt  int64        `json:"iat"`              // Unix timestamp (seconds)
 	ExpiresAt int64        `json:"exp"`              // Unix timestamp (seconds)
 }
@@ -172,26 +181,26 @@ func NewTokenService(revocation *RevocationList) (*TokenService, error) {
 // RequireToken middleware can verify the token is being used on the same
 // mTLS connection that authenticated it.
 //
-// Issue defaults the token's AuthStrength to AuthStrengthDevice: the caller
-// presented a valid mTLS client certificate but no additional human factor.
-// Use IssueWithStrength to issue a token that records additional factors
-// (e.g. WebAuthn).
+// Issue defaults the token's AuthStrength to AuthStrengthCertOnly: the
+// caller presented a valid mTLS client certificate but no additional human
+// factor.  Use IssueWithStrength to issue a token that records additional
+// factors (e.g. WebAuthn).
 //
 // TTL is TokenTTL (15 minutes) from time of issuance.
 func (s *TokenService) Issue(id *identity.Identity) (string, *Token, error) {
-	return s.IssueWithStrength(id, AuthStrengthDevice)
+	return s.IssueWithStrength(id, AuthStrengthCertOnly)
 }
 
 // IssueWithStrength is the strength-aware variant of Issue.  It is used by
 // /auth/webauthn/auth/finish to issue a token that records that both the
-// device and human factors were verified.
+// cert and human factors were verified.
 //
-// strength must be one of AuthStrengthDevice or AuthStrengthDeviceHuman.
-// The empty string is treated as AuthStrengthDevice so callers that did not
-// opt into the new claim do not silently produce zero-strength tokens.
+// strength must be one of AuthStrengthCertOnly or AuthStrengthCertHuman.
+// The empty string is treated as AuthStrengthCertOnly so callers that did
+// not opt into the new claim do not silently produce zero-strength tokens.
 func (s *TokenService) IssueWithStrength(id *identity.Identity, strength AuthStrength) (string, *Token, error) {
 	if strength == "" {
-		strength = AuthStrengthDevice
+		strength = AuthStrengthCertOnly
 	}
 
 	jti, err := newJTI()
@@ -205,6 +214,9 @@ func (s *TokenService) IssueWithStrength(id *identity.Identity, strength AuthStr
 	claims := tokenClaims{
 		JTI:       jti,
 		Subject:   id.CallerID,
+		User:      id.UserID,
+		Device:    id.DeviceID,
+		Tenant:    id.Tenant,
 		Team:      id.TeamID,
 		Role:      string(id.Role),
 		SPIFFE:    id.SPIFFEID,
@@ -376,11 +388,11 @@ func computeHMAC(key []byte, data string) []byte {
 //
 // The new token is bound to the same identity as the parent, but with
 // a restricted set of scopes and a typically shorter TTL.  The token's
-// AuthStrength defaults to AuthStrengthDevice — delegation cannot strengthen
-// a session.  Callers that have a parent token should use
+// AuthStrength defaults to AuthStrengthCertOnly — delegation cannot
+// strengthen a session.  Callers that have a parent token should use
 // IssueDelegatedWithStrength to propagate the parent's AuthStrength.
 func (s *TokenService) IssueDelegated(id *identity.Identity, ttl time.Duration, scopes []string) (string, *Token, error) {
-	return s.IssueDelegatedWithStrength(id, ttl, scopes, AuthStrengthDevice)
+	return s.IssueDelegatedWithStrength(id, ttl, scopes, AuthStrengthCertOnly)
 }
 
 // IssueDelegatedWithStrength is the strength-aware variant of IssueDelegated.
@@ -390,11 +402,11 @@ func (s *TokenService) IssueDelegated(id *identity.Identity, ttl time.Duration, 
 // parent's would violate the attenuation guarantee.  This function does not
 // validate that against a parent — that responsibility lives in the handler
 // that wires the parent token through.  The empty string is normalised to
-// AuthStrengthDevice for forward compatibility with older parent tokens that
-// pre-date the claim.
+// AuthStrengthCertOnly for forward compatibility with older parent tokens
+// that pre-date the claim.
 func (s *TokenService) IssueDelegatedWithStrength(id *identity.Identity, ttl time.Duration, scopes []string, strength AuthStrength) (string, *Token, error) {
 	if strength == "" {
-		strength = AuthStrengthDevice
+		strength = AuthStrengthCertOnly
 	}
 
 	jti, err := newJTI()
@@ -408,6 +420,9 @@ func (s *TokenService) IssueDelegatedWithStrength(id *identity.Identity, ttl tim
 	claims := tokenClaims{
 		JTI:       jti,
 		Subject:   id.CallerID,
+		User:      id.UserID,
+		Device:    id.DeviceID,
+		Tenant:    id.Tenant,
 		Team:      id.TeamID,
 		Role:      string(id.Role),
 		SPIFFE:    id.SPIFFEID,
@@ -456,6 +471,9 @@ func claimsToToken(claims *tokenClaims) *Token {
 		JTI: claims.JTI,
 		Identity: identity.Identity{
 			CallerID:        claims.Subject,
+			UserID:          claims.User,
+			DeviceID:        claims.Device,
+			Tenant:          claims.Tenant,
 			TeamID:          claims.Team,
 			Role:            identity.Role(claims.Role),
 			SPIFFEID:        claims.SPIFFE,

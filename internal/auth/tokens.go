@@ -19,6 +19,51 @@ import (
 // Per architecture §7.4: 15 minutes maximum.
 const TokenTTL = 15 * time.Minute
 
+// AuthStrength records the set of authentication factors that produced a
+// session token.  It is embedded in the token's claims so downstream policy
+// evaluation can require a minimum strength for sensitive operations.
+//
+// Phase 1 supports two values:
+//
+//   - AuthStrengthDevice — a single factor (the mTLS client cert) was
+//     verified.  Issued by POST /auth/session.
+//   - AuthStrengthDeviceHuman — both the mTLS client cert AND a WebAuthn
+//     challenge were verified.  Issued by POST /auth/webauthn/auth/finish.
+//
+// The ordering AuthStrengthDevice < AuthStrengthDeviceHuman is encoded in
+// AuthStrength.AtLeast so that policy rules can match "any token of at least
+// this strength".
+type AuthStrength string
+
+const (
+	// AuthStrengthDevice indicates only the device factor (mTLS cert) was
+	// verified at session issuance.
+	AuthStrengthDevice AuthStrength = "device"
+
+	// AuthStrengthDeviceHuman indicates the device factor (mTLS cert) AND a
+	// human factor (WebAuthn assertion) were both verified at session issuance.
+	AuthStrengthDeviceHuman AuthStrength = "device+human"
+)
+
+// authStrengthRank assigns a numeric rank to each AuthStrength value so that
+// AtLeast can express the partial order ("device+human" > "device") without
+// hard-coding string comparisons throughout the engine.
+var authStrengthRank = map[AuthStrength]int{
+	AuthStrengthDevice:      1,
+	AuthStrengthDeviceHuman: 2,
+}
+
+// AtLeast reports whether s meets or exceeds the required strength.
+// Unknown strengths (zero or otherwise unrecognised) have rank 0 and never
+// satisfy a non-zero requirement — a forged or corrupted claim cannot bypass
+// a policy that asks for a known minimum.
+func (s AuthStrength) AtLeast(required AuthStrength) bool {
+	if required == "" {
+		return true
+	}
+	return authStrengthRank[s] >= authStrengthRank[required]
+}
+
 // ErrTokenInvalid is returned by Validate when a token has an invalid
 // signature, malformed structure, or has expired.
 var ErrTokenInvalid = errors.New("auth: token invalid")
@@ -41,15 +86,16 @@ var ErrTokenRevoked = errors.New("auth: token revoked")
 // tokenClaims is the JSON payload embedded in a session token.
 // Field names are intentionally short (no sensitive data; just compact).
 type tokenClaims struct {
-	JTI       string   `json:"jti"`              // Unique token ID (used for revocation)
-	Subject   string   `json:"sub"`              // CallerID from cert CN
-	Team      string   `json:"team"`             // TeamID from cert O
-	Role      string   `json:"role"`             // Role from cert OU
-	SPIFFE    string   `json:"spiffe,omitempty"` // SPIFFE ID from cert SAN (may be empty)
-	CertFP    string   `json:"cfp"`              // Cert fingerprint (SHA-256 hex of DER)
-	Scopes    []string `json:"scp,omitempty"`    // Delegated scopes
-	IssuedAt  int64    `json:"iat"`              // Unix timestamp (seconds)
-	ExpiresAt int64    `json:"exp"`              // Unix timestamp (seconds)
+	JTI       string       `json:"jti"`              // Unique token ID (used for revocation)
+	Subject   string       `json:"sub"`              // CallerID from cert CN
+	Team      string       `json:"team"`             // TeamID from cert O
+	Role      string       `json:"role"`             // Role from cert OU
+	SPIFFE    string       `json:"spiffe,omitempty"` // SPIFFE ID from cert SAN (may be empty)
+	CertFP    string       `json:"cfp"`              // Cert fingerprint (SHA-256 hex of DER)
+	Scopes    []string     `json:"scp,omitempty"`    // Delegated scopes
+	AuthStr   AuthStrength `json:"as,omitempty"`     // Auth strength: "device" or "device+human"
+	IssuedAt  int64        `json:"iat"`              // Unix timestamp (seconds)
+	ExpiresAt int64        `json:"exp"`              // Unix timestamp (seconds)
 }
 
 // Token is a validated, parsed session token.  Returned by TokenService.Validate
@@ -61,6 +107,11 @@ type Token struct {
 
 	// Identity holds the caller identity bound to this token.
 	Identity identity.Identity
+
+	// AuthStrength records how the session that produced this token was
+	// authenticated (device-only, or device+human).  Used by the policy
+	// engine to enforce step-up requirements on sensitive operations.
+	AuthStrength AuthStrength
 
 	// IssuedAt is when the token was issued (UTC).
 	IssuedAt time.Time
@@ -121,8 +172,28 @@ func NewTokenService(revocation *RevocationList) (*TokenService, error) {
 // RequireToken middleware can verify the token is being used on the same
 // mTLS connection that authenticated it.
 //
+// Issue defaults the token's AuthStrength to AuthStrengthDevice: the caller
+// presented a valid mTLS client certificate but no additional human factor.
+// Use IssueWithStrength to issue a token that records additional factors
+// (e.g. WebAuthn).
+//
 // TTL is TokenTTL (15 minutes) from time of issuance.
 func (s *TokenService) Issue(id *identity.Identity) (string, *Token, error) {
+	return s.IssueWithStrength(id, AuthStrengthDevice)
+}
+
+// IssueWithStrength is the strength-aware variant of Issue.  It is used by
+// /auth/webauthn/auth/finish to issue a token that records that both the
+// device and human factors were verified.
+//
+// strength must be one of AuthStrengthDevice or AuthStrengthDeviceHuman.
+// The empty string is treated as AuthStrengthDevice so callers that did not
+// opt into the new claim do not silently produce zero-strength tokens.
+func (s *TokenService) IssueWithStrength(id *identity.Identity, strength AuthStrength) (string, *Token, error) {
+	if strength == "" {
+		strength = AuthStrengthDevice
+	}
+
 	jti, err := newJTI()
 	if err != nil {
 		return "", nil, fmt.Errorf("auth: generating token ID: %w", err)
@@ -139,6 +210,7 @@ func (s *TokenService) Issue(id *identity.Identity) (string, *Token, error) {
 		SPIFFE:    id.SPIFFEID,
 		CertFP:    id.CertFingerprint,
 		Scopes:    id.Scopes,
+		AuthStr:   strength,
 		IssuedAt:  now.Unix(),
 		ExpiresAt: exp.Unix(),
 	}
@@ -149,10 +221,11 @@ func (s *TokenService) Issue(id *identity.Identity) (string, *Token, error) {
 	}
 
 	tok := &Token{
-		JTI:       jti,
-		Identity:  *id,
-		IssuedAt:  now,
-		ExpiresAt: exp,
+		JTI:          jti,
+		Identity:     *id,
+		AuthStrength: strength,
+		IssuedAt:     now,
+		ExpiresAt:    exp,
 	}
 	return tokenStr, tok, nil
 }
@@ -302,8 +375,28 @@ func computeHMAC(key []byte, data string) []byte {
 // TTL and scopes.  Used for sub-agent delegation (FX-02).
 //
 // The new token is bound to the same identity as the parent, but with
-// a restricted set of scopes and a typically shorter TTL.
+// a restricted set of scopes and a typically shorter TTL.  The token's
+// AuthStrength defaults to AuthStrengthDevice — delegation cannot strengthen
+// a session.  Callers that have a parent token should use
+// IssueDelegatedWithStrength to propagate the parent's AuthStrength.
 func (s *TokenService) IssueDelegated(id *identity.Identity, ttl time.Duration, scopes []string) (string, *Token, error) {
+	return s.IssueDelegatedWithStrength(id, ttl, scopes, AuthStrengthDevice)
+}
+
+// IssueDelegatedWithStrength is the strength-aware variant of IssueDelegated.
+//
+// SECURITY: delegation can never strengthen a session.  Callers must pass the
+// parent token's AuthStrength as-is; passing a stronger value than the
+// parent's would violate the attenuation guarantee.  This function does not
+// validate that against a parent — that responsibility lives in the handler
+// that wires the parent token through.  The empty string is normalised to
+// AuthStrengthDevice for forward compatibility with older parent tokens that
+// pre-date the claim.
+func (s *TokenService) IssueDelegatedWithStrength(id *identity.Identity, ttl time.Duration, scopes []string, strength AuthStrength) (string, *Token, error) {
+	if strength == "" {
+		strength = AuthStrengthDevice
+	}
+
 	jti, err := newJTI()
 	if err != nil {
 		return "", nil, fmt.Errorf("auth: generating token ID: %w", err)
@@ -320,6 +413,7 @@ func (s *TokenService) IssueDelegated(id *identity.Identity, ttl time.Duration, 
 		SPIFFE:    id.SPIFFEID,
 		CertFP:    id.CertFingerprint,
 		Scopes:    scopes,
+		AuthStr:   strength,
 		IssuedAt:  now.Unix(),
 		ExpiresAt: exp.Unix(),
 	}
@@ -333,10 +427,11 @@ func (s *TokenService) IssueDelegated(id *identity.Identity, ttl time.Duration, 
 	idWithScopes.Scopes = scopes
 
 	tok := &Token{
-		JTI:       jti,
-		Identity:  idWithScopes,
-		IssuedAt:  now,
-		ExpiresAt: exp,
+		JTI:          jti,
+		Identity:     idWithScopes,
+		AuthStrength: strength,
+		IssuedAt:     now,
+		ExpiresAt:    exp,
 	}
 	return tokenStr, tok, nil
 }
@@ -367,8 +462,9 @@ func claimsToToken(claims *tokenClaims) *Token {
 			CertFingerprint: claims.CertFP,
 			Scopes:          claims.Scopes,
 		},
-		IssuedAt:  time.Unix(claims.IssuedAt, 0).UTC(),
-		ExpiresAt: time.Unix(claims.ExpiresAt, 0).UTC(),
+		AuthStrength: claims.AuthStr,
+		IssuedAt:     time.Unix(claims.IssuedAt, 0).UTC(),
+		ExpiresAt:    time.Unix(claims.ExpiresAt, 0).UTC(),
 	}
 }
 

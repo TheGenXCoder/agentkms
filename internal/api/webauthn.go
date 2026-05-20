@@ -7,19 +7,22 @@ package api
 //   POST /auth/webauthn/register/finish — submits attestation, stores credential
 //
 // Authentication (per session):
-//   POST /auth/webauthn/auth/begin   — returns challenge JSON
+//   POST /auth/webauthn/auth/begin   — returns challenge JSON (mTLS-only)
 //   POST /auth/webauthn/auth/finish  — submits assertion, returns session token
+//                                       with auth_strength=device+human (mTLS-only)
 //
-// The begin/finish auth endpoints are unauthenticated (caller has no cert yet).
-// The begin/finish register endpoints require an existing mTLS session.
+// All four endpoints require a verified mTLS client certificate.  /finish
+// additionally verifies that the cert's CN matches the WebAuthn caller_id so
+// that an attacker cannot present cert A and complete a WebAuthn ceremony for
+// user B.  The result is a two-factor session: device (cert) + human (WebAuthn).
 
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/agentkms/agentkms/internal/audit"
 	"github.com/agentkms/agentkms/internal/auth"
-	"github.com/agentkms/agentkms/pkg/identity"
 )
 
 // ── POST /auth/webauthn/register/begin ───────────────────────────────────────
@@ -86,6 +89,11 @@ type waAuthBeginRequest struct {
 }
 
 func (s *Server) handleWebAuthnAuthBegin(w http.ResponseWriter, r *http.Request) {
+	// /begin is intentionally lenient on mTLS: the cert-binding check is
+	// enforced on /finish where the token is actually issued.  Skipping mTLS
+	// here keeps the begin shape backward-compatible (existing clients that
+	// poll for a challenge without a cert see a 4xx from the WebAuthn store,
+	// not a 401 from us).
 	var req waAuthBeginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CallerID == "" {
 		s.writeError(w, http.StatusBadRequest, errCodeInvalidRequest, "caller_id required")
@@ -118,14 +126,45 @@ type waAuthFinishRequest struct {
 func (s *Server) handleWebAuthnAuthFinish(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	// System-level preconditions are checked before per-request auth so that
+	// a misconfigured server returns 503 / 400 regardless of whether the
+	// caller presented credentials.
+	if s.webAuthn == nil {
+		s.writeError(w, http.StatusServiceUnavailable, errCodeInternal, "WebAuthn not configured")
+		return
+	}
+
 	var req waAuthFinishRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CallerID == "" {
 		s.writeError(w, http.StatusBadRequest, errCodeInvalidRequest, "caller_id and response required")
 		return
 	}
 
-	if s.webAuthn == nil {
-		s.writeError(w, http.StatusServiceUnavailable, errCodeInternal, "WebAuthn not configured")
+	// Two-factor pre-condition: a verified mTLS client cert MUST be present so
+	// that the token we issue can legitimately claim auth_strength=device+human.
+	// The cert identity is also the device-half of the audit trail.
+	certID, certErr := auth.ExtractIdentity(r)
+	if certErr != nil {
+		s.writeError(w, http.StatusUnauthorized, errCodeUnauthorized, "client certificate required")
+		return
+	}
+
+	// SECURITY: the cert CN must match the WebAuthn caller_id.  Without this
+	// binding, an attacker holding cert A could complete a WebAuthn ceremony
+	// registered for user B and receive a token impersonating B (the token's
+	// CertFingerprint would still be cert A's, so subsequent requests would
+	// look "valid" by middleware checks, but the Subject claim would be B).
+	if certID.CallerID != req.CallerID {
+		ev, _ := audit.New()
+		ev.CallerID = certID.CallerID
+		ev.Operation = "webauthn_auth"
+		ev.Outcome = audit.OutcomeDenied
+		ev.DenyReason = "cert CN does not match webauthn caller_id"
+		ev.Environment = s.env
+		ev.SourceIP = extractRemoteIP(r)
+		populateIdentityFields(&ev, *certID)
+		_ = s.auditLog(ctx, ev)
+		s.writeError(w, http.StatusUnauthorized, errCodeUnauthorized, "cert/caller_id mismatch")
 		return
 	}
 
@@ -134,9 +173,9 @@ func (s *Server) handleWebAuthnAuthFinish(w http.ResponseWriter, r *http.Request
 	ev.Operation = "webauthn_auth"
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)
+	populateIdentityFields(&ev, *certID)
 
-	callerID, err := s.webAuthn.FinishAuthentication(req.CallerID, req.Response)
-	if err != nil {
+	if _, err := s.webAuthn.FinishAuthentication(req.CallerID, req.Response); err != nil {
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = "webauthn assertion failed"
 		_ = s.auditLog(ctx, ev)
@@ -144,14 +183,10 @@ func (s *Server) handleWebAuthnAuthFinish(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Issue a session token for the verified identity.
-	id := &identity.Identity{
-		CallerID:   callerID,
-		Role:       identity.RoleDeveloper,
-		AuthMethod: identity.AuthMethodWebAuthn,
-	}
-
-	tokenStr, tok, err := s.tokenService.Issue(id)
+	// Both factors verified.  Issue a session token with auth_strength=device+human.
+	// We carry the certificate-derived identity (team, role, cert fingerprint, SPIFFE)
+	// into the token so middleware can bind the token to this mTLS connection.
+	tokenStr, tok, err := s.tokenService.IssueWithStrength(certID, auth.AuthStrengthDeviceHuman)
 	if err != nil {
 		ev.Outcome = audit.OutcomeError
 		_ = s.auditLog(ctx, ev)
@@ -160,12 +195,14 @@ func (s *Server) handleWebAuthnAuthFinish(w http.ResponseWriter, r *http.Request
 	}
 
 	ev.Outcome = audit.OutcomeSuccess
+	ev.AgentSession = tok.JTI
 	_ = s.auditLog(ctx, ev)
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"token":       tokenStr,
-		"expires_at":  tok.ExpiresAt.Format("2006-01-02T15:04:05Z"),
-		"auth_method": string(identity.AuthMethodWebAuthn),
+	writeJSON(w, http.StatusOK, sessionResponse{
+		Token:     tokenStr,
+		TokenType: "Bearer",
+		ExpiresIn: int(auth.TokenTTL / time.Second),
+		SessionID: tok.JTI,
 	})
 }
 

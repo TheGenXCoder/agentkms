@@ -148,13 +148,6 @@ func (h *AuthHandler) HandleCertIssue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		authorisedUserID = record.UserID
-
-		// Mark the token used before signing — prevents double-redemption.
-		if err := h.bootstrapStore.MarkUsed(r.Context(), req.BootstrapToken); err != nil {
-			// Non-fatal: log the failure but continue — the token validated correctly.
-			// A retry by the client will see used=true and be rejected.
-			slog.Warn("failed to mark bootstrap token used", "user_id", record.UserID, "error", err)
-		}
 	} else {
 		// Modes 2 & 3: session token.
 		bearerToken := auth.ExtractBearerToken(r)
@@ -192,6 +185,20 @@ func (h *AuthHandler) HandleCertIssue(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("SPIFFE user %q does not match session user %q", spiffeUserID, authorisedUserID))
 		writeJSONError(w, http.StatusForbidden, "SPIFFE URI user does not match session identity")
 		return
+	}
+
+	// ── Burn bootstrap token (Mode 1 only) ───────────────────────────────────
+	// Done here — after the cross-user guard — so the token is only consumed
+	// when the request will actually proceed to signing. If the cross-user
+	// check above rejected the caller, the token is still valid for a retry
+	// with the correct SPIFFE URI. We consume on commit-intent (not on
+	// commit-success), so the token is still burned even if SignCert fails.
+	if req.BootstrapToken != "" {
+		if err := h.bootstrapStore.MarkUsed(r.Context(), req.BootstrapToken); err != nil {
+			// Non-fatal: log the failure but continue — the token validated correctly.
+			// A retry by the client will see used=true and be rejected.
+			slog.Warn("failed to mark bootstrap token used", "user_id", authorisedUserID, "error", err)
+		}
 	}
 
 	// ── Sign the CSR via Vault PKI ────────────────────────────────────────────

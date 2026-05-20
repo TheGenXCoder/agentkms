@@ -719,6 +719,70 @@ func TestCertIssue_NoSpiffeSAN(t *testing.T) {
 	}
 }
 
+// TestCertIssue_CrossUserAttempt_DoesNotBurnToken verifies that a bootstrap
+// token is NOT consumed when the cross-user guard rejects the request, so the
+// legitimate user can retry with the same token.
+func TestCertIssue_CrossUserAttempt_DoesNotBurnToken(t *testing.T) {
+	mockPKI := newMockPKIServer(t)
+	fakeCert := "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n"
+	mockPKI.signCertPEM = fakeCert
+	mockPKI.signSerial = "aa:bb:cc"
+	mockPKI.signExpiry = time.Now().Add(365 * 24 * time.Hour).Unix()
+
+	_, handler, bs := newCertEnrollStack(t, mockPKI)
+
+	bs.Add("tok-alice", auth.BootstrapRecord{
+		UserID:            "alice",
+		DeviceNamePattern: "alice-laptop",
+		ExpiresAt:         time.Now().Add(time.Hour),
+	})
+
+	// Bob presents alice's token but his own SPIFFE URI — cross-user attempt.
+	bobSpiffe := "spiffe://catalyst9.local/tenant/catalyst9/user/bob/device/alice-laptop"
+	bobCSR := makeCSR(t, bobSpiffe)
+
+	w1 := httptest.NewRecorder()
+	r1 := makeIssueReq(t, map[string]any{
+		"csr":             bobCSR,
+		"device_name":     "alice-laptop",
+		"bootstrap_token": "tok-alice",
+	}, "")
+	handler.HandleCertIssue(w1, r1)
+
+	// Assertion 1: 403 from the cross-user guard.
+	if w1.Code != http.StatusForbidden {
+		t.Fatalf("cross-user attempt: status = %d, want 403; body = %s", w1.Code, w1.Body.String())
+	}
+
+	// Assertion 2: token is still unused — re-fetch from the mock store.
+	rec, err := bs.Fetch(context.Background(), "tok-alice")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("record disappeared from store")
+	}
+	if rec.Used {
+		t.Error("bootstrap token was burned on a cross-user rejection; want still unused")
+	}
+
+	// Assertion 3: the legitimate user (alice) can still redeem the same token.
+	aliceSpiffe := "spiffe://catalyst9.local/tenant/catalyst9/user/alice/device/alice-laptop"
+	aliceCSR := makeCSR(t, aliceSpiffe)
+
+	w2 := httptest.NewRecorder()
+	r2 := makeIssueReq(t, map[string]any{
+		"csr":             aliceCSR,
+		"device_name":     "alice-laptop",
+		"bootstrap_token": "tok-alice",
+	}, "")
+	handler.HandleCertIssue(w2, r2)
+
+	if w2.Code != http.StatusOK {
+		t.Fatalf("alice retry: status = %d, want 200; body = %s", w2.Code, w2.Body.String())
+	}
+}
+
 // ── POST /auth/certificate/revoke tests ──────────────────────────────────────
 
 // revokeReq builds a POST /auth/certificate/revoke request.

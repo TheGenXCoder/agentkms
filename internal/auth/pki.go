@@ -317,6 +317,202 @@ func (p *PKIClient) FetchCRL(ctx context.Context) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024)) // 10MB limit for CRL
 }
 
+// pkiSignRequest is the request body for /pki/sign/{role}.
+type pkiSignRequest struct {
+	CSR    string `json:"csr"`
+	Format string `json:"format"` // "pem"
+}
+
+// pkiSignResponse is the Vault API response envelope for PKI sign.
+type pkiSignResponse struct {
+	Data struct {
+		Certificate string   `json:"certificate"`
+		IssuingCA   string   `json:"issuing_ca"`
+		CAChain     []string `json:"ca_chain"`
+		SerialNumber string  `json:"serial_number"`
+		Expiration  int64    `json:"expiration"`
+	} `json:"data"`
+	Errors []string `json:"errors"`
+}
+
+// SignCert signs a PKCS#10 CSR using the given role on the PKI engine.
+//
+// role is the Vault PKI role name (e.g. "agentkms-device").
+// csrPEM is the PEM-encoded PKCS#10 CSR from the enrolling device.
+//
+// The returned CertBundle never contains a PrivateKeyPEM — the private key
+// is generated client-side; the server only signs the public key in the CSR.
+func (p *PKIClient) SignCert(ctx context.Context, role, csrPEM string) (*CertBundle, error) {
+	if role == "" {
+		return nil, fmt.Errorf("auth: PKIClient.SignCert: role is required")
+	}
+	if csrPEM == "" {
+		return nil, fmt.Errorf("auth: PKIClient.SignCert: csrPEM is required")
+	}
+
+	reqBody := pkiSignRequest{
+		CSR:    csrPEM,
+		Format: "pem",
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("auth: PKIClient.SignCert: marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/v1/%s/sign/%s",
+		strings.TrimRight(p.cfg.Address, "/"),
+		strings.Trim(p.cfg.PKIMount, "/"),
+		role,
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("auth: PKIClient.SignCert: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Vault-Token", p.cfg.BootstrapToken)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("auth: PKIClient.SignCert: HTTP: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	if err != nil {
+		return nil, fmt.Errorf("auth: PKIClient.SignCert: read response: %w", err)
+	}
+
+	var result pkiSignResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("auth: PKIClient.SignCert: parse response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		msg := strings.Join(result.Errors, "; ")
+		if msg == "" {
+			msg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("%w: %s", ErrPKIIssueFailed, msg)
+	}
+
+	if result.Data.Certificate == "" {
+		return nil, fmt.Errorf("%w: response missing certificate", ErrPKIIssueFailed)
+	}
+
+	expiresAt := time.Unix(result.Data.Expiration, 0).UTC()
+
+	// Build CA chain — if Vault returned a ca_chain list, use it;
+	// otherwise fall back to the single issuing_ca field.
+	caChain := result.Data.CAChain
+	if len(caChain) == 0 && result.Data.IssuingCA != "" {
+		caChain = []string{result.Data.IssuingCA}
+	}
+
+	return &CertBundle{
+		CertificatePEM: result.Data.Certificate,
+		// PrivateKeyPEM intentionally left empty — CSR-based issuance;
+		// the private key never leaves the enrolling device.
+		CAPEM:        result.Data.IssuingCA,
+		SerialNumber: result.Data.SerialNumber,
+		ExpiresAt:    expiresAt,
+	}, nil
+}
+
+// ListCerts returns all certificate serial numbers from the PKI engine.
+// The list may be large; callers should filter by SPIFFE SAN after fetching
+// individual cert details.
+func (p *PKIClient) ListCerts(ctx context.Context) ([]string, error) {
+	url := fmt.Sprintf("%s/v1/%s/certs?list=true",
+		strings.TrimRight(p.cfg.Address, "/"),
+		strings.Trim(p.cfg.PKIMount, "/"),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, "LIST", url, nil)
+	if err != nil {
+		// Fall back to GET with list=true parameter (some Vault versions).
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("auth: PKIClient.ListCerts: build request: %w", err)
+		}
+	}
+	req.Header.Set("X-Vault-Token", p.cfg.BootstrapToken)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("auth: PKIClient.ListCerts: HTTP: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1*1024*1024))
+	if err != nil {
+		return nil, fmt.Errorf("auth: PKIClient.ListCerts: read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		// No certs yet — empty list is not an error.
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("auth: PKIClient.ListCerts: HTTP %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data struct {
+			Keys []string `json:"keys"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("auth: PKIClient.ListCerts: parse response: %w", err)
+	}
+	return result.Data.Keys, nil
+}
+
+// FetchCert retrieves a single certificate by serial number from the PKI engine.
+func (p *PKIClient) FetchCert(ctx context.Context, serial string) (string, error) {
+	url := fmt.Sprintf("%s/v1/%s/cert/%s",
+		strings.TrimRight(p.cfg.Address, "/"),
+		strings.Trim(p.cfg.PKIMount, "/"),
+		serial,
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("auth: PKIClient.FetchCert: build request: %w", err)
+	}
+	req.Header.Set("X-Vault-Token", p.cfg.BootstrapToken)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("auth: PKIClient.FetchCert: HTTP: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	if err != nil {
+		return "", fmt.Errorf("auth: PKIClient.FetchCert: read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("auth: PKIClient.FetchCert: HTTP %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data struct {
+			Certificate string `json:"certificate"`
+			RevocationTime int64 `json:"revocation_time"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("auth: PKIClient.FetchCert: parse response: %w", err)
+	}
+	return result.Data.Certificate, nil
+}
+
 // FetchCACert retrieves the current CA certificate from the PKI engine.
 // Used to bootstrap trust when the client does not yet have the CA cert.
 func (p *PKIClient) FetchCACert(ctx context.Context) (string, error) {

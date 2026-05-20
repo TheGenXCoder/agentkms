@@ -187,6 +187,13 @@ func identityFromCert(cert *x509.Certificate) (*identity.Identity, error) {
 	}, nil
 }
 
+// ParseTenantPrincipalExported is the exported wrapper around parseTenantPrincipal
+// for use by packages that need to extract (userID, deviceID, tenant) from a
+// SPIFFE URI string without going through a full certificate parse.
+func ParseTenantPrincipalExported(spiffeID string) (userID, deviceID, tenant string) {
+	return parseTenantPrincipal(spiffeID)
+}
+
 // parseTenantPrincipal walks the path segments of a SPIFFE URI and extracts
 // (userID, deviceID, tenant) for the two shapes that the zero-trust identity
 // model recognises:

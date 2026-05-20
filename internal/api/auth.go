@@ -25,12 +25,13 @@ import (
 // /auth/refresh, /auth/revoke, and /auth/delegate are guarded by
 // auth.RequireToken middleware.
 type AuthHandler struct {
-	tokens      *auth.TokenService
-	pki         *auth.PKIClient             // optional; for cert revocation
-	certChecker *auth.CertRevocationChecker // optional; for cert revocation
-	auditor     audit.Auditor
-	policy      policy.EngineI // for scope validation (FX-02)
-	environment string         // "dev", "staging", "production"
+	tokens         *auth.TokenService
+	pki            *auth.PKIClient             // optional; for cert revocation + issuance
+	certChecker    *auth.CertRevocationChecker // optional; for cert revocation
+	bootstrapStore auth.BootstrapStore         // optional; for operator bootstrap tokens
+	auditor        audit.Auditor
+	policy         policy.EngineI // for scope validation (FX-02)
+	environment    string         // "dev", "staging", "production"
 }
 
 // NewAuthHandler constructs an AuthHandler.
@@ -48,6 +49,11 @@ func NewAuthHandler(tokens *auth.TokenService, auditor audit.Auditor, eng policy
 func (h *AuthHandler) SetPKI(pki *auth.PKIClient, checker *auth.CertRevocationChecker) {
 	h.pki = pki
 	h.certChecker = checker
+}
+
+// SetBootstrapStore wires in the bootstrap token store for operator-issued enrollment tokens.
+func (h *AuthHandler) SetBootstrapStore(store auth.BootstrapStore) {
+	h.bootstrapStore = store
 }
 
 // ── POST /auth/session ────────────────────────────────────────────────────────

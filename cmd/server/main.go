@@ -276,6 +276,11 @@ func main() {
 		certChecker = auth.NewCertRevocationChecker()
 		authHandler.SetPKI(pkiClient, certChecker)
 
+		// Phase 1b-A: wire bootstrap token store for operator-issued enrollment tokens.
+		bootstrapStore := auth.NewVaultBootstrapStore(*vaultAddr, vaultToken, "kv")
+		authHandler.SetBootstrapStore(bootstrapStore)
+		slog.Info("bootstrap token store ready")
+
 		// Periodic CRL update (A-13).
 		go func() {
 			update := func() {
@@ -382,8 +387,12 @@ func main() {
 	mux.HandleFunc("POST /auth/refresh", authHandler.Refresh)
 	mux.HandleFunc("POST /auth/revoke", authHandler.Revoke)
 	mux.HandleFunc("POST /auth/delegate", auth.RequireToken(tokenSvc)(http.HandlerFunc(authHandler.Delegate)).ServeHTTP)
-	mux.HandleFunc("POST /auth/certificate/revoke", authHandler.RevokeCertificate)
+	// /auth/certificate/revoke: use the owner-check variant (Phase 1b-A).
+	mux.HandleFunc("POST /auth/certificate/revoke", authHandler.RevokeCertificateWithOwnerCheck)
 	mux.HandleFunc("GET /auth/certificate/crl", authHandler.CRL)
+	// Phase 1b-A: device certificate enrollment.
+	mux.HandleFunc("POST /auth/cert/issue", authHandler.HandleCertIssue)
+	mux.HandleFunc("GET /auth/cert/list", authHandler.HandleCertList)
 	mux.HandleFunc("/healthz", handleHealthz)
 	mux.HandleFunc("/readyz", handleReadyz)
 

@@ -18,7 +18,6 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/agentkms/agentkms/internal/audit"
@@ -271,7 +270,7 @@ func (h *AuthHandler) HandleCertList(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		cert, spiffeURI, expiresAt, isRevoked, err := parseCertPEM(certPEM)
+		cert, spiffeURI, expiresAt, err := parseCertPEM(certPEM)
 		if err != nil {
 			continue
 		}
@@ -279,6 +278,16 @@ func (h *AuthHandler) HandleCertList(w http.ResponseWriter, r *http.Request) {
 		certUserID, certDeviceID, _ := auth.ParseTenantPrincipalExported(spiffeURI)
 		if certUserID != userID {
 			continue
+		}
+
+		// Source of truth for revoked status is the in-memory CertRevocationChecker,
+		// which mirrors the Vault PKI CRL. Cross-pod propagation lags by the
+		// CRL-refresh interval (per cmd/server/main.go's 15-min ticker), so a
+		// list called immediately after revoke on a different pod may briefly
+		// show revoked=false until the next refresh.
+		isRevoked := false
+		if h.certChecker != nil && cert.SerialNumber != nil {
+			isRevoked = h.certChecker.IsRevoked(cert.SerialNumber)
 		}
 
 		entries = append(entries, certListEntry{
@@ -342,19 +351,17 @@ func validateCSR(csrPEM string) (spiffeURI string, err error) {
 	return "", fmt.Errorf("CSR must include a SPIFFE URI subjectAltName")
 }
 
-// parseCertPEM parses a PEM-encoded certificate and extracts relevant fields.
-// isRevoked is always false from PEM alone — the caller must check the CRL
-// separately if needed.  Vault's cert/<serial> endpoint may include a
-// revocation_time field; for now we report false and let the cert list handler
-// add revocation status from the in-memory checker if available.
-func parseCertPEM(certPEM string) (cert *x509.Certificate, spiffeURI string, expiresAt time.Time, isRevoked bool, err error) {
+// parseCertPEM parses a PEM-encoded certificate and extracts the SPIFFE URI
+// SAN (if any) and expiry. Revocation status is determined by the caller via
+// the CertRevocationChecker — parseCertPEM stays pure (no global state).
+func parseCertPEM(certPEM string) (cert *x509.Certificate, spiffeURI string, expiresAt time.Time, err error) {
 	block, _ := pem.Decode([]byte(certPEM))
 	if block == nil {
-		return nil, "", time.Time{}, false, fmt.Errorf("no PEM block")
+		return nil, "", time.Time{}, fmt.Errorf("no PEM block")
 	}
 	cert, err = x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, "", time.Time{}, false, err
+		return nil, "", time.Time{}, err
 	}
 	for _, uri := range cert.URIs {
 		if uri != nil && uri.Scheme == "spiffe" {
@@ -362,7 +369,7 @@ func parseCertPEM(certPEM string) (cert *x509.Certificate, spiffeURI string, exp
 			break
 		}
 	}
-	return cert, spiffeURI, cert.NotAfter, false, nil
+	return cert, spiffeURI, cert.NotAfter, nil
 }
 
 // matchDevicePattern is currently an exact-match comparison.
@@ -484,7 +491,7 @@ func (h *AuthHandler) RevokeCertificateWithOwnerCheck(w http.ResponseWriter, r *
 			if fetchErr != nil || cpem == "" {
 				continue
 			}
-			_, spURI, _, _, parseErr := parseCertPEM(cpem)
+			_, spURI, _, parseErr := parseCertPEM(cpem)
 			if parseErr != nil {
 				continue
 			}
@@ -513,7 +520,7 @@ func (h *AuthHandler) RevokeCertificateWithOwnerCheck(w http.ResponseWriter, r *
 		return
 	}
 
-	_, spiffeURI, _, _, parseErr := parseCertPEM(certPEM)
+	_, spiffeURI, _, parseErr := parseCertPEM(certPEM)
 	if parseErr != nil {
 		h.logAuditError(r.Context(), r, sessionUserID, tok.Identity.TeamID,
 			audit.OperationRevokeCert, "cert parse failed")
@@ -557,17 +564,3 @@ func (h *AuthHandler) RevokeCertificateWithOwnerCheck(w http.ResponseWriter, r *
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ── ExtractBearerToken re-export helper ──────────────────────────────────────
-
-// extractBearerFromHeader pulls the raw token string from the Authorization
-// header.  Returns "" if absent or malformed.  This is a package-local alias
-// to auth.ExtractBearerToken for use inside this file.
-func extractBearerFromHeader(r *http.Request) string {
-	return auth.ExtractBearerToken(r)
-}
-
-// stripColons removes colon separators from a hex serial number so it can be
-// compared to values from x509.Certificate.SerialNumber.Text(16).
-func stripColons(s string) string {
-	return strings.ReplaceAll(s, ":", "")
-}

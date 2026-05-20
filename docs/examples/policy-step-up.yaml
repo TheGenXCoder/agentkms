@@ -1,0 +1,104 @@
+# policy-step-up.yaml — Step-up authentication example policy
+#
+# PURPOSE
+# -------
+# Demonstrates how to use the `match.auth_strength` field to enforce step-up
+# authentication for sensitive operations.  The core pattern:
+#
+#   * Most registry operations (secret_write, secret_delete, metadata_*, history,
+#     and the key-management operations) are permitted with the baseline cert-only
+#     factor (mTLS client certificate only).
+#
+#   * secret_purge — which hard-deletes a secret and ALL its version history and
+#     is irreversible — requires the stronger cert+human factor (mTLS cert AND
+#     a WebAuthn assertion).  A caller whose token was issued after completing
+#     the /auth/webauthn/auth/finish step-up flow will carry auth_strength
+#     "cert+human" and will match the allow rule below.  A caller with only
+#     "cert-only" will not match that rule and will fall through to deny-by-default.
+#
+# HOW TO LOAD
+# -----------
+#   agentkms --policy=docs/examples/policy-step-up.yaml
+#
+# The server also accepts a --policy flag pointing to any file that satisfies
+# the version-1 schema.  To apply this policy on a running cluster see the
+# "Live cluster ConfigMap patch" section in docs/SECURITY.md.
+#
+# RULE ORDER
+# ----------
+# Rules are evaluated top-to-bottom; the first match wins.  The allow rules
+# here do not overlap in their operation sets, so order does not affect the
+# outcome — but keeping purge last makes the intent obvious.
+#
+# AUTH STRENGTH VALUES
+# --------------------
+#   "cert-only"  — mTLS client certificate only (default for every session)
+#   "cert+human" — mTLS cert AND a WebAuthn assertion (step-up required)
+#
+version: "1"
+
+rules:
+  # ── Rule 1: key-management and crypto ops (cert-only) ────────────────────────
+  #
+  # All callers with a valid cert may use signing, encryption, key listing,
+  # key rotation, and credential vending.  These operations are already gated
+  # by the mTLS handshake and the policy engine; no additional human factor is
+  # required for them in this policy.
+  - id: allow-all-crypto-ops
+    description: >
+      Allow all callers to perform key-management and cryptographic operations
+      with cert-only strength.
+    match:
+      identity:
+        caller_id_pattern: "*"
+      operations:
+        - sign
+        - encrypt
+        - decrypt
+        - list_keys
+        - rotate_key
+        - credential_vend
+      auth_strength: "cert-only"
+    effect: allow
+
+  # ── Rule 2: registry write/read ops (cert-only) ───────────────────────────────
+  #
+  # Registry mutation and read operations (excluding purge) are also permitted
+  # with cert-only.  secret_purge is intentionally absent from this list so
+  # that a cert-only token falls through to deny-by-default for that operation.
+  - id: allow-registry-ops-cert-only
+    description: >
+      Allow all callers to use registry write, delete, metadata, and history
+      operations with cert-only strength.  Purge is excluded — see allow-secret-purge-step-up.
+    match:
+      identity:
+        caller_id_pattern: "*"
+      operations:
+        - secret_write
+        - secret_delete
+        - metadata_write
+        - metadata_list
+        - secret_history
+      auth_strength: "cert-only"
+    effect: allow
+
+  # ── Rule 3: secret_purge requires cert+human (step-up) ───────────────────────
+  #
+  # Hard-delete is irreversible: it removes all versions of a secret from the
+  # registry permanently.  Requiring a human WebAuthn factor at session issuance
+  # makes accidental or credential-stolen purge much harder.
+  #
+  # Callers must complete the WebAuthn step-up flow (POST /auth/webauthn/auth/finish)
+  # before their token will carry auth_strength "cert+human".  The 15-minute
+  # token TTL ensures this elevation is short-lived.
+  - id: allow-secret-purge-step-up
+    description: >
+      Allow secret_purge only when the caller's session token was issued with
+      cert+human (mTLS cert AND WebAuthn assertion).
+    match:
+      identity:
+        caller_id_pattern: "*"
+      operations:
+        - secret_purge
+      auth_strength: "cert+human"
+    effect: allow

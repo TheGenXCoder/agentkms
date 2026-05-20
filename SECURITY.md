@@ -99,10 +99,22 @@ Run:
 go test ./... -count=1 -cover
 ```
 
+## Step-up Authentication
+
+Some operations are sensitive enough that a single factor (mTLS client certificate) is insufficient.  AgentKMS supports a second factor — a WebAuthn assertion — that elevates a session token's `auth_strength` claim from `"cert-only"` to `"cert+human"`.
+
+**What `auth_strength` is.**  Every session token carries an `auth_strength` claim that records the factors verified at issuance.  `"cert-only"` is the baseline (cert validated by the server CA).  `"cert+human"` requires the caller to also complete a WebAuthn challenge via `POST /auth/webauthn/auth/finish` within the same session.
+
+**When to require `cert+human`.**  Gate any operation that is irreversible or that would cause significant data loss.  The canonical example is `secret_purge`: it hard-deletes a secret and all its versions from the registry permanently.  Requiring a human factor makes accidental or stolen-credential purge much harder.  Ordinary writes (`secret_write`, `secret_delete`, metadata operations) can remain at `cert-only` because they are reversible or leave an audit trail.
+
+**How to configure it.**  Add `auth_strength: "cert+human"` to the `match:` block of an allow rule.  A caller whose token does not carry that strength simply does not match the rule; if no weaker rule covers the operation the engine denies by default.  See [`docs/examples/policy-step-up.yaml`](examples/policy-step-up.yaml) for a complete three-rule example.
+
+**Token lifetime.**  The WebAuthn step-up produces a fresh 15-minute token.  After it expires the caller must re-authenticate; they cannot promote a `cert-only` token without a new WebAuthn round-trip.
+
 ## Disclosed Vulnerabilities
 
 None yet. This list will be updated if/when vulnerabilities are disclosed.
 
 ---
 
-**Last updated:** 2026-04-15 (v0.2.0 release)
+**Last updated:** 2026-05-20 (v0.3 — Phase 1 step-up auth)

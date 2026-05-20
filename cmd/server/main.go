@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -67,6 +68,7 @@ func main() {
 	env := flag.String("env", envOr("AGENTKMS_ENV", defaultEnvironment), "Deployment environment")
 	tlsCert := flag.String("tls-cert", envOr("AGENTKMS_TLS_CERT", ""), "Server TLS certificate path (required in production)")
 	tlsKey := flag.String("tls-key", envOr("AGENTKMS_TLS_KEY", ""), "Server TLS key path (required in production)")
+	tlsClientCA := flag.String("tls-client-ca", envOr("AGENTKMS_TLS_CLIENT_CA", ""), "CA bundle for verifying client certs (enables in-process mTLS when set; otherwise mTLS is expected to be terminated by an ingress proxy)")
 	vaultCert := flag.String("vault-tls-cert", envOr("AGENTKMS_VAULT_TLS_CERT", ""), "Client TLS cert for Vault/OpenBao")
 	vaultKey := flag.String("vault-tls-key", envOr("AGENTKMS_VAULT_TLS_KEY", ""), "Client TLS key for Vault/OpenBao")
 	vaultCA := flag.String("vault-tls-ca", envOr("AGENTKMS_VAULT_TLS_CA", ""), "CA certificate for Vault/OpenBao")
@@ -404,6 +406,35 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 		// TLS is configured by Vault Agent / cert-manager in production.
 		// For T1 POC: plain HTTP inside the cluster (mTLS at ingress layer).
+	}
+
+	// When AGENTKMS_TLS_CLIENT_CA is set, terminate mTLS at this server (verify
+	// client certs against the bundle). When unset, the deployment is expected
+	// to front this server with an ingress proxy that handles mTLS.
+	//
+	// VerifyClientCertIfGiven (not RequireAndVerifyClientCert) so unauthenticated
+	// enrollment endpoints (e.g. POST /auth/cert/issue with a bootstrap_token)
+	// can still complete the TLS handshake from a fresh device that doesn't
+	// yet have a client cert. Authenticated handlers explicitly check
+	// r.TLS.PeerCertificates / r.TLS.VerifiedChains, so missing-cert
+	// connections still get rejected at the application layer for routes that
+	// need mTLS.
+	if *tlsClientCA != "" {
+		caPEM, readErr := os.ReadFile(*tlsClientCA)
+		if readErr != nil {
+			slog.Error("failed to read client CA", "path", *tlsClientCA, "error", readErr)
+			os.Exit(1)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			slog.Error("client CA bundle contains no valid PEM blocks", "path", *tlsClientCA)
+			os.Exit(1)
+		}
+		httpServer.TLSConfig = &tls.Config{
+			ClientAuth: tls.VerifyClientCertIfGiven,
+			ClientCAs:  pool,
+			MinVersion: tls.VersionTLS12,
+		}
 	}
 
 	// ── Listener ───────────────────────────────────────────────────────────────

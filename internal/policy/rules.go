@@ -229,6 +229,20 @@ type Match struct {
 	// being operated on must appear exactly in this list.  KeyPrefix is
 	// ignored when KeyIDs is non-empty.
 	KeyIDs []string `yaml:"key_ids,omitempty" json:"key_ids,omitempty"`
+
+	// AuthStrength is the minimum auth strength a session token must carry
+	// for this rule to match.  Valid values are "device" (single-factor:
+	// mTLS cert) and "device+human" (two-factor: cert + WebAuthn).  Empty
+	// means "no auth-strength constraint" — the rule matches any session.
+	//
+	// The match is a partial order: a rule that requires "device" matches
+	// tokens of strength "device" or "device+human"; a rule that requires
+	// "device+human" matches only tokens of strength "device+human".
+	//
+	// Use this on deny rules to fence off sensitive operations from
+	// device-only sessions (e.g. block credential vending unless the user
+	// has completed a WebAuthn step-up).
+	AuthStrength string `yaml:"auth_strength,omitempty" json:"auth_strength,omitempty"`
 }
 
 // IdentityMatch constrains which callers a rule applies to.
@@ -432,6 +446,16 @@ func (r *Rule) validate(idx int) []string {
 	if len(r.Match.KeyIDs) > 0 && r.Match.KeyPrefix != "" {
 		errs = append(errs, fmt.Sprintf("%s (%q): match.key_ids and match.key_prefix are mutually exclusive; specify only one",
 			prefix, r.ID))
+	}
+
+	if r.Match.AuthStrength != "" {
+		switch r.Match.AuthStrength {
+		case "device", "device+human":
+			// valid
+		default:
+			errs = append(errs, fmt.Sprintf("%s (%q): match.auth_strength must be \"device\" or \"device+human\", got %q",
+				prefix, r.ID, r.Match.AuthStrength))
+		}
 	}
 
 	if b := r.Bounds; b != nil {

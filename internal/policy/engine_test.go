@@ -17,6 +17,7 @@ package policy
 //   - Reload atomicity (new policy takes effect immediately)
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -1029,5 +1030,178 @@ func TestEvaluate_DenyReasonNeverContainsKeyMaterial(t *testing.T) {
 				t.Errorf("DenyReason contains suspicious pattern %q: %q", bad, reason)
 			}
 		}
+	}
+}
+
+// ── auth_strength matcher (Phase 1) ───────────────────────────────────────────
+
+// TestAuthStrength_RuleRequiresDeviceHuman_DeniesDeviceOnly is the focused
+// proof for Phase 1 of the zero-trust agent identity rollout:
+//
+//   - A rule that requires auth_strength="device+human" MUST NOT match a
+//     session token that carries auth_strength="device".
+//   - The same rule MUST match a session token carrying "device+human".
+//   - Rules with no auth_strength constraint match either token.
+//
+// The matcher is plumbed via context using policy.WithAuthStrength.  We
+// exercise the EngineI adapter directly so this test catches regressions in
+// both the engine and the context plumbing.
+func TestAuthStrength_RuleRequiresDeviceHuman_DeniesDeviceOnly(t *testing.T) {
+	t.Parallel()
+
+	// Single allow rule, scoped to the operation but gated on device+human.
+	policy := Policy{
+		Version: "1",
+		Rules: []Rule{{
+			ID: "device-human-required",
+			Match: Match{
+				Operations:   []Operation{OpCredentialVend},
+				AuthStrength: "device+human",
+			},
+			Effect: EffectAllow,
+		}},
+	}
+	engine := mustEngine(t, policy)
+	adapter := AsEngineI(engine)
+
+	id := devID("platform-team", "alice")
+
+	t.Run("device-only token is denied", func(t *testing.T) {
+		ctx := WithAuthStrength(context.Background(), "device")
+		dec, err := adapter.Evaluate(ctx, id, string(OpCredentialVend), "github/token")
+		if err != nil {
+			t.Fatalf("Evaluate: %v", err)
+		}
+		if dec.Allow {
+			t.Fatalf("device-only token unexpectedly allowed: dec=%+v", dec)
+		}
+		// The deny path is "no rule matched" because the auth_strength gap
+		// causes the rule to be skipped, falling through to deny-by-default.
+		if dec.DenyReason != denyByDefaultReason {
+			t.Errorf("DenyReason = %q, want %q", dec.DenyReason, denyByDefaultReason)
+		}
+		if dec.MatchedRuleID != "" {
+			t.Errorf("MatchedRuleID = %q, want empty (rule should be skipped)", dec.MatchedRuleID)
+		}
+	})
+
+	t.Run("device+human token is allowed", func(t *testing.T) {
+		ctx := WithAuthStrength(context.Background(), "device+human")
+		dec, err := adapter.Evaluate(ctx, id, string(OpCredentialVend), "github/token")
+		if err != nil {
+			t.Fatalf("Evaluate: %v", err)
+		}
+		if !dec.Allow {
+			t.Fatalf("device+human token unexpectedly denied: dec=%+v", dec)
+		}
+		if dec.MatchedRuleID != "device-human-required" {
+			t.Errorf("MatchedRuleID = %q, want %q", dec.MatchedRuleID, "device-human-required")
+		}
+	})
+
+	t.Run("missing strength is denied (treated as weaker than device+human)", func(t *testing.T) {
+		// No WithAuthStrength on the context — the engine sees an empty value
+		// and the rule's requirement is not satisfied.
+		dec, err := adapter.Evaluate(context.Background(), id, string(OpCredentialVend), "github/token")
+		if err != nil {
+			t.Fatalf("Evaluate: %v", err)
+		}
+		if dec.Allow {
+			t.Fatalf("missing-strength evaluation unexpectedly allowed: dec=%+v", dec)
+		}
+	})
+}
+
+// TestAuthStrength_RuleRequiresDevice_MatchesEither verifies the partial
+// order: a rule requiring "device" matches both "device" and "device+human"
+// tokens.  Without this property, raising a user's auth strength would
+// silently lock them out of operations that previously worked.
+func TestAuthStrength_RuleRequiresDevice_MatchesEither(t *testing.T) {
+	t.Parallel()
+
+	policy := Policy{
+		Version: "1",
+		Rules: []Rule{{
+			ID: "device-or-better",
+			Match: Match{
+				Operations:   []Operation{OpSign},
+				AuthStrength: "device",
+			},
+			Effect: EffectAllow,
+		}},
+	}
+	engine := mustEngine(t, policy)
+	adapter := AsEngineI(engine)
+	id := devID("platform-team", "alice")
+
+	for _, strength := range []string{"device", "device+human"} {
+		t.Run(strength, func(t *testing.T) {
+			ctx := WithAuthStrength(context.Background(), strength)
+			dec, err := adapter.Evaluate(ctx, id, string(OpSign), "key-1")
+			if err != nil {
+				t.Fatalf("Evaluate: %v", err)
+			}
+			if !dec.Allow {
+				t.Errorf("strength %q should satisfy a device-or-better rule, got dec=%+v", strength, dec)
+			}
+		})
+	}
+}
+
+// TestAuthStrength_NoConstraint_AlwaysMatches confirms that rules without a
+// match.auth_strength keep their pre-Phase-1 behaviour and match regardless
+// of what strength (if any) is on the context.  This is the backward-compat
+// guarantee for every existing policy file in the wild.
+func TestAuthStrength_NoConstraint_AlwaysMatches(t *testing.T) {
+	t.Parallel()
+
+	policy := Policy{
+		Version: "1",
+		Rules: []Rule{{
+			ID: "no-strength-constraint",
+			Match: Match{
+				Operations: []Operation{OpSign},
+			},
+			Effect: EffectAllow,
+		}},
+	}
+	engine := mustEngine(t, policy)
+	adapter := AsEngineI(engine)
+	id := devID("platform-team", "alice")
+
+	for _, strength := range []string{"", "device", "device+human", "bogus-unknown-strength"} {
+		t.Run("strength="+strength, func(t *testing.T) {
+			ctx := context.Background()
+			if strength != "" {
+				ctx = WithAuthStrength(ctx, strength)
+			}
+			dec, err := adapter.Evaluate(ctx, id, string(OpSign), "key-1")
+			if err != nil {
+				t.Fatalf("Evaluate: %v", err)
+			}
+			if !dec.Allow {
+				t.Errorf("rule with no auth_strength constraint should match; got dec=%+v", dec)
+			}
+		})
+	}
+}
+
+// TestAuthStrength_InvalidValueRejectedByValidate ensures policy authors
+// cannot smuggle an unknown auth_strength value into a policy at load time.
+// Without this, a typo like "device-and-human" would be silently treated as
+// "no caller can ever satisfy this rule".
+func TestAuthStrength_InvalidValueRejectedByValidate(t *testing.T) {
+	t.Parallel()
+
+	policy := Policy{
+		Version: "1",
+		Rules: []Rule{{
+			ID:     "bad-strength",
+			Match:  Match{AuthStrength: "device-and-human"}, // typo
+			Effect: EffectAllow,
+		}},
+	}
+	if err := policy.Validate(); err == nil {
+		t.Fatal("Validate accepted bogus auth_strength; want error")
 	}
 }

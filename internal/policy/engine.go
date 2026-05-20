@@ -82,7 +82,8 @@ func (a *engineIAdapter) Evaluate(ctx context.Context, id identity.Identity, ope
 	if err := ctx.Err(); err != nil {
 		return Decision{}, err
 	}
-	return a.e.Evaluate(id, Operation(operation), keyID), nil
+	strength := AuthStrengthFromContext(ctx)
+	return a.e.EvaluateAtWithStrength(id, Operation(operation), keyID, strength, time.Now().UTC()), nil
 }
 
 func (a *engineIAdapter) GetPolicy() Policy {
@@ -97,6 +98,58 @@ func (a *engineIAdapter) Reload(p Policy) error {
 // It is exported as a constant so tests can assert the exact string without
 // hardcoding it in multiple places.
 const denyByDefaultReason = "policy: no rule allows this operation (deny by default)"
+
+// ── Auth strength context plumbing ────────────────────────────────────────────
+//
+// The policy engine reads the caller's auth strength from the evaluation
+// context rather than from the Identity struct.  This keeps pkg/identity
+// untouched and avoids breaking the dozen-plus existing Evaluate callsites.
+// Handlers that have an authenticated *auth.Token attach its AuthStrength
+// to the context via WithAuthStrength before calling Evaluate; the adapter
+// then forwards that value into the matcher.
+
+type authStrengthCtxKey struct{}
+
+// WithAuthStrength returns a child context that carries strength.  Use this
+// in HTTP handlers immediately after the session token has been validated.
+// strength is an opaque string ("device" or "device+human" in Phase 1) — the
+// engine does not import the auth package to avoid a circular dependency.
+func WithAuthStrength(ctx context.Context, strength string) context.Context {
+	if strength == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, authStrengthCtxKey{}, strength)
+}
+
+// AuthStrengthFromContext returns the auth strength previously attached to
+// ctx, or the empty string if none was set.  Empty means "no strength
+// information available" — rules with a non-empty match.auth_strength will
+// not match such an evaluation.
+func AuthStrengthFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	v, _ := ctx.Value(authStrengthCtxKey{}).(string)
+	return v
+}
+
+// authStrengthRank assigns a numeric rank to each known auth strength value
+// so the matcher can express the partial order ("device+human" >= "device")
+// without string-comparing in the hot path.  Unknown values get rank 0 and
+// fail any non-empty rule requirement.
+var authStrengthRank = map[string]int{
+	"device":       1,
+	"device+human": 2,
+}
+
+// authStrengthAtLeast reports whether got meets or exceeds required.
+// An empty required means "no requirement" — always true.
+func authStrengthAtLeast(got, required string) bool {
+	if required == "" {
+		return true
+	}
+	return authStrengthRank[got] >= authStrengthRank[required]
+}
 
 // ── Decision ──────────────────────────────────────────────────────────────────
 
@@ -281,8 +334,13 @@ func (e *Engine) ResetRateLimits() {
 // It is equivalent to EvaluateAt(id, op, keyID, time.Now().UTC()).
 // All callers in production should use Evaluate; use EvaluateAt in tests to
 // inject a controlled timestamp for time-window and rate-limit testing.
+//
+// Evaluate has no auth-strength input and therefore never matches rules that
+// require a specific auth_strength.  Use Engine.EvaluateAtWithStrength (or
+// the EngineI.Evaluate adapter, which threads strength via context) to opt
+// into the auth_strength matcher.
 func (e *Engine) Evaluate(id identity.Identity, op Operation, keyID string) Decision {
-	return e.EvaluateAt(id, op, keyID, time.Now().UTC())
+	return e.EvaluateAtWithStrength(id, op, keyID, "", time.Now().UTC())
 }
 
 // EvaluateAt is the time-injectable variant of Evaluate.  now must be UTC.
@@ -295,6 +353,19 @@ func (e *Engine) Evaluate(id identity.Identity, op Operation, keyID string) Deci
 // deny-by-default: there is no code path that returns Allow=true when no
 // rule explicitly grants the operation.
 func (e *Engine) EvaluateAt(id identity.Identity, op Operation, keyID string, now time.Time) Decision {
+	return e.EvaluateAtWithStrength(id, op, keyID, "", now)
+}
+
+// EvaluateAtWithStrength is the strength-aware variant of EvaluateAt.
+//
+// strength is the auth_strength the caller's session token carries (typically
+// "device" or "device+human").  Rules whose match.auth_strength is non-empty
+// require strength to meet or exceed that value (see authStrengthAtLeast).
+// An empty strength matches only rules whose auth_strength is also empty.
+//
+// All other matching rules — identity, operation, key, time window, rate
+// limit, deny-by-default — behave exactly as in EvaluateAt.
+func (e *Engine) EvaluateAtWithStrength(id identity.Identity, op Operation, keyID string, strength string, now time.Time) Decision {
 	// ── Scope Enforcement (FX-02) ─────────────────────────────────────────────────
 	//
 	// If the identity has scopes, the operation MUST match at least one scope.
@@ -334,6 +405,14 @@ func (e *Engine) EvaluateAt(id identity.Identity, op Operation, keyID string, no
 			continue
 		}
 		if !matchesTimeWindow(rule.TimeWindow, now) {
+			continue
+		}
+		if !authStrengthAtLeast(strength, rule.Match.AuthStrength) {
+			// Rule asks for a stronger auth factor than the caller carries.
+			// Treat as "not matched" so a later rule can still allow the
+			// operation when appropriate.  We deliberately do NOT short-circuit
+			// to a deny here: the rule simply has no opinion on a session this
+			// weak, which is the symmetric behaviour to all other match dims.
 			continue
 		}
 
@@ -590,7 +669,8 @@ func copyPolicy(p Policy) Policy {
 					TeamID:          r.Match.Identity.TeamID,
 					CallerIDPattern: r.Match.Identity.CallerIDPattern,
 				},
-				KeyPrefix: r.Match.KeyPrefix,
+				KeyPrefix:    r.Match.KeyPrefix,
+				AuthStrength: r.Match.AuthStrength,
 			},
 		}
 		// Deep-copy all inner slices.

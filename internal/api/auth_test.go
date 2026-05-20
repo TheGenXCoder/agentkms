@@ -233,6 +233,24 @@ func TestSession_IssuedTokenPassesValidate(t *testing.T) {
 	}
 }
 
+// TestSession_IssuesDeviceStrengthToken proves Phase 1 invariant #2:
+// /auth/session — the cert-only bootstrap endpoint — must always stamp
+// auth_strength=device on the issued token.  WebAuthn /finish is the only
+// path that may issue device+human; everything else is single-factor.
+func TestSession_IssuesDeviceStrengthToken(t *testing.T) {
+	svc, handler, _ := newTestStack(t)
+	cert := makeTestCert(t, "bert@platform-team")
+
+	tokenStr := sessionToken(t, handler, cert.Cert)
+	tok, err := svc.Validate(tokenStr)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if tok.AuthStrength != auth.AuthStrengthDevice {
+		t.Errorf("auth_strength = %q, want %q", tok.AuthStrength, auth.AuthStrengthDevice)
+	}
+}
+
 func TestSession_AuditEventWritten(t *testing.T) {
 	_, handler, auditor := newTestStack(t)
 	cert := makeTestCert(t, "bert@platform-team")

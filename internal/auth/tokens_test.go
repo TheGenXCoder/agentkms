@@ -77,6 +77,92 @@ func TestTokenService_IssueAndValidate_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestTokenService_IssueDefaultsToDeviceStrength proves the contract that
+// the bare Issue() path (cert-only sessions via /auth/session) cannot
+// silently issue tokens of unknown or stronger strength.  It is the
+// substrate for the Phase 1 auth_strength invariant.
+func TestTokenService_IssueDefaultsToDeviceStrength(t *testing.T) {
+	svc := newTestService(t)
+	id := testIdentity("fp-default-strength")
+
+	tokenStr, tok, err := svc.Issue(id)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if tok.AuthStrength != auth.AuthStrengthDevice {
+		t.Errorf("issued Token.AuthStrength = %q, want %q", tok.AuthStrength, auth.AuthStrengthDevice)
+	}
+
+	got, err := svc.Validate(tokenStr)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if got.AuthStrength != auth.AuthStrengthDevice {
+		t.Errorf("validated AuthStrength = %q, want %q", got.AuthStrength, auth.AuthStrengthDevice)
+	}
+}
+
+// TestTokenService_IssueWithStrength_DeviceHumanRoundTrips proves the
+// substrate the WebAuthn /finish handler depends on: tokens issued with
+// AuthStrengthDeviceHuman survive sign → verify → claimsToToken with the
+// strength claim intact and equal to "device+human".
+func TestTokenService_IssueWithStrength_DeviceHumanRoundTrips(t *testing.T) {
+	svc := newTestService(t)
+	id := testIdentity("fp-webauthn-finish")
+
+	tokenStr, tok, err := svc.IssueWithStrength(id, auth.AuthStrengthDeviceHuman)
+	if err != nil {
+		t.Fatalf("IssueWithStrength: %v", err)
+	}
+	if tok.AuthStrength != auth.AuthStrengthDeviceHuman {
+		t.Errorf("issued Token.AuthStrength = %q, want %q", tok.AuthStrength, auth.AuthStrengthDeviceHuman)
+	}
+
+	got, err := svc.Validate(tokenStr)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if got.AuthStrength != auth.AuthStrengthDeviceHuman {
+		t.Errorf("validated AuthStrength = %q, want %q", got.AuthStrength, auth.AuthStrengthDeviceHuman)
+	}
+	// AtLeast must say a device+human token satisfies a device requirement.
+	if !got.AuthStrength.AtLeast(auth.AuthStrengthDevice) {
+		t.Errorf("device+human token unexpectedly does NOT satisfy device requirement")
+	}
+	if !got.AuthStrength.AtLeast(auth.AuthStrengthDeviceHuman) {
+		t.Errorf("device+human token unexpectedly does NOT satisfy device+human requirement")
+	}
+}
+
+// TestTokenService_IssueDelegatedWithStrength_PropagatesStrength locks in
+// the attenuation guarantee: a child token carries its parent's strength,
+// not a default device-only stamp.  Without this, /auth/delegate would be
+// a silent downgrade path for device+human sessions.
+func TestTokenService_IssueDelegatedWithStrength_PropagatesStrength(t *testing.T) {
+	svc := newTestService(t)
+	parent := testIdentity("fp-parent-strength")
+
+	tokenStr, tok, err := svc.IssueDelegatedWithStrength(
+		parent,
+		time.Minute,
+		[]string{"sign:key-1"},
+		auth.AuthStrengthDeviceHuman,
+	)
+	if err != nil {
+		t.Fatalf("IssueDelegatedWithStrength: %v", err)
+	}
+	if tok.AuthStrength != auth.AuthStrengthDeviceHuman {
+		t.Errorf("delegated Token.AuthStrength = %q, want %q", tok.AuthStrength, auth.AuthStrengthDeviceHuman)
+	}
+	got, err := svc.Validate(tokenStr)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if got.AuthStrength != auth.AuthStrengthDeviceHuman {
+		t.Errorf("validated delegated AuthStrength = %q, want %q", got.AuthStrength, auth.AuthStrengthDeviceHuman)
+	}
+}
+
 func TestTokenService_TTL_ApproximatelyCorrect(t *testing.T) {
 	svc := newTestService(t)
 	id := testIdentity("fp1")

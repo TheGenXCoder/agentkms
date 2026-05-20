@@ -218,7 +218,12 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newTokenStr, newTok, err := h.tokens.Issue(&oldTok.Identity)
+	// Preserve the original auth_strength across refresh — refresh extends a
+	// session, it does not re-prove factors, so the new token's strength
+	// MUST equal the old token's.  Without this, a "device+human" user would
+	// silently downgrade to "device" after the first refresh and lose access
+	// to step-up-gated operations 15 minutes into their session.
+	newTokenStr, newTok, err := h.tokens.IssueWithStrength(&oldTok.Identity, oldTok.AuthStrength)
 	if err != nil {
 		h.logAudit(r.Context(), r, oldTok.Identity.CallerID, oldTok.Identity.TeamID, oldTok.JTI,
 			audit.OperationAuthRefresh, audit.OutcomeError, "token issuance failed")
@@ -339,6 +344,13 @@ func (h *AuthHandler) Delegate(w http.ResponseWriter, r *http.Request) {
 
 	// Validate requested scopes against policy for the parent identity.
 	// A delegation must be a strict subset of the parent's current permissions.
+	//
+	// SECURITY: the parent's auth_strength is attached to the evaluation
+	// context so that policy rules gated on a stronger factor see the
+	// parent's actual session strength, not an empty default.  This is the
+	// reading side of the attenuation contract: a parent cannot delegate
+	// access to a rule that demands a strength the parent does not have.
+	evalCtx := policy.WithAuthStrength(r.Context(), string(parentTok.AuthStrength))
 	for _, s := range req.Scopes {
 		op, keyID, err := parseScope(s)
 		if err != nil {
@@ -346,7 +358,7 @@ func (h *AuthHandler) Delegate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		decision, err := h.policy.Evaluate(r.Context(), parentTok.Identity, op, keyID)
+		decision, err := h.policy.Evaluate(evalCtx, parentTok.Identity, op, keyID)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "policy evaluation failed")
 			return
@@ -374,7 +386,12 @@ func (h *AuthHandler) Delegate(w http.ResponseWriter, r *http.Request) {
 		ttl = remaining
 	}
 
-	tokenStr, tok, err := h.tokens.IssueDelegated(&parentTok.Identity, ttl, req.Scopes)
+	// Propagate the parent's auth_strength onto the child token.  Delegation
+	// must NEVER strengthen a session — IssueDelegatedWithStrength accepts
+	// the parent's value as-is so a "device" parent yields a "device" child,
+	// and the child cannot be used to satisfy a rule that demands
+	// "device+human".  This is the writing side of the attenuation contract.
+	tokenStr, tok, err := h.tokens.IssueDelegatedWithStrength(&parentTok.Identity, ttl, req.Scopes, parentTok.AuthStrength)
 	if err != nil {
 		h.logAudit(r.Context(), r, parentTok.Identity.CallerID, parentTok.Identity.TeamID, parentTok.JTI,
 			audit.OperationAuthDelegate, audit.OutcomeError, "token issuance failed")

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/agentkms/agentkms/internal/audit"
+	"github.com/agentkms/agentkms/internal/policy"
 )
 
 // ── Authentication middleware ─────────────────────────────────────────────────
@@ -68,7 +69,13 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		r = r.WithContext(SetIdentityInContext(r.Context(), tok.Identity))
+		ctx := SetIdentityInContext(r.Context(), tok.Identity)
+		// Thread the session's auth_strength into the policy evaluation context
+		// so downstream handlers' policy.Evaluate calls see the caller's actual
+		// factor strength. Without this, rules with match.auth_strength never
+		// match and the engine falls through to deny-by-default.
+		ctx = policy.WithAuthStrength(ctx, string(tok.AuthStrength))
+		r = r.WithContext(ctx)
 		next(w, r)
 	}
 }

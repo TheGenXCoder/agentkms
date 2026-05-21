@@ -59,9 +59,22 @@ func (s *Server) handleWebAuthnRegisterFinish(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	var body json.RawMessage
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	// kpm sends {caller_id, name, response: <attestation>}. The go-webauthn
+	// library only consumes the inner `response`; the rest is wrapper for our
+	// own bookkeeping. Decode the wrapper, then pass only `response` through.
+	// caller_id from the body is intentionally ignored — we trust id.CallerID
+	// from the mTLS identity (set by authMiddleware), not the client-asserted
+	// value, to prevent identity-spoof attempts inside the request body.
+	var req struct {
+		Name     string          `json:"name"`
+		Response json.RawMessage `json:"response"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, errCodeInvalidRequest, "invalid JSON body")
+		return
+	}
+	if len(req.Response) == 0 {
+		s.writeError(w, http.StatusBadRequest, errCodeInvalidRequest, "missing 'response' field")
 		return
 	}
 
@@ -71,7 +84,7 @@ func (s *Server) handleWebAuthnRegisterFinish(w http.ResponseWriter, r *http.Req
 	ev.Environment = s.env
 	ev.SourceIP = extractRemoteIP(r)
 
-	if err := s.webAuthn.FinishRegistration(id.CallerID, body); err != nil {
+	if err := s.webAuthn.FinishRegistration(id.CallerID, req.Response); err != nil {
 		slog.Warn("webauthn FinishRegistration failed",
 			"caller_id", id.CallerID,
 			"error", err.Error(),

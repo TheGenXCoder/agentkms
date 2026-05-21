@@ -1,5 +1,5 @@
-// export_test.go exposes internal symbols for use in tests outside this
-// package (specifically internal/api and integration tests).
+// export_test.go exposes internal symbols for white-box testing of the auth
+// package.  Symbols here are only compiled into test binaries.
 //
 // IMPORTANT: Go's export_test.go mechanism (package foo, _test.go suffix)
 // only works for test files within the SAME package directory.  It does NOT
@@ -17,6 +17,12 @@ import (
 
 	"github.com/agentkms/agentkms/pkg/identity"
 )
+
+// IsAllowedOrigin exposes the unexported isAllowedOrigin helper for white-box
+// tests.  Must only be used in test code.
+func IsAllowedOrigin(origin string, allowlist []string, anyPort bool) bool {
+	return isAllowedOrigin(origin, allowlist, anyPort)
+}
 
 // NewTokenServiceWithClock constructs a TokenService with an injectable clock.
 // For testing expiry behaviour without real-time delays.

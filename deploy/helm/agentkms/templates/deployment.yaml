@@ -62,6 +62,8 @@ spec:
               value: {{ .Values.webauthn.rpid | quote }}
             - name: AGENTKMS_WEBAUTHN_ORIGINS
               value: {{ .Values.webauthn.origins | quote }}
+            - name: AGENTKMS_WEBAUTHN_ALLOW_LOCALHOST_ANY_PORT
+              value: {{ .Values.webauthn.allowLocalhostAnyPort | toString | quote }}
             - name: AGENTKMS_WEBAUTHN_DATA_DIR
               value: {{ .Values.webauthn.dataDir | quote }}
             {{- end }}

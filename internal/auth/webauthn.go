@@ -31,18 +31,81 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
+// reLocalhost matches any http or https origin whose host is exactly "localhost"
+// with an optional port.  The regex is anchored to prevent partial matches such
+// as "http://localhost.attacker.com:1234".
+//
+// Accepted: http://localhost, http://localhost:38291, https://localhost:8080
+// Rejected: http://localhost.evil.com, http://evilocalhost:8080
+var reLocalhost = regexp.MustCompile(`^https?://localhost(:\d+)?$`)
+
+// isAllowedOrigin reports whether origin is permitted given the explicit
+// allowlist and the localhost-any-port relaxation flag.
+//
+// Security contract:
+//   - allowlist entries are matched by the go-webauthn library (case-insensitive
+//     scheme+host comparison for http/https URLs, exact string otherwise).
+//     We replicate that here for the allowlist path using url.Parse.
+//   - When anyPort is true we additionally accept any origin whose scheme is
+//     http or https and whose host is exactly "localhost" (with any port).
+//     This is deliberately narrow: it does NOT accept 127.0.0.1, [::1], or
+//     any subdomain of localhost.
+//
+// WARNING: anyPort=true is only safe in a development / CLI-callback context.
+// Never enable it on a production-facing server.
+func isAllowedOrigin(origin string, allowlist []string, anyPort bool) bool {
+	// Check explicit allowlist first (mirrors go-webauthn's IsOriginInHaystack).
+	for _, allowed := range allowlist {
+		if originsEqual(origin, allowed) {
+			return true
+		}
+	}
+	// Check localhost-any-port relaxation.
+	if anyPort && reLocalhost.MatchString(origin) {
+		return true
+	}
+	return false
+}
+
+// originsEqual mirrors go-webauthn's origin comparison: for http/https URLs,
+// compare scheme and host case-insensitively; for everything else use exact
+// string equality.
+func originsEqual(a, b string) bool {
+	ua, err := url.Parse(a)
+	if err != nil {
+		return a == b
+	}
+	ub, err := url.Parse(b)
+	if err != nil {
+		return a == b
+	}
+	isHTTP := func(s string) bool { return s == "http" || s == "https" }
+	if isHTTP(ua.Scheme) && isHTTP(ub.Scheme) {
+		return ua.Scheme == ub.Scheme &&
+			strings.EqualFold(ua.Host, ub.Host)
+	}
+	return a == b
+}
+
 // WebAuthnService manages FIDO2 registration and authentication.
 type WebAuthnService struct {
-	wa    *webauthn.WebAuthn
-	store *WebAuthnStore
+	wa                    *webauthn.WebAuthn
+	store                 *WebAuthnStore
+	allowLocalhostAnyPort bool
+	rpOrigins             []string // explicit allowlist (mirrors wa.Config.RPOrigins)
+	rpid                  string
+	rpDisplayName         string
 }
 
 // WebAuthnConfig holds configuration for the WebAuthn relying party.
@@ -51,8 +114,27 @@ type WebAuthnConfig struct {
 	// AgentKMS server (e.g. "kms.yourdomain.com").
 	RPID string
 
-	// RPOrigin is the origin callers will use (e.g. "https://kms.yourdomain.com").
+	// RPOrigins is the allowlist of permitted origins
+	// (e.g. ["https://kms.yourdomain.com"]).  At least one entry is required
+	// unless AllowLocalhostAnyPort is true.
+	RPOrigins []string
+
+	// RPOrigin is kept for backwards compatibility.  When non-empty and
+	// RPOrigins is empty, it is promoted into RPOrigins automatically.
+	//
+	// Deprecated: set RPOrigins directly.
 	RPOrigin string
+
+	// AllowLocalhostAnyPort, when true, additionally accepts any origin of the
+	// form http://localhost:<port> or https://localhost:<port>.  This is
+	// intended exclusively for the kpm CLI local-callback WebAuthn ceremony
+	// where the browser opens an ephemeral localhost port that cannot be
+	// predicted at server-startup time.
+	//
+	// WARNING: never enable this flag on a production-facing server.  It is
+	// safe only when the AgentKMS server itself is also running locally (dev
+	// workstation or CI).
+	AllowLocalhostAnyPort bool
 
 	// RPDisplayName is the human-readable name shown in authenticator prompts.
 	RPDisplayName string
@@ -80,10 +162,38 @@ func NewWebAuthnService(cfg WebAuthnConfig) (*WebAuthnService, error) {
 	if cfg.RPDisplayName == "" {
 		cfg.RPDisplayName = "AgentKMS"
 	}
+
+	// Back-compat: promote the deprecated RPOrigin field.
+	origins := cfg.RPOrigins
+	if len(origins) == 0 && cfg.RPOrigin != "" {
+		origins = []string{cfg.RPOrigin}
+	}
+
+	// The go-webauthn library (v0.16.x) does NOT expose a custom origin-verifier
+	// callback.  RPOrigins is an exact allowlist (case-insensitive scheme+host
+	// for http/https).  There is no wildcard or regex support.
+	//
+	// For AllowLocalhostAnyPort we need to add the actual request origin to the
+	// library's allowlist at the moment of each ceremony call.  We do this by
+	// constructing a fresh *webauthn.WebAuthn with the extended origin list in
+	// waForOrigin().  The base instance below is used only for Begin* calls
+	// (which do not check the origin) and as a template for per-call instances.
+	//
+	// When AllowLocalhostAnyPort is false, wa is used directly for all calls.
+	//
+	// If no explicit origins are provided but AllowLocalhostAnyPort is true we
+	// still need at least one entry to satisfy go-webauthn's validation; we use
+	// a placeholder that the per-call override will shadow.
+	waOrigins := origins
+	if len(waOrigins) == 0 {
+		// Placeholder so go-webauthn accepts the config; real origin injected per call.
+		waOrigins = []string{"http://localhost"}
+	}
+
 	wa, err := webauthn.New(&webauthn.Config{
 		RPDisplayName: cfg.RPDisplayName,
 		RPID:          cfg.RPID,
-		RPOrigins:     []string{cfg.RPOrigin},
+		RPOrigins:     waOrigins,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("webauthn: init: %w", err)
@@ -94,7 +204,90 @@ func NewWebAuthnService(cfg WebAuthnConfig) (*WebAuthnService, error) {
 		return nil, fmt.Errorf("webauthn: store: %w", err)
 	}
 
-	return &WebAuthnService{wa: wa, store: store}, nil
+	return &WebAuthnService{
+		wa:                    wa,
+		store:                 store,
+		allowLocalhostAnyPort: cfg.AllowLocalhostAnyPort,
+		rpOrigins:             origins,
+		rpid:                  cfg.RPID,
+		rpDisplayName:         cfg.RPDisplayName,
+	}, nil
+}
+
+// waForOrigin returns a *webauthn.WebAuthn appropriate for verifying a
+// ceremony response whose clientDataJSON claims the given origin.
+//
+// When AllowLocalhostAnyPort is enabled and origin matches the localhost-any-port
+// pattern, we construct a fresh *webauthn.WebAuthn that includes the specific
+// port-bearing origin in its allowlist.  This is the workaround for the
+// go-webauthn library's lack of a custom origin-verifier hook: we create a
+// per-request library instance with the exact origin appended.
+//
+// For all other origins we return the shared s.wa instance unchanged.
+func (s *WebAuthnService) waForOrigin(origin string) (*webauthn.WebAuthn, error) {
+	if !s.allowLocalhostAnyPort || !reLocalhost.MatchString(origin) {
+		return s.wa, nil
+	}
+	// Build the merged allowlist: explicit origins + this exact localhost origin.
+	merged := make([]string, 0, len(s.rpOrigins)+1)
+	merged = append(merged, s.rpOrigins...)
+	// Avoid duplicates if the origin is already in the explicit list.
+	alreadyPresent := false
+	for _, o := range s.rpOrigins {
+		if originsEqual(o, origin) {
+			alreadyPresent = true
+			break
+		}
+	}
+	if !alreadyPresent {
+		merged = append(merged, origin)
+	}
+	wa, err := webauthn.New(&webauthn.Config{
+		RPDisplayName: s.rpDisplayName,
+		RPID:          s.rpid,
+		RPOrigins:     merged,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("webauthn: per-call init: %w", err)
+	}
+	return wa, nil
+}
+
+// extractOriginFromClientDataJSON peeks at the clientDataJSON blob to extract
+// the "origin" field without full verification (verification happens inside
+// the library).  Returns empty string on any error — the library's own
+// verification will then catch the problem.
+func extractOriginFromClientDataJSON(responseJSON []byte) string {
+	// clientDataJSON is nested inside the response JSON as a base64url-encoded
+	// field.  However, ParseCredentialCreationResponseBytes / ParseCredentialRequestResponseBytes
+	// already parse it; we need to peek BEFORE calling those.
+	//
+	// The response JSON has the shape:
+	//   {"response": {"clientDataJSON": "<base64url>", ...}, ...}
+	// We only need the origin so a quick JSON unmarshal into a partial struct is fine.
+	var outer struct {
+		Response struct {
+			ClientDataJSON string `json:"clientDataJSON"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(responseJSON, &outer); err != nil {
+		return ""
+	}
+	cdj, err := base64.RawURLEncoding.DecodeString(outer.Response.ClientDataJSON)
+	if err != nil {
+		// Try standard base64 too (some browsers pad).
+		cdj, err = base64.StdEncoding.DecodeString(outer.Response.ClientDataJSON)
+		if err != nil {
+			return ""
+		}
+	}
+	var clientData struct {
+		Origin string `json:"origin"`
+	}
+	if err := json.Unmarshal(cdj, &clientData); err != nil {
+		return ""
+	}
+	return clientData.Origin
 }
 
 // ── Registration ─────────────────────────────────────────────────────────────
@@ -127,12 +320,21 @@ func (s *WebAuthnService) FinishRegistration(callerID string, responseJSON []byt
 	}
 	defer s.store.DeleteSession(callerID, "reg")
 
+	// Peek at the origin so we can select the right webauthn instance when
+	// AllowLocalhostAnyPort is enabled.  If the peek fails, waForOrigin("") falls
+	// back to the base instance and the library's own verification catches the error.
+	origin := extractOriginFromClientDataJSON(responseJSON)
+	wa, err := s.waForOrigin(origin)
+	if err != nil {
+		return fmt.Errorf("webauthn: origin routing: %w", err)
+	}
+
 	parsedResponse, err := protocol.ParseCredentialCreationResponseBytes(responseJSON)
 	if err != nil {
 		return fmt.Errorf("webauthn: parse registration response: %w", err)
 	}
 
-	credential, err := s.wa.CreateCredential(user, *session, parsedResponse)
+	credential, err := wa.CreateCredential(user, *session, parsedResponse)
 	if err != nil {
 		return fmt.Errorf("webauthn: create credential: %w", err)
 	}
@@ -169,12 +371,19 @@ func (s *WebAuthnService) FinishAuthentication(callerID string, responseJSON []b
 	}
 	defer s.store.DeleteSession(callerID, "auth")
 
+	// Same origin-peek-and-route as FinishRegistration.
+	origin := extractOriginFromClientDataJSON(responseJSON)
+	wa, err := s.waForOrigin(origin)
+	if err != nil {
+		return "", fmt.Errorf("webauthn: origin routing: %w", err)
+	}
+
 	parsedResponse, err := protocol.ParseCredentialRequestResponseBytes(responseJSON)
 	if err != nil {
 		return "", fmt.Errorf("webauthn: parse auth response: %w", err)
 	}
 
-	_, err = s.wa.ValidateLogin(user, *session, parsedResponse)
+	_, err = wa.ValidateLogin(user, *session, parsedResponse)
 	if err != nil {
 		return "", fmt.Errorf("webauthn: validate login: %w", err)
 	}

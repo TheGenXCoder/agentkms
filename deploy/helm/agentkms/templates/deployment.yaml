@@ -57,6 +57,14 @@ spec:
             - name: AGENTKMS_TLS_CA
               value: {{ .Values.tls.caPath | quote }}
             {{- end }}
+            {{- if .Values.webauthn.enabled }}
+            - name: AGENTKMS_WEBAUTHN_RPID
+              value: {{ .Values.webauthn.rpid | quote }}
+            - name: AGENTKMS_WEBAUTHN_ORIGINS
+              value: {{ .Values.webauthn.origins | quote }}
+            - name: AGENTKMS_WEBAUTHN_DATA_DIR
+              value: {{ .Values.webauthn.dataDir | quote }}
+            {{- end }}
           volumeMounts:
             - name: vault-token
               mountPath: /vault/secrets

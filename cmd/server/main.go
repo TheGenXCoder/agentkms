@@ -73,6 +73,11 @@ func main() {
 	vaultKey := flag.String("vault-tls-key", envOr("AGENTKMS_VAULT_TLS_KEY", ""), "Client TLS key for Vault/OpenBao")
 	vaultCA := flag.String("vault-tls-ca", envOr("AGENTKMS_VAULT_TLS_CA", ""), "CA certificate for Vault/OpenBao")
 
+	// WebAuthn flags
+	webAuthnRPID    := flag.String("webauthn-rpid",     envOr("AGENTKMS_WEBAUTHN_RPID",     ""), "WebAuthn Relying Party ID (domain only, e.g. 'agentkms.example.com' or 'localhost'). Empty = WebAuthn disabled.")
+	webAuthnOrigins := flag.String("webauthn-origins",  envOr("AGENTKMS_WEBAUTHN_ORIGINS",  ""), "Comma-separated list of allowed WebAuthn origins (e.g. 'https://agentkms.example.com,https://127.0.0.1:8443')")
+	webAuthnData    := flag.String("webauthn-data-dir", envOr("AGENTKMS_WEBAUTHN_DATA_DIR", "/var/lib/agentkms/webauthn"), "Directory where WebAuthn credentials.json is persisted")
+
 	// LV-05: Master key rotation flags
 	masterKeys := flag.String("master-keys", envOr("AGENTKMS_MASTER_KEYS", ""), "Comma-separated list of master keys to rotate")
 	rotateInterval := flag.Duration("rotation-interval", credentials.MasterKeyRotationInterval, "Rotation interval for master keys")
@@ -437,6 +442,35 @@ func main() {
 			ClientCAs:  pool,
 			MinVersion: tls.VersionTLS12,
 		}
+	}
+
+	// ── WebAuthn ──────────────────────────────────────────────────────────────
+	if *webAuthnRPID != "" {
+		// Parse comma-separated origins; first non-empty value is used as RPOrigin.
+		// The flag accepts a list for forward-compatibility; WebAuthnConfig.RPOrigin
+		// is currently a single string (multiple origins require a future server upgrade).
+		origin := ""
+		for _, o := range strings.Split(*webAuthnOrigins, ",") {
+			o = strings.TrimSpace(o)
+			if o != "" {
+				origin = o
+				break
+			}
+		}
+		waSvc, err := auth.NewWebAuthnService(auth.WebAuthnConfig{
+			RPID:          *webAuthnRPID,
+			RPDisplayName: "AgentKMS",
+			RPOrigin:      origin,
+			DataDir:       *webAuthnData,
+		})
+		if err != nil {
+			slog.Error("failed to initialise WebAuthn", "rpid", *webAuthnRPID, "error", err)
+			os.Exit(1)
+		}
+		apiServer.SetWebAuthn(waSvc)
+		slog.Info("WebAuthn ready", "rpid", *webAuthnRPID, "origin", origin, "data_dir", *webAuthnData)
+	} else {
+		slog.Info("WebAuthn disabled (no --webauthn-rpid)")
 	}
 
 	// ── Listener ───────────────────────────────────────────────────────────────

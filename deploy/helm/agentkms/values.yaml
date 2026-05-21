@@ -98,6 +98,18 @@ policy:
           operations: ["sign", "encrypt", "decrypt", "list_keys", "rotate_key", "credential_vend"]
         description: T1 POC — allow all callers (replace when A-04 token auth is wired)
 
+# ── WebAuthn / FIDO2 ──────────────────────────────────────────────────────────
+webauthn:
+  enabled: false
+  # rpid: domain-only Relying Party ID (e.g. "agentkms.example.com" or "localhost").
+  rpid: ""
+  # origins: comma-separated list of allowed origins
+  # (e.g. "https://agentkms.example.com,https://127.0.0.1:8443").
+  origins: ""
+  dataDir: /var/lib/agentkms/webauthn
+  # NOTE: dataDir lives on emptyDir today; credentials are lost on pod restart.
+  # PVC support is a follow-up.
+
 # ── RBAC ──────────────────────────────────────────────────────────────────────
 serviceAccount:
   create: true

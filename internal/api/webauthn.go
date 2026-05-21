@@ -18,6 +18,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -71,7 +72,12 @@ func (s *Server) handleWebAuthnRegisterFinish(w http.ResponseWriter, r *http.Req
 	ev.SourceIP = extractRemoteIP(r)
 
 	if err := s.webAuthn.FinishRegistration(id.CallerID, body); err != nil {
+		slog.Warn("webauthn FinishRegistration failed",
+			"caller_id", id.CallerID,
+			"error", err.Error(),
+		)
 		ev.Outcome = audit.OutcomeError
+		ev.ErrorDetail = err.Error()
 		_ = s.auditLog(ctx, ev)
 		s.writeError(w, http.StatusBadRequest, errCodeInvalidRequest, "registration failed")
 		return

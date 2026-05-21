@@ -74,9 +74,10 @@ func main() {
 	vaultCA := flag.String("vault-tls-ca", envOr("AGENTKMS_VAULT_TLS_CA", ""), "CA certificate for Vault/OpenBao")
 
 	// WebAuthn flags
-	webAuthnRPID    := flag.String("webauthn-rpid",     envOr("AGENTKMS_WEBAUTHN_RPID",     ""), "WebAuthn Relying Party ID (domain only, e.g. 'agentkms.example.com' or 'localhost'). Empty = WebAuthn disabled.")
-	webAuthnOrigins := flag.String("webauthn-origins",  envOr("AGENTKMS_WEBAUTHN_ORIGINS",  ""), "Comma-separated list of allowed WebAuthn origins (e.g. 'https://agentkms.example.com,https://127.0.0.1:8443')")
-	webAuthnData    := flag.String("webauthn-data-dir", envOr("AGENTKMS_WEBAUTHN_DATA_DIR", "/var/lib/agentkms/webauthn"), "Directory where WebAuthn credentials.json is persisted")
+	webAuthnRPID             := flag.String("webauthn-rpid",                   envOr("AGENTKMS_WEBAUTHN_RPID",                   ""),      "WebAuthn Relying Party ID (domain only, e.g. 'agentkms.example.com' or 'localhost'). Empty = WebAuthn disabled.")
+	webAuthnOrigins          := flag.String("webauthn-origins",                envOr("AGENTKMS_WEBAUTHN_ORIGINS",                ""),      "Comma-separated list of allowed WebAuthn origins (e.g. 'https://agentkms.example.com,https://127.0.0.1:8443'). All tokens are preserved.")
+	webAuthnAllowLocalhost   := flag.Bool("webauthn-allow-localhost-any-port", envBool("AGENTKMS_WEBAUTHN_ALLOW_LOCALHOST_ANY_PORT"), "When true, accept any http://localhost:<port> origin in addition to --webauthn-origins. Safe only for local dev / kpm CLI callback; never set in production.")
+	webAuthnData             := flag.String("webauthn-data-dir",               envOr("AGENTKMS_WEBAUTHN_DATA_DIR",               "/var/lib/agentkms/webauthn"), "Directory where WebAuthn credentials.json is persisted")
 
 	// LV-05: Master key rotation flags
 	masterKeys := flag.String("master-keys", envOr("AGENTKMS_MASTER_KEYS", ""), "Comma-separated list of master keys to rotate")
@@ -322,15 +323,12 @@ func main() {
 		}()
 	}
 
-	// ── Set up token service ───────────────────────────────────────────────────
-	revocationList := auth.NewRevocationList()
-	tokenSvc, tErr := auth.NewTokenService(revocationList)
-	if tErr != nil {
-		slog.Error("failed to initialize token service", "error", tErr)
-		os.Exit(1)
-	}
-
 	// ── Credential vender ─────────────────────────────────────────────────────
+	// Reuse the single tokenSvc instantiated above (line 268).  A duplicate
+	// NewTokenService here would mint a second random HMAC key, so tokens
+	// minted by /auth/session (via authHandler) would fail to validate in
+	// authMiddleware (which uses apiServer's tokenSvc).  Same bug d737dfc
+	// originally fixed; regressed during the rebase against origin/main.
 	apiServer := api.NewServer(bknd, auditor, eng, tokenSvc, *env)
 	if *vaultAddr != "" {
 		kv := credentials.NewOpenBaoKV(*vaultAddr, vaultToken, vaultTLS)
@@ -446,29 +444,32 @@ func main() {
 
 	// ── WebAuthn ──────────────────────────────────────────────────────────────
 	if *webAuthnRPID != "" {
-		// Parse comma-separated origins; first non-empty value is used as RPOrigin.
-		// The flag accepts a list for forward-compatibility; WebAuthnConfig.RPOrigin
-		// is currently a single string (multiple origins require a future server upgrade).
-		origin := ""
+		// Parse comma-separated origins; all non-empty tokens are preserved.
+		var origins []string
 		for _, o := range strings.Split(*webAuthnOrigins, ",") {
 			o = strings.TrimSpace(o)
 			if o != "" {
-				origin = o
-				break
+				origins = append(origins, o)
 			}
 		}
 		waSvc, err := auth.NewWebAuthnService(auth.WebAuthnConfig{
-			RPID:          *webAuthnRPID,
-			RPDisplayName: "AgentKMS",
-			RPOrigin:      origin,
-			DataDir:       *webAuthnData,
+			RPID:                  *webAuthnRPID,
+			RPDisplayName:         "AgentKMS",
+			RPOrigins:             origins,
+			AllowLocalhostAnyPort: *webAuthnAllowLocalhost,
+			DataDir:               *webAuthnData,
 		})
 		if err != nil {
 			slog.Error("failed to initialise WebAuthn", "rpid", *webAuthnRPID, "error", err)
 			os.Exit(1)
 		}
 		apiServer.SetWebAuthn(waSvc)
-		slog.Info("WebAuthn ready", "rpid", *webAuthnRPID, "origin", origin, "data_dir", *webAuthnData)
+		slog.Info("WebAuthn ready",
+			"rpid", *webAuthnRPID,
+			"origins", origins,
+			"allow_localhost_any_port", *webAuthnAllowLocalhost,
+			"data_dir", *webAuthnData,
+		)
 	} else {
 		slog.Info("WebAuthn disabled (no --webauthn-rpid)")
 	}
@@ -542,6 +543,13 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envBool returns true when the environment variable key is set to a
+// truthy value ("1", "true", "yes" — case-insensitive).
+func envBool(key string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	return v == "1" || v == "true" || v == "yes"
 }
 
 func readToken(path string) (string, error) {

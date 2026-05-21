@@ -79,6 +79,10 @@ const (
 	// session is the normal flow; bootstrap_issue with no subsequent cert_issue
 	// is a token that was minted but not redeemed (worth alerting on).
 	OperationBootstrapIssue = "bootstrap_issue"
+
+	// OperationWebAuthnCredentialRemove is logged when a user removes one of their
+	// own registered FIDO2 credentials via DELETE /auth/webauthn/credentials/{id}.
+	OperationWebAuthnCredentialRemove = "webauthn_credential_remove"
 )
 
 // ── Outcome constants ─────────────────────────────────────────────────────────

@@ -280,6 +280,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /auth/webauthn/register/finish", wrap(s.handleWebAuthnRegisterFinish))
 	s.mux.HandleFunc("POST /auth/webauthn/auth/begin", s.handleWebAuthnAuthBegin)   // unauthenticated
 	s.mux.HandleFunc("POST /auth/webauthn/auth/finish", s.handleWebAuthnAuthFinish) // unauthenticated
+	// WebAuthn credential management (kpm webauthn list / webauthn remove)
+	s.mux.HandleFunc("GET /auth/webauthn/credentials", wrap(s.handleWebAuthnListCredentials))
+	s.mux.HandleFunc("DELETE /auth/webauthn/credentials/{id}", wrap(s.handleWebAuthnDeleteCredential))
 	// AU-10: audit log export
 	s.mux.HandleFunc("GET /audit/export", wrap(s.handleExportAuditLogs))
 

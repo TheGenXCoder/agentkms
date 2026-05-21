@@ -26,6 +26,8 @@ package auth
 //   - Credentials are stored server-side as public keys only — no private material.
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,6 +59,20 @@ type WebAuthnConfig struct {
 
 	// DataDir is where credentials are persisted.
 	DataDir string
+}
+
+// NewWebAuthnServiceFromStore creates a WebAuthnService backed by an existing
+// WebAuthnStore, without requiring a live WebAuthn relying-party configuration.
+//
+// The returned service supports ListCredentials and DeleteCredential but does
+// NOT support registration or authentication ceremonies (those require a fully
+// configured go-webauthn instance).  Use this in tests and in contexts where
+// only credential management — not new FIDO2 ceremonies — is needed.
+func NewWebAuthnServiceFromStore(store *WebAuthnStore) (*WebAuthnService, error) {
+	if store == nil {
+		return nil, fmt.Errorf("webauthn: NewWebAuthnServiceFromStore: store must not be nil")
+	}
+	return &WebAuthnService{wa: nil, store: store}, nil
 }
 
 // NewWebAuthnService creates a WebAuthnService for the given relying party.
@@ -171,6 +187,47 @@ func (s *WebAuthnService) HasCredentials(callerID string) bool {
 	return len(s.store.userFor(callerID).WebAuthnCredentials()) > 0
 }
 
+// CredentialMeta is the metadata shape returned by ListCredentials.
+// Optional fields (Name, AuthenticatorType, CreatedAt, LastUsedAt, AAGUID) are
+// left empty when the underlying store does not track them.
+type CredentialMeta struct {
+	// ID is the base64url-encoded credential ID.
+	ID string
+
+	// Name is a human-friendly label; empty when not set.
+	Name string
+
+	// AuthenticatorType is "platform", "cross-platform", or "" when unknown.
+	AuthenticatorType string
+
+	// CreatedAt is an RFC 3339 timestamp, or "" when not tracked.
+	CreatedAt string
+
+	// LastUsedAt is an RFC 3339 timestamp, or "" when not tracked.
+	LastUsedAt string
+
+	// AAGUID is the hex-encoded authenticator AAGUID, or "" when all-zero.
+	AAGUID string
+}
+
+// ListCredentials returns metadata for every FIDO2 credential bound to callerID.
+func (s *WebAuthnService) ListCredentials(callerID string) ([]CredentialMeta, error) {
+	return s.store.ListCredentials(callerID)
+}
+
+// DeleteCredential removes the credential with the given base64url-encoded ID
+// from callerID's credential set.
+//
+// Returns ErrCredentialNotFound when no such credential exists.
+// The caller is responsible for verifying ownership before calling this method.
+func (s *WebAuthnService) DeleteCredential(callerID, credIDBase64 string) error {
+	return s.store.DeleteCredential(callerID, credIDBase64)
+}
+
+// ErrCredentialNotFound is returned by DeleteCredential when the credential ID
+// does not exist in the store.
+var ErrCredentialNotFound = errors.New("webauthn: credential not found")
+
 // ── WebAuthnStore ─────────────────────────────────────────────────────────────
 
 // WebAuthnStore persists FIDO2 credentials and in-progress sessions.
@@ -206,6 +263,77 @@ func (s *WebAuthnStore) SaveCredential(callerID string, cred *webauthn.Credentia
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.credentials[callerID] = append(s.credentials[callerID], *cred)
+	return s.persist()
+}
+
+// ListCredentials returns metadata for every credential registered to callerID.
+// The underlying store does not track created_at, last_used_at, or names —
+// those optional fields are returned as empty strings.
+func (s *WebAuthnStore) ListCredentials(callerID string) ([]CredentialMeta, error) {
+	s.mu.RLock()
+	creds := s.credentials[callerID]
+	s.mu.RUnlock()
+
+	result := make([]CredentialMeta, 0, len(creds))
+	for _, c := range creds {
+		meta := CredentialMeta{
+			ID:                base64.RawURLEncoding.EncodeToString(c.ID),
+			AuthenticatorType: string(c.Authenticator.Attachment),
+			// CreatedAt and LastUsedAt: not tracked by the store; return "".
+			// Name: not tracked; return "".
+		}
+		// AAGUID: omit if all-zero (many authenticators report a zero AAGUID
+		// when in a privacy-preserving mode — emitting it as-is would be
+		// misleading).
+		if !allZero(c.Authenticator.AAGUID) {
+			meta.AAGUID = hex.EncodeToString(c.Authenticator.AAGUID)
+		}
+		result = append(result, meta)
+	}
+	return result, nil
+}
+
+// allZero reports whether b is empty or contains only zero bytes.
+func allZero(b []byte) bool {
+	for _, v := range b {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// DeleteCredential removes the credential with the given base64url-encoded ID
+// from callerID's set and persists the updated set to disk.
+// Returns ErrCredentialNotFound if no match exists.
+func (s *WebAuthnStore) DeleteCredential(callerID, credIDBase64 string) error {
+	targetID, err := base64.RawURLEncoding.DecodeString(credIDBase64)
+	if err != nil {
+		return ErrCredentialNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	creds, ok := s.credentials[callerID]
+	if !ok {
+		return ErrCredentialNotFound
+	}
+
+	idx := -1
+	for i, c := range creds {
+		if string(c.ID) == string(targetID) {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return ErrCredentialNotFound
+	}
+
+	// Remove by swapping with the last element and truncating.
+	creds[idx] = creds[len(creds)-1]
+	s.credentials[callerID] = creds[:len(creds)-1]
 	return s.persist()
 }
 

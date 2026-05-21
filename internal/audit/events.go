@@ -52,11 +52,11 @@ const (
 	OperationSecretHistory = "secret_history"
 
 	// Binding operations — T3 credential binding data model.
-	OperationBindingRegister     = "binding_register"
-	OperationBindingRotate       = "binding_rotate"
-	OperationBindingDelete       = "binding_delete"
-	OperationBindingRotateStart  = "binding_rotate_start"
-	OperationDestinationDeliver  = "destination_deliver"
+	OperationBindingRegister    = "binding_register"
+	OperationBindingRotate      = "binding_rotate"
+	OperationBindingDelete      = "binding_delete"
+	OperationBindingRotateStart = "binding_rotate_start"
+	OperationDestinationDeliver = "destination_deliver"
 
 	// GitHub App registration operations — UX-B.
 	// SECURITY: private key PEM bytes MUST NEVER appear in any audit log field.
@@ -71,6 +71,14 @@ const (
 	// This operation is emitted in addition to the normal OperationBindingRotate
 	// event whenever the stub path is taken.
 	OperationBindingRotateStub = "binding_rotate_stub"
+
+	// OperationBootstrapIssue is logged when an operator self-mints a bootstrap
+	// token via POST /auth/bootstrap/issue.  Kept distinct from OperationCertIssue
+	// so SIEM rules can separately alert on token generation vs. token redemption —
+	// a bootstrap_issue event followed immediately by cert_issue in the same
+	// session is the normal flow; bootstrap_issue with no subsequent cert_issue
+	// is a token that was minted but not redeemed (worth alerting on).
+	OperationBootstrapIssue = "bootstrap_issue"
 )
 
 // ── Outcome constants ─────────────────────────────────────────────────────────

@@ -395,6 +395,8 @@ func main() {
 	// Phase 1b-A: device certificate enrollment.
 	mux.HandleFunc("POST /auth/cert/issue", authHandler.HandleCertIssue)
 	mux.HandleFunc("GET /auth/cert/list", authHandler.HandleCertList)
+	// Phase 1b-A: operator bootstrap token self-service.
+	mux.HandleFunc("POST /auth/bootstrap/issue", authHandler.HandleBootstrapIssue)
 	mux.HandleFunc("/healthz", handleHealthz)
 	mux.HandleFunc("/readyz", handleReadyz)
 

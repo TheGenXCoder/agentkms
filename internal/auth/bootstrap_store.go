@@ -23,6 +23,7 @@ package auth
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -51,6 +52,12 @@ type BootstrapRecord struct {
 
 // BootstrapStore persists and redeems operator bootstrap tokens.
 type BootstrapStore interface {
+	// Create generates a new opaque bootstrap token, writes its record to the
+	// backing store keyed by sha256(rawToken), and returns the raw token (64-char
+	// hex).  The raw token is the only thing the caller needs; it is never
+	// logged or persisted — only its hash is stored.
+	Create(ctx context.Context, record BootstrapRecord) (rawToken string, err error)
+
 	// Fetch retrieves the record for rawToken.  Returns nil, nil if not found.
 	Fetch(ctx context.Context, rawToken string) (*BootstrapRecord, error)
 
@@ -85,6 +92,44 @@ func (s *vaultBootstrapStore) kvPath(rawToken string) string {
 	keyHash := hex.EncodeToString(sum[:])
 	return fmt.Sprintf("%s/v1/%s/data/bootstrap-tokens/%s",
 		s.address, s.mount, keyHash)
+}
+
+func (s *vaultBootstrapStore) Create(ctx context.Context, record BootstrapRecord) (string, error) {
+	// Generate 32 random bytes → 64-char hex raw token.
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("bootstrap_store: Create: generate random token: %w", err)
+	}
+	rawToken := hex.EncodeToString(raw[:])
+
+	// Ensure the record is stored as unused.
+	record.Used = false
+
+	payload := map[string]any{"data": record}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("bootstrap_store: Create marshal: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.kvPath(rawToken), bytes.NewReader(payloadBytes))
+	if err != nil {
+		return "", fmt.Errorf("bootstrap_store: Create build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Vault-Token", s.token)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("bootstrap_store: Create HTTP: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return "", fmt.Errorf("bootstrap_store: Create HTTP %d", resp.StatusCode)
+	}
+
+	// Never log rawToken.
+	return rawToken, nil
 }
 
 func (s *vaultBootstrapStore) Fetch(ctx context.Context, rawToken string) (*BootstrapRecord, error) {

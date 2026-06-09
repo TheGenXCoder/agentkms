@@ -32,6 +32,8 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -71,6 +73,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "enroll-token":
+			if err := runEnrollToken(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "agentkms-dev enroll-token: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "serve":
 			if err := runServe(os.Args[2:]); err != nil {
 				slog.Error("agentkms-dev serve failed", "error", err.Error())
@@ -100,11 +108,21 @@ func printUsage() {
 
 Usage:
   agentkms-dev enroll  [--dir <dir>] [--client-cn <cn>] [--force]
+  agentkms-dev enroll-token generate [--dir <dir>] [--write]
   agentkms-dev secrets set <path> <key>=<value> [<key>=<value>...]
   agentkms-dev secrets list
   agentkms-dev secrets delete <path>
   agentkms-dev serve   [--addr <addr>] [--dir <dir>]
   agentkms-dev         (same as serve)
+
+Enrollment tokens (for invited kpm enroll + per-user separation):
+  agentkms-dev enroll-token generate --write
+  # (prints a token and writes it to the enroll.secret file for the dir)
+  # Give the token value securely to the invitee (e.g. Rajesh). They do:
+  #   kpm enroll <server> --user rajesh --token <value>
+  # Use the *same* --user string on all of *one person's* machines to keep them
+  # in the same userspace/secret set. Different --user values are isolated by
+  # the cert identity the server embeds.
 
 First run:
   agentkms-dev enroll                                    # generates PKI
@@ -271,6 +289,59 @@ Done. Next steps:
   3. Point the Forge gateway at the client certs:
        AGENTKMS_CERT_DIR=%s
 `, clientDir)
+
+	return nil
+}
+
+// ── Enroll token (for kpm invited enrollment) ──────────────────────────────────
+
+// runEnrollToken implements `agentkms-dev enroll-token generate`.
+// This is the admin command to create the value you give to someone (Rajesh)
+// or to yourself for a new machine (Arch box) so they can run `kpm enroll`
+// against this server and get a cert embedding a specific "user:NAME".
+//
+// The token is just a shared secret for this server instance (simple but effective
+// for dev / small teams). For production you would typically issue short-lived
+// per-user tokens that are validated + consumed server-side.
+func runEnrollToken(args []string) error {
+	fs := flag.NewFlagSet("enroll-token", flag.ExitOnError)
+	dirFlag := fs.String("dir", "", "PKI directory (default: ~/.agentkms/dev)")
+	write := fs.Bool("write", false, "write the token to <dir>/enroll.secret (mode 0600)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	dir, err := resolveDir(*dirFlag)
+	if err != nil {
+		return err
+	}
+
+	// Generate a strong random token (base64, ~32 bytes raw).
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return fmt.Errorf("generating random token: %w", err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
+
+	fmt.Printf("Enrollment token (give this to the invitee, or use for your own machines):\n\n")
+	fmt.Printf("  %s\n\n", token)
+	fmt.Printf("Client usage:\n")
+	fmt.Printf("  kpm enroll <server-url> --user <name> --token %s\n\n", token)
+	fmt.Printf("  (Use the same <name> on all devices belonging to one person so they share one userspace.)\n")
+
+	if *write {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return fmt.Errorf("creating dir: %w", err)
+		}
+		secretPath := filepath.Join(dir, "enroll.secret")
+		if err := os.WriteFile(secretPath, []byte(token+"\n"), 0600); err != nil {
+			return fmt.Errorf("writing %s: %w", secretPath, err)
+		}
+		fmt.Printf("✓ Wrote %s (0600). Server will read it on next start (or restart serve).\n", secretPath)
+		fmt.Printf("  (Or set AGENTKMS_ENROLL_TOKEN in the environment of the server process.)\n")
+	} else {
+		fmt.Printf("Tip: re-run with --write to persist it as %s/enroll.secret\n", dir)
+	}
 
 	return nil
 }
@@ -644,6 +715,215 @@ func runServe(args []string) error {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"status":"ok","service":"agentkms-dev"}`)
+	})
+
+	// ── Dev-only admin + invite state (for kpm admin commands + clean one-time invites) ──
+	// These are deliberately simple in-memory structures so `kpm admin inviteuser` +
+	// `kpm enroll --invite` works end-to-end for local testing and for the "invite Rajesh"
+	// / "new machine for myself" flows the user asked for.
+	// A real server would persist invites + device records in the backend and enforce
+	// admin policy on who can call /admin/* .
+
+	type inviteRecord struct {
+		Username  string
+		ExpiresAt time.Time
+		Used      bool
+		CreatedAt time.Time
+	}
+	devInvites := map[string]*inviteRecord{}
+
+	type deviceInfo struct {
+		DeviceID string    `json:"device_id"`
+		Hostname string    `json:"hostname"`
+		Enrolled time.Time `json:"enrolled_at"`
+		CertCN   string    `json:"cert_cn"`
+	}
+	devEnrolled := map[string][]deviceInfo{} // username -> list of devices
+
+	// Admin: create a one-time invite for a username.
+	// kpm (already enrolled as an admin-capable user) calls this.
+	mux.HandleFunc("POST /admin/invites", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var in struct {
+			Username   string `json:"username"`
+			TTLSeconds int    `json:"ttl_seconds"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Username == "" {
+			http.Error(w, `{"error":"username required in body"}`, http.StatusBadRequest)
+			return
+		}
+		ttl := 7 * 24 * time.Hour
+		if in.TTLSeconds > 0 {
+			ttl = time.Duration(in.TTLSeconds) * time.Second
+		}
+		tokBytes := make([]byte, 24)
+		rand.Read(tokBytes)
+		inviteTok := "inv_" + base64.RawURLEncoding.EncodeToString(tokBytes)
+
+		rec := &inviteRecord{
+			Username:  in.Username,
+			ExpiresAt: time.Now().Add(ttl),
+			CreatedAt: time.Now(),
+		}
+		devInvites[inviteTok] = rec
+
+		slog.Info("admin: issued invite token", "for_user", in.Username, "invite_token", inviteTok)
+		json.NewEncoder(w).Encode(map[string]any{
+			"invite_token": inviteTok,
+			"username":     in.Username,
+			"expires_at":   rec.ExpiresAt.Format(time.RFC3339),
+		})
+	})
+
+	// Admin: get basic info + enrolled devices for a user (for audit / "getuserinfo").
+	mux.HandleFunc("GET /admin/users/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		username := strings.TrimPrefix(r.URL.Path, "/admin/users/")
+		if username == "" {
+			http.Error(w, `{"error":"username required, e.g. /admin/users/rajesh"}`, http.StatusBadRequest)
+			return
+		}
+		devs := devEnrolled[username]
+		json.NewEncoder(w).Encode(map[string]any{
+			"username": username,
+			"devices":  devs,
+		})
+	})
+
+	// Enroll — bootstrap for new devices/machines (kpm enroll).
+	// Supports two modes:
+	//   1. Old/shared: explicit "user" + optional enrollment_token (shared secret via AGENTKMS_ENROLL_TOKEN or enroll.secret)
+	//   2. New preferred (clean invites): "invite_token" created by kpm admin inviteuser.
+	// When an invite_token is used the server resolves the username from the invite record
+	// (one-time use) and the caller does not need to know or send the username.
+	mux.HandleFunc("POST /enroll", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Resolve the PKI dir once (supports --dir on serve, AGENTKMS_DIR, and default ~/.agentkms/dev).
+		enrollDir := *dirFlag
+		if enrollDir == "" {
+			enrollDir = os.Getenv("AGENTKMS_DIR")
+		}
+		if enrollDir == "" {
+			if home, err := os.UserHomeDir(); err == nil {
+				enrollDir = filepath.Join(home, ".agentkms", "dev")
+			}
+		}
+
+		// Parse body. Support both the legacy fields and the new invite flow.
+		var req struct {
+			User            string `json:"user"`
+			DeviceID        string `json:"device_id"`
+			Hostname        string `json:"hostname"`
+			EnrollmentToken string `json:"enrollment_token"` // legacy shared secret
+			InviteToken     string `json:"invite_token"`     // preferred: one-time from kpm admin inviteuser
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.DeviceID == "" {
+			req.DeviceID = "device-" + fmt.Sprintf("%d", time.Now().UnixNano())
+		}
+		if req.Hostname == "" {
+			req.Hostname, _ = os.Hostname()
+		}
+
+		allowedUser := req.User
+		usedInvite := false
+
+		// Preferred path: one-time invite token (created via `kpm admin inviteuser <name>`).
+		if req.InviteToken != "" {
+			if rec, ok := devInvites[req.InviteToken]; ok && !rec.Used && time.Now().Before(rec.ExpiresAt) {
+				allowedUser = rec.Username
+				rec.Used = true
+				usedInvite = true
+				slog.Info("enroll accepted via invite_token", "username", allowedUser, "invite", req.InviteToken)
+			} else {
+				slog.Warn("enroll rejected bad/used/expired invite_token", "invite", req.InviteToken)
+				http.Error(w, "invalid, expired, or already-used invite token", http.StatusForbidden)
+				return
+			}
+		}
+
+		// Legacy / open-dev path (shared secret or completely open).
+		if !usedInvite {
+			if allowedUser == "" {
+				allowedUser = "unknown-user"
+			}
+			devEnrollSecret := os.Getenv("AGENTKMS_ENROLL_TOKEN")
+			if devEnrollSecret == "" {
+				secretBytes, _ := os.ReadFile(filepath.Join(enrollDir, "enroll.secret"))
+				devEnrollSecret = strings.TrimSpace(string(secretBytes))
+			}
+			sentToken := req.EnrollmentToken
+			if sentToken == "" {
+				sentToken = r.Header.Get("X-Enrollment-Token")
+			}
+			if devEnrollSecret != "" {
+				if sentToken == "" || sentToken != devEnrollSecret {
+					slog.Warn("enroll rejected: invalid or missing enrollment token",
+						"requested_user", req.User, "has_token", sentToken != "")
+					http.Error(w, "invalid or missing enrollment token (this server requires a token for enrollment)", http.StatusForbidden)
+					return
+				}
+				slog.Info("enroll with valid (legacy) enrollment token", "user", allowedUser)
+			} else {
+				slog.Info("enroll (open dev, no token required)", "user", allowedUser)
+			}
+		}
+
+		// Record the device for this user (used by /admin/users/...)
+		devEnrolled[allowedUser] = append(devEnrolled[allowedUser], deviceInfo{
+			DeviceID: req.DeviceID,
+			Hostname: req.Hostname,
+			Enrolled: time.Now(),
+			CertCN:   allowedUser + "-" + req.DeviceID,
+		})
+
+		caPEM, caErr := os.ReadFile(filepath.Join(enrollDir, "ca.crt"))
+		caKeyPEM, _ := os.ReadFile(filepath.Join(enrollDir, "ca.key"))
+		if caErr != nil {
+			http.Error(w, "no PKI yet — run 'agentkms-dev enroll' first on the server", 500)
+			return
+		}
+
+		// Parse CA
+		caBlock, _ := pem.Decode(caPEM)
+		caCert, _ := x509.ParseCertificate(caBlock.Bytes)
+		caKeyBlock, _ := pem.Decode(caKeyPEM)
+		caKey, _ := x509.ParseECPrivateKey(caKeyBlock.Bytes)
+
+		// Generate fresh client key + cert for this user+device.
+		// CN and OU encode user and device for auth/policies and forensics tracking.
+		// "user:xxx" (from the --user given to kpm enroll, or validated via token) is the
+		// stable identity that gives access to "your" secrets across all your devices.
+		clientKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		clientSerial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+		clientCN := allowedUser + "-" + req.DeviceID
+		clientTemplate := &x509.Certificate{
+			SerialNumber: clientSerial,
+			Subject: pkix.Name{
+				CommonName:         clientCN,
+				Organization:       []string{"AgentKMS"},
+				OrganizationalUnit: []string{"user:" + allowedUser, "device:" + req.DeviceID, "hostname:" + req.Hostname},
+			},
+			NotBefore:   time.Now().Add(-time.Minute),
+			NotAfter:    time.Now().Add(365 * 24 * time.Hour),
+			KeyUsage:    x509.KeyUsageDigitalSignature,
+			ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		}
+		clientCertDER, _ := x509.CreateCertificate(rand.Reader, clientTemplate, caCert, &clientKey.PublicKey, caKey)
+
+		clientCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientCertDER})
+		clientKeyDER, _ := x509.MarshalECPrivateKey(clientKey)
+		clientKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: clientKeyDER})
+
+		// Write for server-side reference/audit (one dir per device for easy revocation/forensics).
+		clientDir := filepath.Join(enrollDir, "clients", clientCN)
+		os.MkdirAll(clientDir, 0700)
+		_ = os.WriteFile(filepath.Join(clientDir, "ca.crt"), caPEM, 0644)
+		_ = os.WriteFile(filepath.Join(clientDir, "client.crt"), clientCertPEM, 0644)
+		_ = os.WriteFile(filepath.Join(clientDir, "client.key"), clientKeyPEM, 0600)
+
+		fmt.Fprintf(w, `{"ca":%q,"client_cert":%q,"client_key":%q}`, string(caPEM), string(clientCertPEM), string(clientKeyPEM))
+		slog.Info("enroll: built and pushed client cert for user+device", "user", allowedUser, "device_id", req.DeviceID, "hostname", req.Hostname, "cn", clientCN)
 	})
 
 	// Everything else (crypto ops + credential vending) → apiServer.

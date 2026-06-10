@@ -1,0 +1,112 @@
+# policy-llm-stacked.yaml
+#
+# PURPOSE
+# -------
+# Demonstrates "stacked" / layered policy: a broad default requirement
+# combined with a more specific, additional constraint on a sensitive
+# sub-tree.
+#
+# Scenario from the user:
+#   - Default: Anything under LLM/ (or LLMS/) requires cert+human
+#     (WebAuthn step-up). This protects all LLM provider keys.
+#   - Specific: For the OpenAI paths (LLMS/OPENAI*), write and delete
+#     operations are further restricted to principals that also carry
+#     the custom "openai_admin" permission/role.
+#
+# This is the "stacking" pattern:
+#   - Use rule ordering (most specific first).
+#   - A narrow allow for the privileged case.
+#   - A covering deny for the sensitive operation on that prefix
+#     (catches everyone who doesn't match the privileged allow).
+#   - Broader default allows later in the file.
+#
+# Custom roles like "openai_admin" are supported (see relaxation in
+# internal/policy/rules.go and matching logic in engine.go that also
+# consults the raw CallerOU from the client certificate).
+#
+# HOW THE CLIENT SEES IT
+# ----------------------
+# - kpm get LLMS/OPENAI_API_KEY (interactive) will require step-up
+#   because of the auth_strength requirement.
+# - For writes/deletes on the OpenAI subpath, only certs whose
+#   identity carries the openai_admin label will be allowed (after
+#   also having cert+human).
+# - kpm env/run will surface "high-value/strict" notes for these
+#   paths when the server returns the policy hints.
+#
+# LOADING
+# -------
+#   agentkms --policy=docs/examples/policy-llm-stacked.yaml
+#
+# Or via the VaultPolicyLoader for live updates from KV.
+#
+version: "1"
+
+rules:
+  # ── 1. Most specific: OpenAI mutations only for openai_admins (with step-up)
+  # This is the "additional constraint" stacked on top of the default.
+  - id: allow-openai-mutations-for-admins
+    description: >
+      Only principals carrying the openai_admin label (in addition to
+      cert+human strength) may write or delete under LLMS/OPENAI.
+      Non-admins with cert+human will be caught by the deny below.
+    match:
+      identity:
+        # Custom role/permission. Will match if the caller's certificate
+        # OU (raw) or parsed role contains "openai_admin".
+        roles: ["openai_admin"]
+      operations:
+        - secret_write
+        - secret_delete
+        - secret_purge
+      key_prefix: "LLMS/OPENAI"
+      auth_strength: "cert+human"
+    effect: allow
+
+  # ── 2. Covering deny for OpenAI mutations (catches non-admins)
+  # Placed after the specific allow. Admins will have already matched rule 1.
+  # Everyone else trying to mutate OpenAI paths hits this and is denied,
+  # even if they have cert+human.
+  - id: deny-openai-mutations-unless-admin
+    description: >
+      Deny write/delete/purge on the OpenAI sub-tree unless the caller
+      matched the privileged admin allow above. This implements the
+      "only members who also have OPEN_AI_ADMIN" requirement.
+    match:
+      operations:
+        - secret_write
+        - secret_delete
+        - secret_purge
+      key_prefix: "LLMS/OPENAI"
+    effect: deny
+
+  # ── 3. Default for all LLM paths: require cert+human
+  # This is the broad "all LLM/* require cert+human" policy.
+  # It applies to reads, other providers, non-OpenAI keys, etc.
+  # Because of the earlier deny, non-admin writes to OpenAI are already blocked.
+  - id: require-cert-human-for-llm
+    description: >
+      Baseline protection for all LLM provider credentials and related
+      registry entries. Requires a recent WebAuthn step-up.
+      More specific rules above can add further constraints (the stack).
+    match:
+      key_prefix: "LLMS/"
+      auth_strength: "cert+human"
+    effect: allow
+
+  # ── 4. (Optional) Even broader crypto / other ops with cert-only
+  # For completeness — similar to the original policy-step-up.yaml.
+  - id: allow-general-crypto-cert-only
+    description: Sign/encrypt and similar ops are allowed with plain cert-only.
+    match:
+      identity:
+        caller_id_pattern: "*"
+      operations:
+        - sign
+        - encrypt
+        - decrypt
+        - list_keys
+        - rotate_key
+        - credential_vend
+      auth_strength: "cert-only"
+    effect: allow

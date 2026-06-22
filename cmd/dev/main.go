@@ -44,9 +44,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -279,7 +279,7 @@ func runEnroll(args []string) error {
 	fmt.Printf(`
 Done. Next steps:
 
-  1. Store your secrets in the macOS Keychain (encrypted, never plaintext on disk):
+  1. Store your secrets in the encrypted dev store (never plaintext on disk):
        agentkms-dev secrets set generic/forge/telegram token=<your_bot_token>
        agentkms-dev secrets set llm/anthropic api_key=<your_anthropic_key>
 

@@ -6,6 +6,7 @@
 # Jobs:
 #   quality    — go vet, go test -race, coverage thresholds, quality gate
 #   build      — docker build (validates Dockerfile; does not push)
+#   windows    — cross-compile Windows dev/server/MCP binaries
 #   health     — coordinate.sh health (worktree + branch + build integrity)
 #   integration — go test with 'integration' build tag against a live OpenBao
 #                 (runs on push to main and release tags only)
@@ -89,6 +90,40 @@ jobs:
           cache-to: type=gha,mode=max
           # Build for linux/amd64 in CI (matches K8s nodes).
           platforms: linux/amd64
+
+  # ── windows ───────────────────────────────────────────────────────────────────
+  windows:
+    name: Windows cross-compile (${{ matrix.cmd }})
+    runs-on: ubuntu-latest
+    needs: quality
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cmd: dev
+            output: agentkms-dev.exe
+          - cmd: server
+            output: agentkms-server.exe
+          - cmd: mcp
+            output: agentkms-mcp.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build Windows binary
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: go build -v -o ${{ matrix.output }} ./cmd/${{ matrix.cmd }}/
 
   # ── health ────────────────────────────────────────────────────────────────────
   health:

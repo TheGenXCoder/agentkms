@@ -192,6 +192,7 @@ Found a vulnerability? See [SECURITY.md](SECURITY.md) or email security@catalyst
 |-----|---------|
 | [`docs/design/README.md`](docs/design/README.md) | All v0.3 design decisions |
 | [`docs/deployment-guide.md`](docs/deployment-guide.md) | Corp VPC deployment (K8s, HA, TLS) |
+| [`docs/deployment-windows.md`](docs/deployment-windows.md) | Windows dev server + UTA sandbox pilot |
 | [`docs/backlog.md`](docs/backlog.md) | Roadmap and known gaps |
 | [`docs/architecture.md`](docs/architecture.md) | Security model and component overview |
 | [`docs/compliance-controls.md`](docs/compliance-controls.md) | SOC 2 / PCI-DSS / GDPR evidence |

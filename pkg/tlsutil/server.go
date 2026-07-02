@@ -102,3 +102,34 @@ func LoadServerTLSConfig(caCertPEM, certPEM, keyPEM []byte) (*tls.Config, error)
 	}
 	return ServerTLSConfig(caCertPEM, serverCert)
 }
+
+// LoadServerTLSConfigOptionalClient is like LoadServerTLSConfig but uses
+// VerifyClientCertIfGiven instead of RequireAndVerifyClientCert.
+//
+// This is required for first-contact enrollment (`kpm login <invitecode>`):
+// a new device has no client certificate yet, so it must be able to complete
+// the TLS handshake to fetch the CA (/.well-known/agentkms-ca) and submit its
+// CSR (POST /auth/cert/issue, authorized by the one-time bootstrap token).
+//
+// Security posture is preserved at the application layer:
+//   - A presented client cert is still verified against the CA pool
+//     (an invalid cert fails the handshake — it is not silently ignored).
+//   - /auth/session rejects connections without a verified peer cert,
+//     so session tokens still require mTLS.
+//   - Every other route requires a session token or bootstrap token.
+func LoadServerTLSConfigOptionalClient(caCertPEM, certPEM, keyPEM []byte) (*tls.Config, error) {
+	serverCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("tlsutil: loading server certificate: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caCertPEM) {
+		return nil, fmt.Errorf("tlsutil: no valid CA certificates found in PEM")
+	}
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		ClientAuth:   tls.VerifyClientCertIfGiven,
+		ClientCAs:    pool,
+		Certificates: []tls.Certificate{serverCert},
+	}, nil
+}

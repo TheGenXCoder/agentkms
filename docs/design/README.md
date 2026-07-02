@@ -4,6 +4,10 @@ Dated design decisions and strategy docs. Each file is a self-contained decision
 
 ## Index
 
+### 2026-07-01 — UX consolidation
+
+- [**UX Consolidation — One Path In, CA Transparency, Local-First Reads**](2026-07-01-ux-consolidation.md) — single `agentkms init --dev|--prod` binary, `kpm login <invitecode>` with CA pin inside the code, one config file, pull-through read cache with TTL, NRT push rejected. Spans both repos; kpm work is downstream of the agentkms invite-code format.
+
 ### 2026-04-16 — v0.3 product direction
 
 Conversation with Grok, review, strategic alignment. These four docs capture the pivot to forensics-as-the-announcement-target.

@@ -89,6 +89,19 @@ type PKIConfig struct {
 	Role string
 }
 
+// PKISigner covers CSR signing and cert lifecycle operations used by the API layer.
+// Implemented by *PKIClient (Vault) and *pki.LocalSigner (bare-metal).
+type PKISigner interface {
+	SignCert(ctx context.Context, role, csrPEM string) (*CertBundle, error)
+	ListCerts(ctx context.Context) ([]string, error)
+	FetchCert(ctx context.Context, serial string) (string, error)
+	RevokeCert(ctx context.Context, serialNumber string) error
+	FetchCRL(ctx context.Context) ([]byte, error)
+}
+
+// CSRSigner is an alias kept for callers that only sign CSRs.
+type CSRSigner = PKISigner
+
 // PKIClient issues certificates via OpenBao PKI.
 type PKIClient struct {
 	cfg    PKIConfig

@@ -26,7 +26,7 @@ import (
 // auth.RequireToken middleware.
 type AuthHandler struct {
 	tokens         *auth.TokenService
-	pki            *auth.PKIClient             // optional; for cert revocation + issuance
+	pki            auth.PKISigner              // optional; for cert revocation + issuance
 	certChecker    *auth.CertRevocationChecker // optional; for cert revocation
 	bootstrapStore auth.BootstrapStore         // optional; for operator bootstrap tokens
 	auditor        audit.Auditor
@@ -45,8 +45,8 @@ func NewAuthHandler(tokens *auth.TokenService, auditor audit.Auditor, eng policy
 	}
 }
 
-// SetPKI wires in the PKI client and cert checker for certificate revocation support.
-func (h *AuthHandler) SetPKI(pki *auth.PKIClient, checker *auth.CertRevocationChecker) {
+// SetPKI wires in the PKI signer and cert checker for certificate operations.
+func (h *AuthHandler) SetPKI(pki auth.PKISigner, checker *auth.CertRevocationChecker) {
 	h.pki = pki
 	h.certChecker = checker
 }

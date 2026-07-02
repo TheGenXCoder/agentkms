@@ -6,20 +6,28 @@ Stop putting LLM API keys in `.env` files.
 
 ## Quick Start (local dev — 5 minutes)
 
+**Unified binary** (v0.6.0+):
+
 ```bash
-# Clone and build
 git clone https://github.com/TheGenXCoder/agentkms.git
 cd agentkms
+go build -o agentkms ./cmd/agentkms
+
+agentkms init --dev
+agentkms serve
+```
+
+**Legacy dev binary** (still supported):
+
+```bash
 go build -o agentkms-dev ./cmd/dev/
-
-# Bootstrap local PKI (CA + server cert + client cert → ~/.agentkms/dev/)
 ./agentkms-dev enroll
-
-# Start the server (mTLS on 127.0.0.1:8443)
 ./agentkms-dev serve
+```
 
-# In another terminal — verify
-curl -k https://localhost:8443/healthz
+```bash
+# Verify
+curl -sk https://localhost:8443/healthz
 ```
 
 ### Store secrets and fetch them
@@ -74,9 +82,16 @@ GitHub App API | AWS STS | ...
 
 **Private key material never leaves the backend. No exceptions.**
 
-## Key Features (v0.3)
+## Key Features
 
-### Dynamic Secrets
+### v0.6 — Unified CLI & invite flow
+- `agentkms init --dev | --prod --host <fqdn>`
+- `agentkms invite <user>` → `kpmi1_…` codes for `kpm login`
+- `agentkms serve` — single production entrypoint
+- Remote invite minting via authenticated admin API
+
+### v0.3 — Dynamic secrets & MCP
+
 Short-lived credentials generated on demand — not stored, not rotatable, not leakable in the traditional sense.
 - **GitHub App PAT** — scoped installation tokens, auto-expired
 - **AWS STS** — assumed-role session credentials with configurable TTL
@@ -146,6 +161,60 @@ helm install agentkms ./deploy/helm/agentkms/ \
   --set backend.address=http://openbao:8200
 ```
 
+### Production golden path (invite + KPM)
+
+On the server (or admin machine with access):
+
+```bash
+agentkms init --prod --host agentkms.example.com
+agentkms invite alice
+# → prints: kpm login kpmi1_…
+agentkms serve
+```
+
+On each client (laptop, CI runner, second machine):
+
+```bash
+kpm update -y                    # v0.6.2+ recommended
+kpm login kpmi1_…                # enroll + write ~/.kpm/config.yaml + session
+kpm list
+```
+
+Certs land in `~/.kpm/identity/<server>/`. Re-run `agentkms invite` for additional devices or users.
+
+### Remote access (Cloudflare Tunnel)
+
+Use when clients are **off VPN** but should reach a k8s or odev-hosted AgentKMS with **mTLS intact**.
+
+**Server side** (tunnel host + Zero Trust):
+
+1. Tunnel TCP ingress: `agentkms-mstr.example.com` → `tcp://<cluster-ip>:8443`
+2. DNS CNAME to the tunnel (remotely managed config — local `cloudflared/config.yml` alone is not enough)
+
+**Client side** (every machine running KPM):
+
+```bash
+cloudflared access tcp --hostname agentkms-mstr.example.com --url localhost:8443
+# run via launchd (macOS) or systemd user (Linux); KeepAlive
+```
+
+KPM config uses the **local** dial address, not the public hostname:
+
+```yaml
+default_backend: mstr
+backends:
+  mstr:
+    server: https://localhost:8443
+```
+
+Cloudflare TCP does not expose raw mTLS on a public port — the `cloudflared access tcp` process on the client is required. On LAN/VPN, prefer internal DNS straight to the cluster (no tunnel).
+
+**TLS SAN:** server cert should include the hostname clients verify. For `localhost` dial URLs, ensure `localhost` is in the cert SAN (or enroll with a matching invite URL).
+
+See also: [KPM multi-backend docs](https://github.com/TheGenXCoder/kpm#multi-backend-v062).
+
+---
+
 ## Backend Tiers
 
 AgentKMS uses dependency injection for its vault backend — swap without changing application code.
@@ -161,17 +230,31 @@ All backends implement the same 5-method interface — no method ever returns ke
 
 ## KPM — The Local Secrets CLI
 
-For developers who want to replace `.env` files and manage secrets from the command line, use [KPM](https://github.com/TheGenXCoder/kpm) — the lightweight client CLI for AgentKMS.
+[KPM](https://github.com/TheGenXCoder/kpm) v0.6.2+ is the companion CLI — encrypted templates, JIT decrypt, multi-backend config.
 
 ```bash
-# Install KPM
-curl -sL https://raw.githubusercontent.com/TheGenXCoder/kpm/main/scripts/install.sh | bash
+# Install / upgrade (all platforms)
+curl -sL kpm.catalyst9.ai/install | bash
+kpm update -y
 
-# Try it locally (no server setup needed)
+# Local dev (no server setup)
 kpm quickstart
 
-# Or connect to your team's AgentKMS
-kpm init --server https://agentkms.your-company.com
+# Production — after agentkms invite
+kpm login kpmi1_…
+kpm list
+kpm get @mstr/cloudflare/dns-token    # multi-backend (v0.6.2+)
+```
+
+**Multi-backend** — personal (`mstr`), team (`uta`), and local dev in one config:
+
+```yaml
+default_backend: mstr
+backends:
+  mstr:
+    server: https://localhost:8443   # via cloudflared access tcp when remote
+  uta:
+    server: https://agentkms-uta.example.com:8443
 ```
 
 KPM replaces `.env` files with encrypted templates — secrets are ciphertext in your repo, decrypted only at the moment your app needs them.

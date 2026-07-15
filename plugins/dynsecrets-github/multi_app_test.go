@@ -17,7 +17,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/agentkms/agentkms/internal/credentials"
-	github "github.com/agentkms/agentkms/internal/dynsecrets/github"
+	github "github.com/agentkms/agentkms/plugins/dynsecrets-github"
 )
 
 // ── key helpers ──────────────────────────────────────────────────────────────

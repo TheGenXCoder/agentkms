@@ -40,7 +40,7 @@ import (
 
 	pluginv1 "github.com/agentkms/agentkms/api/plugin/v1"
 	"github.com/agentkms/agentkms/internal/credentials"
-	"github.com/agentkms/agentkms/internal/dynsecrets/github"
+	"github.com/agentkms/agentkms/plugins/dynsecrets-github"
 	goplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

@@ -4,9 +4,13 @@ Dated design decisions and strategy docs. Each file is a self-contained decision
 
 ## Index
 
+### 2026-07-15 — Dynsecrets as registered providers
+
+- [**Dynamic Secrets: Pluggable Providers (Terraform-style)**](2026-07-15-dynsecrets-provider-extraction.md) — register providers with the server; extract AWS/GitHub from `internal/` as reference plugins; customer engines out-of-tree; higher meta-SDK deferred.
+
 ### 2026-07-14 — Unified secret catalog & policy-gated capabilities
 
-- [**Unified Secret Catalog, Plugin Capabilities, and Policy-Gated Visibility**](2026-07-14-unified-secret-catalog-plugins-policy.md) — one path namespace for registry/LLM/dynamic DB; capability ∩ policy; list hide (supersecret); `kpm list --all` / `--path`; sql-dynamic drivers (MSSQL/Oracle); phased P0–P4. Spans agentkms + kpm. **Status: draft, ready for implementation planning.**
+- [**Unified Secret Catalog, Plugin Capabilities, and Policy-Gated Visibility**](2026-07-14-unified-secret-catalog-plugins-policy.md) — one path namespace; capability ∩ policy; P0 list federation shipped on feature branch. **Pre-deploy:** [signed policy bundles plan](../superpowers/plans/2026-07-15-signed-policy-bundles.md).
 
 ### 2026-07-01 — UX consolidation
 

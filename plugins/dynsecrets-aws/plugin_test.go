@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/agentkms/agentkms/internal/credentials"
-	aws "github.com/agentkms/agentkms/internal/dynsecrets/aws"
+	aws "github.com/agentkms/agentkms/plugins/dynsecrets-aws"
 )
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -219,4 +219,42 @@ func TestAWSPlugin_New_EmptyRegion(t *testing.T) {
 	if err == nil {
 		t.Error("New(empty region): expected error, got nil")
 	}
+}
+
+// ── Vend ─────────────────────────────────────────────────────────────────────
+
+type stubSTS struct {
+	token []byte
+	exp   time.Time
+	err   error
+}
+
+func (s *stubSTS) AssumeRole(ctx context.Context, roleARN, sessionName, externalID, region string, ttl time.Duration) ([]byte, time.Time, error) {
+	return s.token, s.exp, s.err
+}
+
+func TestAWSPlugin_Vend_RequiresSTS(t *testing.T) {
+	p := newPlugin(t)
+	_, err := p.Vend(context.Background(), validScope())
+	if err == nil {
+		t.Fatal("expected error without STS client")
+	}
+}
+
+func TestAWSPlugin_Vend_WithSTS(t *testing.T) {
+	p := newPlugin(t).WithSTS(&stubSTS{
+		token: []byte("ASIATEST"),
+		exp:   time.Now().UTC().Add(30 * time.Minute),
+	})
+	cred, err := p.Vend(context.Background(), validScope())
+	if err != nil {
+		t.Fatalf("Vend: %v", err)
+	}
+	if string(cred.APIKey) != "ASIATEST" {
+		t.Errorf("APIKey=%q", cred.APIKey)
+	}
+	if cred.UUID == "" {
+		t.Error("empty UUID")
+	}
+	cred.Zero()
 }

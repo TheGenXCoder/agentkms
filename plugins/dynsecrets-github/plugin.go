@@ -1,5 +1,7 @@
-// Package github implements the Dynamic Secrets plugin for GitHub App
+// Package github is the reference Dynamic Secrets provider for GitHub App
 // ephemeral installation access tokens (Kind="github-pat").
+//
+// Lives under plugins/ (not internal/). Host binary: cmd/agentkms-plugin-github.
 package github
 
 import (

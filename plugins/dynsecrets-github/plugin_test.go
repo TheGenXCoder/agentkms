@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/agentkms/agentkms/internal/credentials"
-	github "github.com/agentkms/agentkms/internal/dynsecrets/github"
+	github "github.com/agentkms/agentkms/plugins/dynsecrets-github"
 )
 
 // ── helpers ─────────────────────────────────────────────────────────────────

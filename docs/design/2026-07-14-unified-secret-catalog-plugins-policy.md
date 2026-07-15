@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-14  
 **Owner:** Bert Smith  
-**Status:** P0 implemented on `feat/unified-secret-catalog-p0` (agentkms + kpm) — plan [../superpowers/plans/2026-07-15-unified-secret-catalog-p0.md](../superpowers/plans/2026-07-15-unified-secret-catalog-p0.md)  
+**Status:** P0 implemented on `feat/unified-secret-catalog-p0` (agentkms + kpm). **Pre-deploy priority:** signed policy bundles — [../superpowers/plans/2026-07-15-signed-policy-bundles.md](../superpowers/plans/2026-07-15-signed-policy-bundles.md). Dynamic SQL deferred per-provider; AWS/GitHub dynsecrets host already present.  
 **Related:**
 
 - [2026-04-16-dynamic-secrets.md](2026-04-16-dynamic-secrets.md) — AgentKMS as issuing authority; provider landscape  

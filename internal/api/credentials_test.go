@@ -221,6 +221,90 @@ func TestListLLMProviders_RespectsPathPolicy(t *testing.T) {
 	}
 }
 
+// TestVendAllowedWhenListDenied locks E1: policy can deny metadata_list for
+// llm/** while still allowing credential_vend on the same path. List omits
+// providers; vend still returns 200 when a key is configured.
+func TestVendAllowedWhenListDenied(t *testing.T) {
+	const apiKey = "sk-ant-vend-without-list-E1"
+	b := backend.NewDevBackend()
+	aud := &capturingAuditor{}
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
+
+	// deny metadata_list path_pattern llm/**
+	// allow credential_vend *
+	eng := policy.New(policy.Policy{
+		Version: "1",
+		Rules: []policy.Rule{
+			{
+				ID:          "deny-llm-list",
+				Description: "deny metadata_list for all llm paths",
+				Match: policy.Match{
+					Operations:  []policy.Operation{policy.OpMetadataList},
+					PathPattern: "llm/**",
+				},
+				Effect: policy.EffectDeny,
+			},
+			{
+				ID:          "allow-credential-vend",
+				Description: "allow credential_vend for any path",
+				Match: policy.Match{
+					Operations: []policy.Operation{policy.OpCredentialVend},
+				},
+				Effect: policy.EffectAllow,
+			},
+		},
+	})
+	srv := api.NewServer(b, aud, policy.AsEngineI(eng), ts, "dev")
+	kv := &stubCredKV{
+		data: map[string]map[string]string{
+			"kv/data/llm/anthropic": {"api_key": apiKey},
+		},
+	}
+	srv.SetVender(credentials.NewVender(kv, "kv"))
+
+	// GET /credentials/llm → empty or no anthropic (all llm/* denied for list)
+	listRR := credRequest(t, srv, http.MethodGet, "/credentials/llm")
+	assertStatus(t, listRR, http.StatusOK)
+
+	listBody := listRR.Body.String()
+	// ADVERSARIAL: list must never vend keys.
+	if strings.Contains(listBody, "api_key") || strings.Contains(listBody, apiKey) || strings.Contains(listBody, "sk-") {
+		t.Error("ADVERSARIAL: list response must not contain credential material")
+	}
+
+	var listResp map[string][]string
+	if err := json.Unmarshal(listRR.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("list unmarshal: %v", err)
+	}
+	providers := listResp["providers"]
+	if len(providers) != 0 {
+		t.Errorf("expected empty providers when llm/** metadata_list denied; got %v", providers)
+	}
+	for _, p := range providers {
+		if p == "anthropic" {
+			t.Error("anthropic must be omitted from list when metadata_list denied for llm/**")
+		}
+	}
+
+	// GET /credentials/llm/anthropic with key → 200 (vend independent of list)
+	vendRR := credRequest(t, srv, http.MethodGet, "/credentials/llm/anthropic")
+	if vendRR.Code != http.StatusOK {
+		t.Fatalf("vend status = %d, want 200; body: %s", vendRR.Code, vendRR.Body.String())
+	}
+
+	var vendResp map[string]interface{}
+	if err := json.Unmarshal(vendRR.Body.Bytes(), &vendResp); err != nil {
+		t.Fatalf("vend unmarshal: %v", err)
+	}
+	if vendResp["provider"] != "anthropic" {
+		t.Errorf("provider = %v, want anthropic", vendResp["provider"])
+	}
+	if vendResp["api_key"] != apiKey {
+		t.Error("api_key mismatch on vend")
+	}
+}
+
 // ── GET /credentials/llm/{provider} ──────────────────────────────────────────
 
 func TestHandleGetLLMCredential_Success(t *testing.T) {

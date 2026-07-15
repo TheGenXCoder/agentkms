@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "policy_yaml": "# Example: hide supersecret/** from list/describe while allowing vend of one path.\n# Server enforces this; kpm list --all only shows what metadata_list allows.\nversion: \"1\"\nrules:\n  - id: deny-list-supersecret\n    effect: deny\n    match:\n      operations: [metadata_list]\n      path_pattern: \"supersecret/**\"\n    description: Hide supersecret tree from inventory (existence via list/describe)\n\n  - id: allow-vend-supersecret-stripe\n    effect: allow\n    match:\n      operations: [credential_vend]\n      path_pattern: \"supersecret/stripe-master\"\n    description: App may vend one path without seeing siblings\n\n  - id: allow-list-and-vend-default\n    effect: allow\n    match:\n      operations:\n        - metadata_list\n        - credential_vend\n        - secret_write\n        - secret_history\n        - secret_delete\n      identity:\n        caller_id_pattern: \"*\"\n    description: Default allow for other paths (tune for production)\n\n  - id: allow-secret-purge-step-up\n    effect: allow\n    match:\n      operations: [secret_purge]\n      auth_strength: \"cert+human\"\n    description: Purge always requires step-up (operation floor)\n",
+  "signature": "ZesKwMdsoWNcE6cV7tvY9RIDCL6yBececqTK5eKm7/XUa60ZZWhgW5MW8fVjVtcYBcR+/XOAGnlJ6xYyYk9hAw==",
+  "key_id": "example-demo-key",
+  "signed_at": "2026-07-15T20:43:56Z"
+}

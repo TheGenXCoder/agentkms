@@ -2,22 +2,28 @@ package policy
 
 // vault_loader.go — P-05: Load policy from OpenBao/Vault KV v2.
 //
-// VaultPolicyLoader fetches a Policy YAML document from a Vault KV v2 path
-// and wraps it in an Engine.  It supports hot-reload: a background goroutine
-// polls the KV path at a configurable interval and atomically swaps in the
-// new Policy if the content changes.
+// VaultPolicyLoader fetches a Policy from a Vault KV v2 path and wraps it in
+// an Engine. It supports hot-reload: a background goroutine polls the KV path
+// at a configurable interval and atomically swaps in the new Policy if the
+// content changes.
+//
+// Prefer signed bundles (Task 3):
+//   - KV secret field "policy.bundle" (JSON envelope) is preferred over
+//     "policy" (raw YAML).
+//   - When RequireSignature is true, raw YAML alone is rejected.
+//   - A bad signature never replaces the active engine (fail closed /
+//     last-good retention via reload returning error).
 //
 // Fall-through behaviour:
 //   - If the KV path returns 404, the loader falls back to the local file
-//     path (VaultPolicyConfig.LocalFallbackPath).  This allows a local YAML
-//     file to serve as a safe default when the KV store is not yet populated.
+//     path (VaultPolicyConfig.LocalFallbackPath) via LoadPolicyFromPath.
 //   - If both KV and local file are unavailable, Load() returns an error.
 //
 // SECURITY INVARIANTS:
 //
-//  1. A policy that fails Validate() is NEVER loaded into the engine.
-//     If the KV document is malformed or invalid, the engine retains the
-//     last valid policy (or the local fallback).
+//  1. A policy that fails Validate() or signature verification is NEVER
+//     loaded into the engine. If the KV document is malformed, invalid, or
+//     has a bad signature, the engine retains the last valid policy.
 //
 //  2. The Vault token is held in memory only; it is never written to disk or
 //     included in any log output.
@@ -63,12 +69,21 @@ type VaultPolicyConfig struct {
 	PolicyPath string
 
 	// LocalFallbackPath is the local file path to use when the KV path
-	// returns 404.  If empty, no fallback is attempted.
+	// returns 404.  If empty, no fallback is attempted. When set, the path
+	// is loaded via LoadPolicyFromPath (signed-bundle preference).
 	LocalFallbackPath string
 
 	// ReloadInterval is how often the loader polls for policy changes.
 	// Zero disables background reload.
 	ReloadInterval time.Duration
+
+	// RequireSignature, when true, rejects unsigned policy YAML from KV or
+	// the local fallback. Production default is true.
+	RequireSignature bool
+
+	// Trust holds public keys for verifying policy.bundle envelopes.
+	// Required when RequireSignature is true or when KV supplies a bundle.
+	Trust *TrustStore
 }
 
 // VaultPolicyLoader loads a Policy from Vault KV and wraps it in a live Engine.
@@ -203,9 +218,12 @@ func (v *VaultPolicyLoader) fetchPolicy(ctx context.Context) (*Policy, error) {
 		return p, nil
 	}
 
-	// If 404 and fallback is configured, use the local file.
+	// If 404 and fallback is configured, use the local file (bundle-aware).
 	if errors.Is(err, errKVNotFound) && v.cfg.LocalFallbackPath != "" {
-		p, ferr := LoadFromFile(v.cfg.LocalFallbackPath)
+		p, ferr := LoadPolicyFromPath(v.cfg.LocalFallbackPath, LoadConfig{
+			RequireSignature: v.cfg.RequireSignature,
+			Trust:            v.cfg.Trust,
+		})
 		if ferr == nil {
 			return p, nil
 		}
@@ -215,8 +233,9 @@ func (v *VaultPolicyLoader) fetchPolicy(ctx context.Context) (*Policy, error) {
 	return nil, err
 }
 
-// fetchFromKV fetches and parses the policy YAML from Vault KV v2.
-// Returns errNotFound (wrapped) when the key does not exist.
+// fetchFromKV fetches and parses policy from Vault KV v2.
+// Prefers the "policy.bundle" field (signed JSON envelope) over "policy"
+// (raw YAML). Returns errKVNotFound when the key does not exist.
 func (v *VaultPolicyLoader) fetchFromKV(ctx context.Context) (*Policy, error) {
 	// KV v2 data path: {mount}/data/{key}
 	path := fmt.Sprintf("%s/v1/%s/data/%s",
@@ -259,9 +278,31 @@ func (v *VaultPolicyLoader) fetchFromKV(ctx context.Context) (*Policy, error) {
 		return nil, fmt.Errorf("policy: VaultPolicyLoader: parse KV envelope: %w", err)
 	}
 
-	yamlDoc, ok := envelope.Data.Data["policy"]
+	return parseKVPolicyData(envelope.Data.Data, v.cfg.RequireSignature, v.cfg.Trust)
+}
+
+// parseKVPolicyData selects and loads policy from a KV v2 secret data map.
+// Prefer "policy.bundle" (signed JSON) over "policy" (raw YAML). A present
+// but invalid bundle fails closed and never falls through to unsigned YAML.
+func parseKVPolicyData(data map[string]string, requireSig bool, trust *TrustStore) (*Policy, error) {
+	if bundleDoc, ok := data["policy.bundle"]; ok && bundleDoc != "" {
+		if trust == nil || trust.Len() == 0 {
+			return nil, fmt.Errorf("policy: VaultPolicyLoader: KV has policy.bundle but no trust keys configured")
+		}
+		p, err := ParseAndVerify([]byte(bundleDoc), trust)
+		if err != nil {
+			return nil, fmt.Errorf("policy: VaultPolicyLoader: invalid signed bundle from KV: %w", err)
+		}
+		return p, nil
+	}
+
+	yamlDoc, ok := data["policy"]
 	if !ok || yamlDoc == "" {
-		return nil, fmt.Errorf("policy: VaultPolicyLoader: KV secret missing 'policy' field")
+		return nil, fmt.Errorf("policy: VaultPolicyLoader: KV secret missing 'policy.bundle' and 'policy' fields")
+	}
+
+	if requireSig {
+		return nil, fmt.Errorf("policy: VaultPolicyLoader: unsigned policy YAML rejected (signature required); store a signed envelope under 'policy.bundle'")
 	}
 
 	p, err := LoadFromBytes([]byte(yamlDoc))

@@ -59,9 +59,13 @@ func main() {
 	configPath := flag.String("config", envOr("AGENTKMS_CONFIG", defaultConfigPath), "Config file path")
 	tokenPath := flag.String("token-path", envOr("AGENTKMS_VAULT_TOKEN_PATH", defaultTokenPath), "Vault token file path")
 	vaultAddr := flag.String("vault-addr", envOr("AGENTKMS_VAULT_ADDR", ""), "OpenBao/Vault address")
-	policyFile := flag.String("policy", envOr("AGENTKMS_POLICY", ""), "Policy YAML file (optional; empty = deny all)")
+	policyFile := flag.String("policy", envOr("AGENTKMS_POLICY", ""), "Policy YAML or signed bundle path (optional; empty = deny all)")
 	vaultPolicyPath := flag.String("vault-policy-path", envOr("AGENTKMS_VAULT_POLICY_PATH", ""), "Vault KV path for policy (e.g. policy/production); overrides --policy")
 	vaultPolicyReload := flag.Duration("vault-policy-reload", 60*time.Second, "How often to reload policy from Vault KV")
+	// Policy signature enforcement. Empty flag/env defers to env=production default.
+	// AGENTKMS_POLICY_ALLOW_UNSIGNED=1 forces unsigned YAML (dev only).
+	policyTrustKeys := flag.String("policy-trust-keys", envOr("AGENTKMS_POLICY_TRUST_KEYS", ""), "Path to JSON map of key_id → hex Ed25519 public keys for signed policy bundles")
+	policyRequireSigFlag := flag.String("policy-require-signature", envOr("AGENTKMS_POLICY_REQUIRE_SIGNATURE", ""), "Require signed policy bundles (true/false; default true when --env=production)")
 	auditLog := flag.String("audit-log", envOr("AGENTKMS_AUDIT_LOG", defaultAuditLog), "Audit log file path")
 	elkAddr := flag.String("elk-addr", envOr("AGENTKMS_ELK_ADDR", defaultELKAddr), "Elasticsearch address (optional)")
 	elkIndex := flag.String("elk-index", envOr("AGENTKMS_ELK_INDEX", "agentkms-audit"), "Elasticsearch index")
@@ -229,6 +233,30 @@ func main() {
 	}
 
 	// ── Policy engine ──────────────────────────────────────────────────────────
+	requirePolicySig := resolvePolicyRequireSignature(*policyRequireSigFlag, *env)
+	var policyTrust *policy.TrustStore
+	if *policyTrustKeys != "" {
+		var err error
+		policyTrust, err = policy.LoadTrustStoreFromFile(*policyTrustKeys)
+		if err != nil {
+			slog.Error("failed to load policy trust keys", "path", *policyTrustKeys, "error", err)
+			os.Exit(1)
+		}
+		slog.Info("policy trust keys loaded", "path", *policyTrustKeys, "keys", policyTrust.Len())
+	}
+	if requirePolicySig && (policyTrust == nil || policyTrust.Len() == 0) {
+		// Only fatal if a policy source is actually configured; deny-all needs no keys.
+		if *vaultPolicyPath != "" || *policyFile != "" {
+			slog.Error("policy signature required but no trust keys configured",
+				"hint", "set --policy-trust-keys / AGENTKMS_POLICY_TRUST_KEYS, or AGENTKMS_POLICY_ALLOW_UNSIGNED=1 for local dev only")
+			os.Exit(1)
+		}
+	}
+	slog.Info("policy signature enforcement",
+		"require_signature", requirePolicySig,
+		"trust_keys_configured", policyTrust != nil && policyTrust.Len() > 0,
+	)
+
 	var eng policy.EngineI
 
 	if *vaultPolicyPath != "" && *vaultAddr != "" {
@@ -240,6 +268,8 @@ func main() {
 			PolicyPath:        *vaultPolicyPath,
 			LocalFallbackPath: *policyFile,
 			ReloadInterval:    *vaultPolicyReload,
+			RequireSignature:  requirePolicySig,
+			Trust:             policyTrust,
 		})
 		if err := loader.Load(ctx); err != nil {
 			slog.Error("failed to load policy from Vault KV", "path", *vaultPolicyPath, "error", err)
@@ -248,15 +278,19 @@ func main() {
 		eng = loader.EngineI()
 		slog.Info("policy loaded from Vault KV",
 			"path", *vaultPolicyPath,
-			"reload_interval", vaultPolicyReload.String())
+			"reload_interval", vaultPolicyReload.String(),
+			"require_signature", requirePolicySig)
 	} else if *policyFile != "" {
-		p, err := policy.LoadFromFile(*policyFile)
+		p, err := policy.LoadPolicyFromPath(*policyFile, policy.LoadConfig{
+			RequireSignature: requirePolicySig,
+			Trust:            policyTrust,
+		})
 		if err != nil {
 			slog.Error("failed to load policy", "path", *policyFile, "error", err)
 			os.Exit(1)
 		}
 		eng = policy.AsEngineI(policy.New(*p))
-		slog.Info("policy loaded from file", "path", *policyFile)
+		slog.Info("policy loaded from file", "path", *policyFile, "require_signature", requirePolicySig)
 	} else {
 		slog.Warn("no policy configured — all operations denied by default")
 		eng = policy.DenyAllEngine{}
@@ -380,10 +414,12 @@ func main() {
 
 	// ── UI registration ───────────────────────────────────────────────────────
 	uiHandlers := &ui.Handlers{
-		Backend: bknd,
-		Auditor: auditor,
-		Policy:  eng,
-		Env:     *env,
+		Backend:          bknd,
+		Auditor:          auditor,
+		Policy:           eng,
+		Env:              *env,
+		RequireSignature: requirePolicySig,
+		Trust:            policyTrust,
 	}
 	ui.RegisterHandlers(mux, uiHandlers, apiServer.AuthMiddleware)
 	// //blog:part-5 references POST /auth/session in claims (api_routes).
@@ -550,6 +586,24 @@ func envOr(key, fallback string) string {
 func envBool(key string) bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
 	return v == "1" || v == "true" || v == "yes"
+}
+
+// resolvePolicyRequireSignature decides whether unsigned policy is allowed.
+//
+// Priority:
+//  1. AGENTKMS_POLICY_ALLOW_UNSIGNED=1 → false (dev escape hatch)
+//  2. Explicit flag/env AGENTKMS_POLICY_REQUIRE_SIGNATURE when set
+//  3. Default true when deployment env is production (or "prod")
+func resolvePolicyRequireSignature(flagVal, deploymentEnv string) bool {
+	if envBool("AGENTKMS_POLICY_ALLOW_UNSIGNED") {
+		return false
+	}
+	if flagVal != "" {
+		v := strings.ToLower(strings.TrimSpace(flagVal))
+		return v == "1" || v == "true" || v == "yes"
+	}
+	e := strings.ToLower(strings.TrimSpace(deploymentEnv))
+	return e == "production" || e == "prod"
 }
 
 func readToken(path string) (string, error) {

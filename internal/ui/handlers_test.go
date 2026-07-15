@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -181,6 +182,107 @@ func TestHandleUpdatePolicy_InvalidYAML(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 Bad Request, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdatePolicy_UnsignedRejectedWhenRequired(t *testing.T) {
+	eng := policy.New(policy.Policy{Version: "1"})
+	h := &Handlers{
+		Policy:           policy.AsEngineI(eng),
+		RequireSignature: true,
+		Trust:            policy.NewTrustStore(),
+	}
+
+	yamlData := `
+version: "1"
+rules:
+  - id: sneaky
+    effect: allow
+`
+	req := httptest.NewRequest("PUT", "/ui/api/policy", bytes.NewBufferString(yamlData))
+	w := httptest.NewRecorder()
+	h.HandleUpdatePolicy(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unsigned YAML when signature required, got %d: %s", w.Code, w.Body.String())
+	}
+	// Engine must not have been reloaded.
+	if len(h.Policy.GetPolicy().Rules) != 0 {
+		t.Error("policy must not change when unsigned update is rejected")
+	}
+}
+
+func TestHandleUpdatePolicy_ValidBundleAcceptedWhenRequired(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust := policy.NewTrustStore()
+	trust.AddKey("primary", pub)
+
+	yamlBody := "version: \"1\"\nrules:\n  - id: new-rule\n    effect: allow\n"
+	b, err := policy.SignPolicyYAML([]byte(yamlBody), priv, "primary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	eng := policy.New(policy.Policy{Version: "1"})
+	h := &Handlers{
+		Policy:           policy.AsEngineI(eng),
+		RequireSignature: true,
+		Trust:            trust,
+	}
+
+	req := httptest.NewRequest("PUT", "/ui/api/policy", bytes.NewReader(raw))
+	w := httptest.NewRecorder()
+	h.HandleUpdatePolicy(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for valid bundle, got %d: %s", w.Code, w.Body.String())
+	}
+	updated := h.Policy.GetPolicy()
+	if len(updated.Rules) != 1 || updated.Rules[0].ID != "new-rule" {
+		t.Errorf("policy not reloaded from bundle: %+v", updated)
+	}
+}
+
+func TestHandleUpdatePolicy_BadBundleSignatureRejected(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust := policy.NewTrustStore()
+	trust.AddKey("primary", pub)
+
+	yamlBody := "version: \"1\"\nrules:\n  - id: evil\n    effect: allow\n"
+	b, err := policy.SignPolicyYAML([]byte(yamlBody), priv, "primary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Tamper after sign.
+	b.PolicyYAML = yamlBody + "# tampered\n"
+	raw, _ := json.Marshal(b)
+
+	eng := policy.New(policy.Policy{Version: "1"})
+	h := &Handlers{
+		Policy:           policy.AsEngineI(eng),
+		RequireSignature: true,
+		Trust:            trust,
+	}
+
+	req := httptest.NewRequest("PUT", "/ui/api/policy", bytes.NewReader(raw))
+	w := httptest.NewRecorder()
+	h.HandleUpdatePolicy(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for bad signature, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(h.Policy.GetPolicy().Rules) != 0 {
+		t.Error("engine must not reload on bad signature")
 	}
 }
 

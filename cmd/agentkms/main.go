@@ -47,6 +47,8 @@ func main() {
 		os.Exit(runCredential(args))
 	case "plugin":
 		os.Exit(runPlugin(args))
+	case "policy":
+		os.Exit(runPolicy(args))
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -66,6 +68,7 @@ Commands:
   agentkms serve [--addr <host:port>] [--dir <path>]
   agentkms run -path <path> -- <cmd> [args...]
   agentkms plugin install|list|remove ...
+  agentkms policy sign --key <path> --key-id <id> --in <policy.yaml> --out <bundle.json>
 
 Golden path:
   agentkms init --prod --host agentkms.example.com

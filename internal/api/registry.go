@@ -515,6 +515,11 @@ func (s *Server) handleWriteMetadata(w http.ResponseWriter, r *http.Request) {
 // The list is built from metadata paths — it physically cannot reach
 // the secrets namespace. Fields containing "value" or "secret" are
 // stripped from each record as defense in depth.
+//
+// Policy:
+//  1. Coarse gate: Evaluate(metadata_list, "metadata/*") — global deny → 403.
+//  2. Per-path filter: for each secret path p, Evaluate(metadata_list, p);
+//     omit the row when !Allow (e.g. path_pattern denylists). Empty list is 200.
 func (s *Server) handleListMetadata(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := identityFromContext(ctx)
@@ -530,6 +535,8 @@ func (s *Server) handleListMetadata(w http.ResponseWriter, r *http.Request) {
 	ev.UserAgent = r.UserAgent()
 	populateIdentityFields(&ev, id)
 
+	// Coarse gate: identity must be allowed to list metadata at all.
+	// Path-specific denylists are applied per row below, not here.
 	decision, pErr := s.policy.Evaluate(ctx, id, audit.OperationMetadataList, "metadata/*")
 	if pErr != nil {
 		ev.Outcome = audit.OutcomeError
@@ -571,6 +578,20 @@ func (s *Server) handleListMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 		userPath := userPathFromKVPath(kvPath, metadataPrefix)
 
+		// Per-path policy: omit rows the caller is not allowed to list.
+		// Evaluate with the catalog user path so path_pattern rules match
+		// (e.g. supersecret/**), not the internal kv/data/metadata/ prefix.
+		pathDecision, pathErr := s.policy.Evaluate(ctx, id, audit.OperationMetadataList, userPath)
+		if pathErr != nil {
+			ev.Outcome = audit.OutcomeError
+			_ = s.auditLog(ctx, ev)
+			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
+			return
+		}
+		if !pathDecision.Allow {
+			continue
+		}
+
 		raw, err := s.registryWriter.GetSecret(ctx, kvPath)
 		if err != nil {
 			continue // skip unreadable entries
@@ -600,6 +621,10 @@ func (s *Server) handleListMetadata(w http.ResponseWriter, r *http.Request) {
 
 // handleGetMetadata handles GET /metadata/{path...}.
 // Returns metadata for a single secret — NEVER includes values.
+//
+// SECURITY: policy denial returns HTTP 404 with the same body as a missing
+// secret so clients cannot probe existence of paths they are not allowed to
+// describe (no policy_denied / 403 existence oracle).
 func (s *Server) handleGetMetadata(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userPath := r.PathValue("path")
@@ -624,9 +649,11 @@ func (s *Server) handleGetMetadata(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, errCodeInvalidRequest, "path is required")
 		return
 	}
+	// Audit key retains metadata/ prefix for log correlation; policy evaluates
+	// the catalog user path so path_pattern rules (e.g. supersecret/**) match.
 	ev.KeyID = "metadata/" + userPath
 
-	decision, pErr := s.policy.Evaluate(ctx, id, audit.OperationMetadataList, ev.KeyID)
+	decision, pErr := s.policy.Evaluate(ctx, id, audit.OperationMetadataList, userPath)
 	if pErr != nil {
 		ev.Outcome = audit.OutcomeError
 		_ = s.auditLog(ctx, ev)
@@ -634,11 +661,12 @@ func (s *Server) handleGetMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !decision.Allow {
+		// Same status + body as not-found — do not reveal policy_denied.
 		ev.Outcome = audit.OutcomeDenied
 		ev.DenyReason = decision.DenyReason
 		populateDecisionFields(&ev, decision)
 		_ = s.auditLog(ctx, ev)
-		s.writeError(w, http.StatusForbidden, errCodePolicyDenied, "operation denied by policy")
+		s.writeError(w, http.StatusNotFound, errCodeKeyNotFound, "secret not found")
 		return
 	}
 

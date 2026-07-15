@@ -642,6 +642,97 @@ func TestHandleListMetadata_ADVERSARIAL_StripSensitiveFields(t *testing.T) {
 	}
 }
 
+// TestListMetadata_OmitsDeniedPathPattern verifies that per-path policy
+// evaluation omits rows denied by path_pattern while still returning allowed
+// paths. Global metadata_list remains allowed (200); deny is filter-only.
+func TestListMetadata_OmitsDeniedPathPattern(t *testing.T) {
+	kv := newMemKV()
+
+	// Seed registry via allow-all server so writes succeed, then rebuild
+	// the server with a real policy engine that denylists supersecret/**.
+	seedSrv, _ := newAllowRegistryServer(t, kv)
+	writeSecret(t, seedSrv, "supersecret/a", `{"value":"must-not-list"}`)
+	writeSecret(t, seedSrv, "UTA/b", `{"value":"ok-to-list"}`)
+
+	eng := policy.New(policy.Policy{
+		Version: "1",
+		Rules: []policy.Rule{
+			{
+				ID:          "deny-supersecret-list",
+				Description: "deny listing secrets under supersecret/",
+				Match: policy.Match{
+					Operations:  []policy.Operation{policy.OpMetadataList},
+					PathPattern: "supersecret/**",
+				},
+				Effect: policy.EffectDeny,
+			},
+			{
+				ID:          "allow-metadata-list",
+				Description: "allow metadata_list for any path",
+				Match: policy.Match{
+					Operations: []policy.Operation{policy.OpMetadataList},
+				},
+				Effect: policy.EffectAllow,
+			},
+			// Permit secret_write so seeding is not required if helpers change;
+			// registry is already populated above.
+			{
+				ID: "allow-secret-write",
+				Match: policy.Match{
+					Operations: []policy.Operation{policy.OpSecretWrite},
+				},
+				Effect: policy.EffectAllow,
+			},
+		},
+	})
+	srv, _ := newRegistryServer(t, kv, policy.AsEngineI(eng))
+
+	rr := registryRequest(t, srv, http.MethodGet, "/metadata", "")
+	assertStatus(t, rr, http.StatusOK)
+
+	body := rr.Body.String()
+	// ADVERSARIAL: secret values never appear.
+	if strings.Contains(body, "must-not-list") || strings.Contains(body, "ok-to-list") {
+		t.Error("ADVERSARIAL: secret value found in filtered list response")
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	secrets, ok := resp["secrets"].([]any)
+	if !ok {
+		t.Fatalf("response has no 'secrets' array: %v", resp)
+	}
+
+	var paths []string
+	for _, s := range secrets {
+		sm, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+		if p, ok := sm["path"].(string); ok {
+			paths = append(paths, p)
+		}
+	}
+
+	for _, p := range paths {
+		if strings.HasPrefix(p, "supersecret/") || p == "supersecret" {
+			t.Errorf("denied path %q must be omitted from list", p)
+		}
+	}
+
+	foundUTA := false
+	for _, p := range paths {
+		if p == "UTA/b" {
+			foundUTA = true
+		}
+	}
+	if !foundUTA {
+		t.Errorf("expected UTA/b in list; got paths %v", paths)
+	}
+}
+
 // ── handleGetMetadata tests ───────────────────────────────────────────────────
 
 func TestHandleGetMetadata_HappyPath(t *testing.T) {
@@ -675,12 +766,74 @@ func TestHandleGetMetadata_NotFound_Returns404(t *testing.T) {
 	assertStatus(t, rr, http.StatusNotFound)
 }
 
-func TestHandleGetMetadata_PolicyDeny_Returns403(t *testing.T) {
+// TestHandleGetMetadata_PolicyDeny_Returns404 ensures policy denial on describe
+// is indistinguishable from a missing secret (existence-oracle protection).
+func TestHandleGetMetadata_PolicyDeny_Returns404(t *testing.T) {
 	kv := newMemKV()
+	// Pre-seed so deny is not conflated with storage miss.
+	seedSrv, _ := newAllowRegistryServer(t, kv)
+	writeSecret(t, seedSrv, "svc/key", `{"value":"hidden"}`)
+
 	srv, _ := newDenyRegistryServer(t, kv)
 
 	rr := registryRequest(t, srv, http.MethodGet, "/metadata/svc/key", "")
-	assertStatus(t, rr, http.StatusForbidden)
+	assertStatus(t, rr, http.StatusNotFound)
+
+	// Same machine-readable shape as not-found (no policy_denied leak).
+	var body map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["code"] != "key_not_found" {
+		t.Errorf("code = %v, want key_not_found (must not reveal policy_denied)", body["code"])
+	}
+	if body["error"] != "secret not found" {
+		t.Errorf("error = %v, want secret not found", body["error"])
+	}
+	if strings.Contains(rr.Body.String(), "hidden") {
+		t.Error("ADVERSARIAL: secret value leaked on policy deny")
+	}
+}
+
+// TestHandleGetMetadata_DeniedPathSameAsMissing verifies that a path-pattern
+// deny and a truly missing path produce identical HTTP status and JSON body.
+func TestHandleGetMetadata_DeniedPathSameAsMissing(t *testing.T) {
+	kv := newMemKV()
+	seedSrv, _ := newAllowRegistryServer(t, kv)
+	writeSecret(t, seedSrv, "supersecret/exists", `{"value":"x"}`)
+
+	eng := policy.New(policy.Policy{
+		Version: "1",
+		Rules: []policy.Rule{
+			{
+				ID: "deny-supersecret",
+				Match: policy.Match{
+					Operations:  []policy.Operation{policy.OpMetadataList},
+					PathPattern: "supersecret/**",
+				},
+				Effect: policy.EffectDeny,
+			},
+			{
+				ID: "allow-metadata",
+				Match: policy.Match{
+					Operations: []policy.Operation{policy.OpMetadataList},
+				},
+				Effect: policy.EffectAllow,
+			},
+		},
+	})
+	srv, _ := newRegistryServer(t, kv, policy.AsEngineI(eng))
+
+	rrDenied := registryRequest(t, srv, http.MethodGet, "/metadata/supersecret/exists", "")
+	rrMissing := registryRequest(t, srv, http.MethodGet, "/metadata/does/not/exist", "")
+
+	assertStatus(t, rrDenied, http.StatusNotFound)
+	assertStatus(t, rrMissing, http.StatusNotFound)
+
+	if rrDenied.Body.String() != rrMissing.Body.String() {
+		t.Errorf("denied body %q != missing body %q (existence oracle)",
+			rrDenied.Body.String(), rrMissing.Body.String())
+	}
 }
 
 func TestHandleGetMetadata_PolicyError_Returns500(t *testing.T) {

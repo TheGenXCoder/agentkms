@@ -226,9 +226,24 @@ type Match struct {
 	KeyPrefix string `yaml:"key_prefix,omitempty" json:"key_prefix,omitempty"`
 
 	// KeyIDs is an explicit allowlist of key IDs.  If non-empty, the key
-	// being operated on must appear exactly in this list.  KeyPrefix is
-	// ignored when KeyIDs is non-empty.
+	// being operated on must appear exactly in this list.  KeyPrefix and
+	// PathPattern are ignored when KeyIDs is non-empty.
 	KeyIDs []string `yaml:"key_ids,omitempty" json:"key_ids,omitempty"`
+
+	// PathPattern is a glob matched against the resource path (keyID).
+	// Used for secret catalog paths such as "supersecret/**" or "llm/*".
+	//
+	// Matching uses path.Match for simple globs.  A trailing "/**" is treated
+	// specially as recursive prefix: the path equals the prefix OR has the
+	// prefix followed by "/".  Empty (or omitted) means no path_pattern
+	// constraint (see matchesKey for full precedence).
+	//
+	// Precedence when matching keys (see matchesKey):
+	//  1. KeyIDs non-empty → exact KeyIDs only
+	//  2. Else PathPattern non-empty → path_pattern match
+	//  3. Else KeyPrefix non-empty → prefix match
+	//  4. Else match any key
+	PathPattern string `yaml:"path_pattern,omitempty" json:"path_pattern,omitempty"`
 
 	// AuthStrength is the minimum auth strength a session token must carry
 	// for this rule to match.  Valid values are "cert-only" (single-factor:
@@ -465,6 +480,27 @@ func (r *Rule) validate(idx int) []string {
 	if len(r.Match.KeyIDs) > 0 && r.Match.KeyPrefix != "" {
 		errs = append(errs, fmt.Sprintf("%s (%q): match.key_ids and match.key_prefix are mutually exclusive; specify only one",
 			prefix, r.ID))
+	}
+
+	if r.Match.PathPattern != "" {
+		// For trailing /** we validate the prefix portion (if any) plus a
+		// synthetic "/*" so path.Match can check structural validity of the
+		// non-recursive part.  Bare "**" and "foo/**" are accepted; the
+		// recursive suffix is handled by pathMatches, not path.Match.
+		toCheck := r.Match.PathPattern
+		if strings.HasSuffix(toCheck, "/**") {
+			prefixPart := strings.TrimSuffix(toCheck, "/**")
+			if prefixPart == "" {
+				toCheck = "*" // bare /** is valid (match all paths)
+			} else {
+				toCheck = prefixPart + "/*"
+			}
+		}
+		if err := validateGlobPattern(toCheck); err != nil {
+			errs = append(errs, fmt.Sprintf(
+				"%s (%q): match.path_pattern: %v",
+				prefix, r.ID, err))
+		}
 	}
 
 	if r.Match.AuthStrength != "" {

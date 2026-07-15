@@ -589,8 +589,9 @@ func matchesOperation(ops []Operation, op Operation) bool {
 //
 // Resolution order:
 //  1. If m.KeyIDs is non-empty, keyID must appear exactly in the list.
-//  2. Else if m.KeyPrefix is non-empty, keyID must have the prefix.
-//  3. Else (both empty): matches any key, including an empty keyID.
+//  2. Else if m.PathPattern is non-empty, keyID must match the path pattern.
+//  3. Else if m.KeyPrefix is non-empty, keyID must have the prefix.
+//  4. Else (all empty): matches any key, including an empty keyID.
 func matchesKey(m Match, keyID string) bool {
 	if len(m.KeyIDs) > 0 {
 		for _, id := range m.KeyIDs {
@@ -600,10 +601,40 @@ func matchesKey(m Match, keyID string) bool {
 		}
 		return false
 	}
+	if m.PathPattern != "" {
+		return pathMatches(m.PathPattern, keyID)
+	}
 	if m.KeyPrefix != "" {
 		return strings.HasPrefix(keyID, m.KeyPrefix)
 	}
 	return true // no key constraint
+}
+
+// pathMatches reports whether pathStr matches pattern.
+//
+// Empty pattern matches any path (including empty).  A trailing "/**" means
+// the path equals the prefix OR has the prefix followed by "/".  All other
+// patterns use path.Match (simple globs; '*' does not cross '/').
+//
+// Malformed patterns return false (fail closed).  Validate() rejects them
+// before a policy is loaded in production paths.
+func pathMatches(pattern, pathStr string) bool {
+	if pattern == "" {
+		return true
+	}
+	if strings.HasSuffix(pattern, "/**") {
+		prefix := strings.TrimSuffix(pattern, "/**")
+		if prefix == "" {
+			// Bare "/**" matches every path.
+			return true
+		}
+		return pathStr == prefix || strings.HasPrefix(pathStr, prefix+"/")
+	}
+	matched, err := path.Match(pattern, pathStr)
+	if err != nil {
+		return false
+	}
+	return matched
 }
 
 // matchesTimeWindow returns true if now falls within the rule's time window.
@@ -687,6 +718,7 @@ func copyPolicy(p Policy) Policy {
 					DeviceID:        r.Match.Identity.DeviceID,
 				},
 				KeyPrefix:    r.Match.KeyPrefix,
+				PathPattern:  r.Match.PathPattern,
 				AuthStrength: r.Match.AuthStrength,
 			},
 		}

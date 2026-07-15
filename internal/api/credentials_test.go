@@ -145,6 +145,82 @@ func TestHandleListLLMProviders(t *testing.T) {
 	}
 }
 
+// TestListLLMProviders_RespectsPathPolicy verifies that GET /credentials/llm
+// filters SupportedProviders by metadata_list policy per synthetic path
+// llm/{provider}. Deny is filter-only (200 with omissions); keys are never vended.
+func TestListLLMProviders_RespectsPathPolicy(t *testing.T) {
+	b := backend.NewDevBackend()
+	aud := &capturingAuditor{}
+	rl := auth.NewRevocationList()
+	ts, _ := auth.NewTokenService(rl)
+
+	// deny metadata_list path_pattern llm/openai
+	// allow metadata_list *
+	eng := policy.New(policy.Policy{
+		Version: "1",
+		Rules: []policy.Rule{
+			{
+				ID:          "deny-openai-list",
+				Description: "deny metadata_list for llm/openai",
+				Match: policy.Match{
+					Operations:  []policy.Operation{policy.OpMetadataList},
+					PathPattern: "llm/openai",
+				},
+				Effect: policy.EffectDeny,
+			},
+			{
+				ID:          "allow-metadata-list",
+				Description: "allow metadata_list for any path",
+				Match: policy.Match{
+					Operations: []policy.Operation{policy.OpMetadataList},
+				},
+				Effect: policy.EffectAllow,
+			},
+		},
+	})
+	srv := api.NewServer(b, aud, policy.AsEngineI(eng), ts, "dev")
+
+	rr := credRequest(t, srv, http.MethodGet, "/credentials/llm")
+	assertStatus(t, rr, http.StatusOK)
+
+	body := rr.Body.String()
+	// ADVERSARIAL: list must never vend keys.
+	if strings.Contains(body, "api_key") || strings.Contains(body, "sk-") {
+		t.Error("ADVERSARIAL: list response must not contain credential material")
+	}
+
+	var resp map[string][]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	providers := resp["providers"]
+
+	for _, p := range providers {
+		if p == "openai" {
+			t.Errorf("denied provider %q must be omitted from list", p)
+		}
+	}
+
+	foundAnthropic := false
+	for _, p := range providers {
+		if p == "anthropic" {
+			foundAnthropic = true
+			break
+		}
+	}
+	if !foundAnthropic {
+		t.Errorf("expected anthropic in providers; got %v", providers)
+	}
+
+	// Sorted for response stability.
+	for i := 1; i < len(providers); i++ {
+		if providers[i-1] > providers[i] {
+			t.Errorf("providers not sorted: %v", providers)
+			break
+		}
+	}
+}
+
 // ── GET /credentials/llm/{provider} ──────────────────────────────────────────
 
 func TestHandleGetLLMCredential_Success(t *testing.T) {

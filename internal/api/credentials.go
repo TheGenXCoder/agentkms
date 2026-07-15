@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -246,12 +247,31 @@ func (s *Server) handleRefreshLLMCredential(w http.ResponseWriter, r *http.Reque
 // ── GET /credentials/llm ─────────────────────────────────────────────────────
 
 // handleListLLMProviders handles GET /credentials/llm.
-// Returns the list of supported provider names.  No credentials are returned.
+//
+// Returns the list of supported provider names filtered by per-path
+// metadata_list policy.  For each name in credentials.SupportedProviders the
+// synthetic path is "llm/{name}".  Providers denied by policy are omitted
+// (filter-only; still 200).  No credentials are vended on list.
+//
+// Response shape: { "providers": [...] } sorted for stability.
 func (s *Server) handleListLLMProviders(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := identityFromContext(ctx)
+
 	providers := make([]string, 0, len(credentials.SupportedProviders))
 	for p := range credentials.SupportedProviders {
+		path := "llm/" + p
+		decision, err := s.policy.Evaluate(ctx, id, audit.OperationMetadataList, path)
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, errCodeInternal, "internal error")
+			return
+		}
+		if !decision.Allow {
+			continue
+		}
 		providers = append(providers, p)
 	}
+	sort.Strings(providers)
 	writeJSON(w, http.StatusOK, map[string][]string{"providers": providers})
 }
 

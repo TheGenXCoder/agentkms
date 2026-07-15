@@ -4,6 +4,10 @@ Dated design decisions and strategy docs. Each file is a self-contained decision
 
 ## Index
 
+### 2026-07-14 — Unified secret catalog & policy-gated capabilities
+
+- [**Unified Secret Catalog, Plugin Capabilities, and Policy-Gated Visibility**](2026-07-14-unified-secret-catalog-plugins-policy.md) — one path namespace for registry/LLM/dynamic DB; capability ∩ policy; list hide (supersecret); `kpm list --all` / `--path`; sql-dynamic drivers (MSSQL/Oracle); phased P0–P4. Spans agentkms + kpm. **Status: draft, ready for implementation planning.**
+
 ### 2026-07-01 — UX consolidation
 
 - [**UX Consolidation — One Path In, CA Transparency, Local-First Reads**](2026-07-01-ux-consolidation.md) — single `agentkms init --dev|--prod` binary, `kpm login <invitecode>` with CA pin inside the code, one config file, pull-through read cache with TTL, NRT push rejected. Spans both repos; kpm work is downstream of the agentkms invite-code format.
@@ -27,6 +31,7 @@ Conversation with Grok, review, strategic alignment. These four docs capture the
 3. **dynamic-secrets.md** — the mechanism.
 4. **deployment-model.md** — how it ships.
 5. **audit-schema-migration.md** — what has to change in the data model to support it.
+6. **2026-07-14-unified-secret-catalog-plugins-policy.md** — how inventory, plugins, and policy-gated visibility unify registry + LLM + dynamic DB (planning target).
 
 ## How to add a new decision record
 

@@ -1,0 +1,37 @@
+# Example: hide supersecret/** from list/describe while allowing vend of one path.
+# Server enforces this; kpm list --all only shows what metadata_list allows.
+version: "1"
+rules:
+  - id: deny-list-supersecret
+    effect: deny
+    match:
+      operations: [metadata_list]
+      path_pattern: "supersecret/**"
+    description: Hide supersecret tree from inventory (existence via list/describe)
+
+  - id: allow-vend-supersecret-stripe
+    effect: allow
+    match:
+      operations: [credential_vend]
+      path_pattern: "supersecret/stripe-master"
+    description: App may vend one path without seeing siblings
+
+  - id: allow-list-and-vend-default
+    effect: allow
+    match:
+      operations:
+        - metadata_list
+        - credential_vend
+        - secret_write
+        - secret_history
+        - secret_delete
+      identity:
+        caller_id_pattern: "*"
+    description: Default allow for other paths (tune for production)
+
+  - id: allow-secret-purge-step-up
+    effect: allow
+    match:
+      operations: [secret_purge]
+      auth_strength: "cert+human"
+    description: Purge always requires step-up (operation floor)
